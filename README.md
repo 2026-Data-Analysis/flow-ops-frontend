@@ -1,7 +1,7 @@
 
-  # Onboarding Screen Design
+  # SaaS Dashboard Layout Design
 
-  This is a code bundle for Onboarding Screen Design. The original project is available at https://www.figma.com/design/iM6n6klEVXShEn7IPoedKq/Onboarding-Screen-Design.
+  This is a code bundle for SaaS Dashboard Layout Design. The original project is available at https://www.figma.com/design/HIMwpAJERzIG515apbGru2/SaaS-Dashboard-Layout-Design.
 
   ## Running the code
 
