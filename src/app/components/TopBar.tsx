@@ -5,11 +5,11 @@ export function TopBar() {
   const { environment, setEnvironment } = useTestContext();
 
   return (
-    <header className="h-16 bg-[#0a0a0f] border-b border-[#1f1f28] flex items-center justify-between px-6">
+    <header className="responsive-topbar h-16 bg-[#0a0a0f] border-b border-[#1f1f28] flex items-center justify-between px-6">
       {/* Left Section */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 min-w-0">
         {/* Project Selector */}
-        <div className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 hover:border-[#2f2f38] transition-colors cursor-pointer min-w-[200px]">
+        <div className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 hover:border-[#2f2f38] transition-colors cursor-pointer min-w-[200px] max-sm:min-w-0">
           <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-pink-500 rounded flex items-center justify-center text-white text-xs font-semibold">
             P
           </div>

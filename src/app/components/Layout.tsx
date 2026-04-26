@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -8,6 +8,19 @@ import { TestProvider } from '../contexts/TestContext';
 
 export function Layout() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const syncSidebar = () => {
+      if (window.innerWidth < 768) {
+        setIsSidebarCollapsed(true);
+      }
+    };
+
+    syncSidebar();
+    window.addEventListener('resize', syncSidebar);
+
+    return () => window.removeEventListener('resize', syncSidebar);
+  }, []);
 
   return (
     <TestProvider>

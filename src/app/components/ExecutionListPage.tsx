@@ -236,12 +236,12 @@ export function ExecutionListPage() {
   };
 
   return (
-    <div className="flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedLogId ? '1fr 600px' : '1fr' }}>
+    <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedLogId ? '1fr 600px' : '1fr' }}>
       {/* Main: Execution Logs Table */}
       <main className="flex flex-col overflow-hidden bg-[#060609]">
         {/* Header */}
         <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-          <div className="flex items-center justify-between mb-6">
+          <div className="responsive-header flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-semibold text-white mb-1">Execution Logs</h1>
               <p className="text-gray-500 text-sm">Test execution history and debugging</p>
@@ -254,7 +254,7 @@ export function ExecutionListPage() {
           </div>
 
           {/* Search and Filters */}
-          <div className="flex items-center gap-3">
+          <div className="responsive-filters flex items-center gap-3">
             {/* Search */}
             <div className="flex-1 relative">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -321,7 +321,7 @@ export function ExecutionListPage() {
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="responsive-table-wrap flex-1 overflow-y-auto">
           <table className="w-full">
             <thead className="bg-[#0a0a0f] border-b border-[#1f1f28] sticky top-0 z-10">
               <tr>

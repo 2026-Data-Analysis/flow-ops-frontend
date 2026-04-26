@@ -16,8 +16,8 @@ export function FlowIndicator() {
   );
 
   return (
-    <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-6 py-3">
-      <div className="flex items-center justify-between max-w-3xl mx-auto">
+    <div className="responsive-flow bg-[#0a0a0f] border-b border-[#1f1f28] px-6 py-3">
+      <div className="responsive-flow-inner flex items-center justify-between max-w-3xl mx-auto">
         {flowSteps.map((step, index) => {
           const Icon = step.icon;
           const isActive = index === currentStepIndex;

@@ -366,7 +366,7 @@ export function ScenarioBuilderPage() {
   };
 
   return (
-    <div className="flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedScenarioId ? '1fr 600px' : '1fr' }}>
+    <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedScenarioId ? '1fr 600px' : '1fr' }}>
       {/* AI Generate Modal */}
       {showAiModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">

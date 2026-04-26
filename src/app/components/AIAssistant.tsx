@@ -326,7 +326,7 @@ export function AIAssistant() {
 
       {/* Chat Panel */}
       {isOpen && !isMinimized && (
-        <div className="fixed bottom-6 right-6 w-[420px] h-[70vh] bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl shadow-2xl z-50 flex flex-col animate-slide-up overflow-hidden">
+        <div className="responsive-ai-panel fixed bottom-6 right-6 w-[420px] h-[70vh] bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl shadow-2xl z-50 flex flex-col animate-slide-up overflow-hidden">
           {/* Header */}
           <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -476,7 +476,7 @@ export function AIAssistant() {
 
       {/* Minimized State */}
       {isOpen && isMinimized && (
-        <div className="fixed bottom-6 right-6 bg-[#0a0a0f] border border-[#1f1f28] rounded-xl shadow-xl p-3 z-50 flex items-center gap-3 animate-slide-up">
+        <div className="responsive-ai-minimized fixed bottom-6 right-6 bg-[#0a0a0f] border border-[#1f1f28] rounded-xl shadow-xl p-3 z-50 flex items-center gap-3 animate-slide-up">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-full flex items-center justify-center">
             <Sparkles size={16} className="text-white" />
           </div>

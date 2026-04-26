@@ -260,12 +260,12 @@ export function ApiManagementPage() {
   const totalTests = filteredEndpoints.reduce((sum, e) => sum + e.testCount, 0);
 
   return (
-    <div className="flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedApiId ? '1fr 480px' : '1fr' }}>
+    <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedApiId ? '1fr 480px' : '1fr' }}>
       {/* Left Panel: API List */}
       <div className="flex flex-col overflow-hidden">
         {/* Header */}
         <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-        <div className="flex items-center justify-between mb-6">
+          <div className="responsive-header flex items-center justify-between mb-6">
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">API Discovery</h1>
             <p className="text-gray-400">Find APIs and generate tests</p>
@@ -314,7 +314,7 @@ export function ApiManagementPage() {
           </div>
 
           {/* Filters Row */}
-          <div className="flex items-center gap-3">
+          <div className="responsive-filters flex items-center gap-3">
             {selectedApiIds.length > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                 <span className="text-sm text-blue-400">
@@ -384,7 +384,7 @@ export function ApiManagementPage() {
       {/* Environment Tabs */}
       <div className="border-b border-[#1f1f28] bg-[#0a0a0f]">
         <div className="px-8 py-3">
-          <div className="flex items-center gap-2">
+          <div className="responsive-tabs flex items-center gap-2">
             <button
               onClick={() => setSelectedEnvironment('all')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -474,7 +474,7 @@ export function ApiManagementPage() {
                     selectedApiId === endpoint.id ? 'border-blue-500/50 bg-blue-500/5' : 'border-[#1f1f28]'
                   }`}
                 >
-                  <div className="flex items-start gap-4">
+                <div className="responsive-card-row flex items-start gap-4">
                     {/* Checkbox */}
                     <div
                       onClick={(e) => toggleApiSelection(endpoint.id, e)}
@@ -528,7 +528,7 @@ export function ApiManagementPage() {
                     </div>
 
                     {/* Metrics */}
-                    <div className="flex items-center gap-6 flex-shrink-0">
+                    <div className="responsive-metrics flex items-center gap-6 flex-shrink-0">
                       {/* Coverage */}
                       <div className="text-center">
                         <div className="flex items-center gap-1.5 mb-1">

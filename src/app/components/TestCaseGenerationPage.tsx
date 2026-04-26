@@ -369,7 +369,7 @@ export function TestCaseGenerationPage() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden grid" style={{ gridTemplateColumns: rightPanelMode === 'hidden' ? '1fr' : '1fr 480px' }}>
+      <div className="responsive-detail-grid flex-1 overflow-hidden grid" style={{ gridTemplateColumns: rightPanelMode === 'hidden' ? '1fr' : '1fr 480px' }}>
         {/* Center Main Panel */}
         <main className="overflow-y-auto bg-[#060609]">
           <div className="p-8 max-w-6xl mx-auto space-y-6">

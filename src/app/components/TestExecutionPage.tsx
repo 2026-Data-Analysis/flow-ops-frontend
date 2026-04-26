@@ -329,7 +329,7 @@ export function TestExecutionPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden grid grid-cols-[1fr_320px]">
+      <div className="responsive-detail-grid flex-1 overflow-hidden grid grid-cols-[1fr_320px]">
         {/* Execution Console */}
         <main className="h-full overflow-y-auto bg-[#060609] p-6">
           {/* Console Header */}
