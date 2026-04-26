@@ -1,11 +1,25 @@
+# FlowOps Frontend
 
-  # SaaS Dashboard Layout Design
+React, Vite, and Tailwind CSS frontend for FlowOps.
 
-  This is a code bundle for SaaS Dashboard Layout Design. The original project is available at https://www.figma.com/design/HIMwpAJERzIG515apbGru2/SaaS-Dashboard-Layout-Design.
+## Local Development
 
-  ## Running the code
+```bash
+npm install
+npm run dev
+```
 
-  Run `npm i` to install the dependencies.
+## Production Build
 
-  Run `npm run dev` to start the development server.
-  
+```bash
+npm run build
+npm run preview
+```
+
+## Vercel
+
+Use the default Vercel settings from `vercel.json`:
+
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Install Command: `npm install`
