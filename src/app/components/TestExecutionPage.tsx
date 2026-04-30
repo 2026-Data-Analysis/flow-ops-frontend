@@ -16,6 +16,15 @@ import {
   StopCircle
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
+import {
+  DEFAULT_REQUESTER,
+  flowOpsApi,
+  getDefaultAppId,
+  type EnvironmentResponse,
+  type ExecutionDetailResponse,
+  type ExecutionStepLogResponse,
+  type HttpMethod,
+} from '../api/flowOpsClient';
 
 interface ExecutionLog {
   id: string;
@@ -100,6 +109,55 @@ const methodColors = {
   PUT: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20' },
   DELETE: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
   PATCH: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
+  OPTIONS: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
+  HEAD: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
+};
+
+const toTime = (value?: string) => {
+  if (!value) return new Date().toLocaleTimeString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+};
+
+const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['status'] => {
+  if (status === 'RUNNING') return 'running';
+  if (status === 'FAILED' || success === false) return 'failed';
+  return 'success';
+};
+
+const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLog => ({
+  id: String(log.id ?? index + 1),
+  timestamp: toTime(log.executedAt || log.startedAt),
+  testCase: log.caseName || log.step || `Execution step ${index + 1}`,
+  endpoint: log.endpoint || '-',
+  method: (log.method || 'GET') as HttpMethod,
+  status: normalizeStatus(log.status, log.success),
+  duration: log.durationMs ?? 0,
+  responseCode: log.responseCode ?? (log.success === false ? 500 : 200),
+  source: 'auto',
+});
+
+const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
+  if (execution.timeline?.length) {
+    return execution.timeline.map(normalizeLog);
+  }
+
+  return [
+    {
+      id: String(execution.id),
+      timestamp: toTime(execution.executedAt),
+      testCase: execution.caseName || 'FlowOps execution',
+      endpoint: execution.endpoint || '-',
+      method: 'GET',
+      status: normalizeStatus(execution.status, execution.status === 'SUCCESS'),
+      duration: execution.responseTimeMs ?? execution.durationMs ?? execution.avgDurationMs ?? 0,
+      responseCode: execution.statusCode ?? (execution.status === 'SUCCESS' ? 200 : 500),
+      source: 'auto',
+      requestBody: execution.body ? JSON.stringify(execution.body, null, 2) : undefined,
+      responseBody: execution.response ? JSON.stringify(execution.response, null, 2) : undefined,
+      errorMessage: execution.errorMessage,
+    },
+  ];
 };
 
 export function TestExecutionPage() {
@@ -117,6 +175,8 @@ export function TestExecutionPage() {
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
   const [currentLogIndex, setCurrentLogIndex] = useState(0);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
+  const [executionError, setExecutionError] = useState<string | null>(null);
 
   // Context-aware prefill from navigation
   useEffect(() => {
@@ -128,40 +188,73 @@ export function TestExecutionPage() {
     }
   }, [location.state]);
 
-  // Run execution
   useEffect(() => {
-    if (isRunning && currentLogIndex < mockLogs.length) {
-      const timer = setTimeout(() => {
-        const newLog = { ...mockLogs[currentLogIndex], status: 'running' as const };
-        setLogs(prev => [...prev, newLog]);
+    flowOpsApi
+      .listEnvironments(getDefaultAppId())
+      .then(setEnvironments)
+      .catch(() => undefined);
+  }, []);
 
-        setTimeout(() => {
-          setLogs(prev =>
-            prev.map(log =>
-              log.id === newLog.id ? mockLogs[currentLogIndex] : log
-            )
-          );
-          setCurrentLogIndex(prev => prev + 1);
-        }, 800);
-      }, 500);
-      return () => clearTimeout(timer);
-    } else if (isRunning && currentLogIndex >= mockLogs.length) {
-      setIsRunning(false);
-      setExecutionResults({
-        timestamp: new Date().toISOString(),
-        environment,
-        testLevel,
-        logs,
-        stats: calculateStats(mockLogs),
-      });
-    }
-  }, [isRunning, currentLogIndex, environment, testLevel]);
+  const resolveEnvironmentId = () => {
+    const selected = environments.find((env) => {
+      const label = `${env.name} ${env.branchName || ''}`.toLowerCase();
+      if (environment === 'dev') return label.includes('dev') || label.includes('develop');
+      if (environment === 'prod') return label.includes('prod') || label.includes('main');
+      return label.includes('staging') || label.includes('stage');
+    });
+    return selected?.id ?? environments[0]?.id ?? 1;
+  };
 
-  const handleRun = () => {
+  const getSelectedApiIds = () => {
+    const state = location.state as any;
+    const stateIds = state?.selectedApiIds || (state?.selectedApiId ? [state.selectedApiId] : []);
+    const contextIds = selectedAPIs.map((api) => api.id);
+    return [...new Set([...stateIds, ...contextIds])]
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  };
+
+  const handleRun = async () => {
     setLogs([]);
     setCurrentLogIndex(0);
     setIsRunning(true);
     setExpandedLogId(null);
+    setExecutionError(null);
+
+    const apiIds = getSelectedApiIds();
+    if (executionType === 'apis' && apiIds.length === 0) {
+      setIsRunning(false);
+      setExecutionError('API Discovery에서 실행할 API를 먼저 선택해주세요.');
+      return;
+    }
+
+    try {
+      const result = await flowOpsApi.runApis({
+        appId: getDefaultAppId(),
+        environmentId: resolveEnvironmentId(),
+        apiIds,
+        executionMode: executionMode === 'generate' ? 'GENERATE_AND_RUN' : 'RUN_EXISTING',
+        testLevel: testLevel.toUpperCase() as any,
+        createdBy: DEFAULT_REQUESTER,
+      });
+      const nextLogs = normalizeExecution(result);
+      setLogs(nextLogs);
+      setExecutionResults({
+        timestamp: new Date().toISOString(),
+        environment,
+        testLevel,
+        execution: result,
+        logs: nextLogs,
+        stats: calculateStats(nextLogs),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '테스트 실행 요청에 실패했습니다.';
+      setExecutionError(message);
+      const fallbackLogs = mockLogs.filter((log) => apiIds.length === 0 || selectedAPIs.some((api) => api.endpoint === log.endpoint));
+      setLogs(fallbackLogs.length ? fallbackLogs : mockLogs);
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleStop = () => {
@@ -169,10 +262,8 @@ export function TestExecutionPage() {
   };
 
   const handleRerunFailed = () => {
-    const failedLogs = mockLogs.filter(log => log.status === 'failed');
-    setLogs([]);
-    setCurrentLogIndex(0);
-    setIsRunning(true);
+    setLogs(logs.filter(log => log.status === 'failed').map(log => ({ ...log, status: 'running' })));
+    void handleRun();
   };
 
   const handleGenerateEdgeCases = () => {
@@ -360,6 +451,11 @@ export function TestExecutionPage() {
           </div>
 
           {/* Console Logs */}
+          {executionError && (
+            <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+              Backend execution failed: {executionError}
+            </div>
+          )}
           {logs.length === 0 && !isRunning ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="w-16 h-16 bg-[#13131a] rounded-full flex items-center justify-center mb-4">

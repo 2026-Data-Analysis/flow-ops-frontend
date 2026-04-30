@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Search,
@@ -19,10 +19,12 @@ import {
   BarChart3,
   Check
 } from 'lucide-react';
+import { flowOpsApi, type ApiEndpointDetailResponse, type ApiInventoryResponse } from '../api/flowOpsClient';
+import { useTestContext } from '../contexts/TestContext';
 
 interface ApiEndpoint {
   id: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
   path: string;
   controller: string;
   status: 'auto' | 'edited';
@@ -184,6 +186,8 @@ const methodColors = {
   PUT: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20' },
   DELETE: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
   PATCH: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
+  OPTIONS: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
+  HEAD: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
 };
 
 const testLevelColors = {
@@ -193,9 +197,39 @@ const testLevelColors = {
   full: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
 };
 
+const formatRelativeTime = (value?: string) => {
+  if (!value) return 'Never';
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return value;
+  const minutes = Math.max(1, Math.round((Date.now() - time) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+  return `${Math.round(hours / 24)} days ago`;
+};
+
+const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
+  id: String(inventory.id),
+  method: (inventory.method === 'TRACE' ? 'GET' : inventory.method) as ApiEndpoint['method'],
+  path: inventory.endpointPath,
+  controller: inventory.operationId || inventory.summary || 'Inventory',
+  status: inventory.editStatus === 'EDITED' || inventory.sourceType === 'MANUAL' ? 'edited' : 'auto',
+  requiresAuth: Boolean(inventory.authRequired),
+  domain: inventory.branchName || 'General',
+  testLevel: (inventory.testLevels?.[0]?.toLowerCase() as ApiEndpoint['testLevel']) || 'smoke',
+  coverage: Math.round(inventory.coveragePercentage ?? 0),
+  testCount: inventory.totalTestCount ?? 0,
+  lastUpdated: inventory.specVersion || 'Inventory',
+  environments: ['dev', 'staging', 'prod'],
+});
+
 export function ApiManagementPage() {
   const navigate = useNavigate();
-  const [endpoints] = useState<ApiEndpoint[]>(mockEndpoints);
+  const { setSelectedAPIs } = useTestContext();
+  const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
+  const [apiDetails, setApiDetails] = useState<Record<string, ApiEndpointDetailResponse>>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEnvironment, setSelectedEnvironment] = useState<'all' | 'dev' | 'staging' | 'prod'>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
@@ -205,6 +239,30 @@ export function ApiManagementPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [selectedApiId, setSelectedApiId] = useState<string | null>(null);
   const [selectedApiIds, setSelectedApiIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    flowOpsApi
+      .ensureProject()
+      .then((project) => flowOpsApi.listInventories(project.id))
+      .then((inventory) => {
+        if (!active) return;
+        setEndpoints(inventory.items.map(normalizeInventory));
+        setApiError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setEndpoints([]);
+        setApiError(error instanceof Error ? error.message : 'API 목록을 불러오지 못했습니다.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Extract unique domains
   const domains = ['all', ...Array.from(new Set(endpoints.map(e => e.domain)))];
@@ -223,6 +281,10 @@ export function ApiManagementPage() {
 
   const handleApiClick = (apiId: string) => {
     setSelectedApiId(apiId);
+    const endpoint = endpoints.find((api) => api.id === apiId);
+    if (endpoint) {
+      setSelectedAPIs([{ id: endpoint.id, name: endpoint.path, endpoint: endpoint.path, method: endpoint.method }]);
+    }
   };
 
   const toggleApiSelection = (apiId: string, event: React.MouseEvent) => {
@@ -240,7 +302,12 @@ export function ApiManagementPage() {
 
   const handleRunTests = () => {
     if (selectedApiId) {
-      navigate('/execution/run', { state: { selectedApiId } });
+      const ids = selectedApiIds.length > 0 ? selectedApiIds : [selectedApiId];
+      const selected = endpoints
+        .filter((api) => ids.includes(api.id))
+        .map((api) => ({ id: api.id, name: api.path, endpoint: api.path, method: api.method }));
+      setSelectedAPIs(selected);
+      navigate('/execution/run', { state: { selectedApiId, selectedApiIds: ids } });
     }
   };
 
@@ -456,6 +523,16 @@ export function ApiManagementPage() {
       {/* API List */}
       <div className="flex-1 overflow-y-auto p-8">
         <div className="max-w-7xl mx-auto">
+          {apiError && (
+            <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+              Backend unavailable: {apiError}. Showing cached sample data.
+            </div>
+          )}
+          {isLoading && (
+            <div className="mb-4 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-300">
+              Loading APIs from FlowOps...
+            </div>
+          )}
           {filteredEndpoints.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="w-16 h-16 bg-[#13131a] rounded-full flex items-center justify-center mb-4">
@@ -621,6 +698,21 @@ export function ApiManagementPage() {
                 </div>
               </div>
             </div>
+
+            {/* B. Test Overview */}
+            {apiDetails[selectedApi.id] && (
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Schemas</div>
+                <div className="bg-[#13131a] border border-[#1f1f28] rounded-xl p-4 space-y-3">
+                  <pre className="max-h-32 overflow-auto text-xs text-gray-300 whitespace-pre-wrap">
+                    {JSON.stringify(apiDetails[selectedApi.id].requestSchema || {}, null, 2)}
+                  </pre>
+                  <pre className="max-h-32 overflow-auto text-xs text-gray-300 whitespace-pre-wrap border-t border-[#1f1f28] pt-3">
+                    {JSON.stringify(apiDetails[selectedApi.id].responseSchema || {}, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
 
             {/* B. Test Overview */}
             <div>
