@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Plus,
@@ -27,6 +27,7 @@ import {
   Settings,
   Eye
 } from 'lucide-react';
+import { DEFAULT_REQUESTER, flowOpsApi, getDefaultAppId, type EnvironmentResponse } from '../api/flowOpsClient';
 
 interface KeyValuePair {
   id: string;
@@ -147,6 +148,50 @@ const mockEnvironments: Environment[] = [
   },
 ];
 
+const parseObject = (value: unknown): Record<string, string> => {
+  if (!value) return {};
+  if (typeof value === 'object') return value as Record<string, string>;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return {};
+  }
+};
+
+const normalizeEnvironment = (env: EnvironmentResponse): Environment => {
+  const headers = parseObject(env.headers);
+  const authType = env.authType === 'API_KEY' ? 'apiKey' : env.authType === 'BEARER' ? 'bearer' : 'none';
+  return {
+    id: String(env.id),
+    name: env.name,
+    baseUrl: env.baseUrl || '',
+    authType,
+    token: typeof env.authConfig === 'string' ? env.authConfig : '',
+    headers: Object.entries(headers).map(([key, value], index) => ({ id: `${env.id}-${index}`, key, value: String(value) })),
+    color: 'from-blue-500 to-cyan-500',
+    defaultTestLevel: env.defaultTestLevel?.toLowerCase() as Environment['defaultTestLevel'] || 'smoke',
+    triggers: { onPRMerge: false, onDeploy: false, onSchedule: false },
+    triggerScope: 'all',
+    selectedAPIs: [],
+    tags: [],
+    executionMode: 'existing',
+    lastTestStatus: undefined,
+    lastRunTime: env.lastRunAt || undefined,
+    coverage: env.coverage ? Math.round(env.coverage) : undefined,
+  };
+};
+
+const serializeEnvironment = (env: Environment) => ({
+  name: env.name,
+  branchName: env.name.toLowerCase(),
+  baseUrl: env.baseUrl,
+  authType: env.authType === 'apiKey' ? 'API_KEY' : env.authType === 'bearer' ? 'BEARER' : 'NONE',
+  authConfig: env.token,
+  headers: Object.fromEntries(env.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
+  defaultTestLevel: env.defaultTestLevel.toUpperCase(),
+  defaultTestLevelSource: 'MANUAL',
+});
+
 export function EnvironmentSettingsPage() {
   const navigate = useNavigate();
   const [environments, setEnvironments] = useState<Environment[]>(mockEnvironments);
@@ -154,8 +199,25 @@ export function EnvironmentSettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [runningQuickTest, setRunningQuickTest] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const selectedEnv = selectedEnvId ? environments.find(env => env.id === selectedEnvId) : null;
+
+  useEffect(() => {
+    flowOpsApi
+      .listEnvironments(getDefaultAppId())
+      .then((items) => {
+        const normalized = items.map(normalizeEnvironment);
+        if (normalized.length > 0) {
+          setEnvironments(normalized);
+          setSelectedEnvId(normalized[0].id);
+        }
+        setApiError(null);
+      })
+      .catch((error) => {
+        setApiError(error instanceof Error ? error.message : '환경 목록을 불러오지 못했습니다.');
+      });
+  }, []);
 
   const updateEnvironment = (updates: Partial<Environment>) => {
     setEnvironments(envs =>
@@ -235,29 +297,54 @@ export function EnvironmentSettingsPage() {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!selectedEnv) return;
     setIsSaving(true);
-    setTimeout(() => {
+    setApiError(null);
+    try {
+      const body = serializeEnvironment(selectedEnv);
+      const id = Number(selectedEnv.id);
+      const saved = Number.isFinite(id) && id < 1000000000000
+        ? await flowOpsApi.updateEnvironment(id, body as any)
+        : await flowOpsApi.createEnvironment(getDefaultAppId(), body as any);
+      const normalized = normalizeEnvironment(saved);
+      setEnvironments((envs) => envs.map((env) => (env.id === selectedEnv.id ? normalized : env)));
+      setSelectedEnvId(normalized.id);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : '환경 저장에 실패했습니다.');
+    } finally {
       setIsSaving(false);
-    }, 1000);
+    }
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
+    if (!selectedEnv) return;
     setTestingConnection(true);
-    setTimeout(() => {
+    setApiError(null);
+    try {
+      await flowOpsApi.testConnection(Number(selectedEnv.id));
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : '연결 테스트에 실패했습니다.');
+    } finally {
       setTestingConnection(false);
-    }, 1500);
+    }
   };
 
-  const handleRunQuickTest = () => {
+  const handleRunQuickTest = async () => {
+    if (!selectedEnv) return;
     setRunningQuickTest(true);
-    setTimeout(() => {
-      setRunningQuickTest(false);
+    setApiError(null);
+    try {
+      await flowOpsApi.runQuickTest(Number(selectedEnv.id), { createdBy: DEFAULT_REQUESTER });
       updateEnvironment({
         lastTestStatus: 'success',
         lastRunTime: 'Just now',
       });
-    }, 2000);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Quick Test 실행에 실패했습니다.');
+    } finally {
+      setRunningQuickTest(false);
+    }
   };
 
   const handleViewExecution = () => {
@@ -280,6 +367,11 @@ export function EnvironmentSettingsPage() {
         <div className="p-6 border-b border-[#1f1f28]">
           <h2 className="text-white text-lg mb-1">Environments</h2>
           <p className="text-gray-500 text-sm">Automation hubs for your testing workflow</p>
+          {apiError && (
+            <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
+              Backend unavailable: {apiError}
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
