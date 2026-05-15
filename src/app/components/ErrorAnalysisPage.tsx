@@ -20,36 +20,6 @@ interface LogEntry {
   service: string;
 }
 
-const mockLogs: LogEntry[] = [
-  {
-    id: '1',
-    timestamp: '2026-04-03 14:32:15',
-    level: 'error',
-    message: 'Database connection timeout after 30s',
-    service: 'auth-service',
-  },
-  {
-    id: '2',
-    timestamp: '2026-04-03 14:32:12',
-    level: 'warn',
-    message: 'Slow query detected: SELECT * FROM users WHERE...',
-    service: 'db-service',
-  },
-  {
-    id: '3',
-    timestamp: '2026-04-03 14:32:10',
-    level: 'error',
-    message: 'Failed to acquire connection from pool',
-    service: 'db-service',
-  },
-  {
-    id: '4',
-    timestamp: '2026-04-03 14:32:05',
-    level: 'info',
-    message: 'Attempting database connection retry (3/5)',
-    service: 'auth-service',
-  },
-];
 
 const logLevelColors = {
   error: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
@@ -57,8 +27,11 @@ const logLevelColors = {
   info: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
 };
 
+const emptyLogs: LogEntry[] = [];
+
 export function ErrorAnalysisPage() {
-  const [selectedLog, setSelectedLog] = useState<LogEntry | null>(mockLogs[0]);
+  const [logs] = useState<LogEntry[]>(emptyLogs);
+  const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalysis, setHasAnalysis] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -113,7 +86,10 @@ export function ErrorAnalysisPage() {
 
         {/* Log List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {mockLogs.map((log) => (
+          {logs.length === 0 && (
+            <div className="text-center py-12 text-gray-500 text-sm">No incident logs available</div>
+          )}
+          {logs.map((log) => (
             <div
               key={log.id}
               onClick={() => setSelectedLog(log)}
@@ -250,7 +226,7 @@ export function ErrorAnalysisPage() {
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Evidence Logs</h3>
                   <div className="space-y-2">
-                    {mockLogs.slice(0, 3).map((log) => (
+                    {logs.slice(0, 3).map((log) => (
                       <div key={log.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
                         <AlertCircle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
                         <div className="flex-1 min-w-0">

@@ -1,7 +1,8 @@
-import { createBrowserRouter } from 'react-router';
+import { createBrowserRouter, Navigate } from 'react-router';
 import { Layout } from './components/Layout';
 import { MainContent } from './components/MainContent';
 import { RegistrationPage } from './components/RegistrationPage';
+import { ApplicationSettingsPage } from './components/ApplicationSettingsPage';
 import { EnvironmentSettingsPage } from './components/EnvironmentSettingsPage';
 import { ApiManagementPage } from './components/ApiManagementPage';
 import { ScenarioBuilderPage } from './components/ScenarioBuilderPage';
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: TestCaseGenerationPage },
       { path: 'app/registration', Component: RegistrationPage },
+      { path: 'app/settings', Component: ApplicationSettingsPage },
       { path: 'app/environment', Component: EnvironmentSettingsPage },
       { path: 'qc/api', Component: ApiManagementPage },
       { path: 'qc/testcase', Component: TestCaseGenerationPage },
@@ -28,6 +30,7 @@ export const router = createBrowserRouter([
       { path: 'monitoring/history', Component: ExecutionListPage },
       { path: 'monitoring/logs/:runId', Component: LogDetailPage },
       { path: 'monitoring/response', Component: ResponseAssistantPage },
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
   },
 ]);

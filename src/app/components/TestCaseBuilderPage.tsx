@@ -43,69 +43,6 @@ interface Assertion {
   enabled: boolean;
 }
 
-const mockTestCases: TestCase[] = [
-  {
-    id: '1',
-    name: 'Success - Get User',
-    type: 'success',
-    headers: [
-      { id: 'h1', key: 'Accept', value: 'application/json', enabled: true },
-    ],
-    params: [
-      { id: 'p1', key: 'id', value: '123', enabled: true },
-    ],
-    body: '',
-    expectedStatus: 200,
-    assertions: [
-      { id: 'a1', type: 'exists', field: 'data.id', enabled: true },
-      { id: 'a2', type: 'equals', field: 'data.email', value: 'user@example.com', enabled: true },
-      { id: 'a3', type: 'type', field: 'data.createdAt', value: 'string', enabled: true },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Error - Missing Field',
-    type: 'error',
-    headers: [
-      { id: 'h2', key: 'Content-Type', value: 'application/json', enabled: true },
-    ],
-    params: [],
-    body: '{\n  "email": "test@example.com"\n}',
-    expectedStatus: 400,
-    assertions: [
-      { id: 'a4', type: 'exists', field: 'error.code', enabled: true },
-      { id: 'a5', type: 'equals', field: 'error.code', value: 'MISSING_FIELD', enabled: true },
-      { id: 'a6', type: 'contains', field: 'error.message', value: 'required', enabled: true },
-    ],
-  },
-  {
-    id: '3',
-    name: 'Error - Unauthorized',
-    type: 'error',
-    headers: [],
-    params: [],
-    body: '',
-    expectedStatus: 401,
-    assertions: [
-      { id: 'a7', type: 'exists', field: 'error', enabled: true },
-      { id: 'a8', type: 'equals', field: 'error.code', value: 'UNAUTHORIZED', enabled: true },
-    ],
-  },
-  {
-    id: '4',
-    name: 'Error - Invalid Type',
-    type: 'error',
-    headers: [
-      { id: 'h3', key: 'Content-Type', value: 'application/json', enabled: true },
-    ],
-    params: [],
-    body: '{\n  "email": "invalid-email",\n  "age": "not-a-number"\n}',
-    expectedStatus: 422,
-    assertions: [
-      { id: 'a9', type: 'equals', field: 'error.code', value: 'VALIDATION_ERROR', enabled: true },
-    ],
-  },
-];
 
 const assertionTypes = [
   { value: 'exists', label: 'Field Exists', description: 'Check if field is present' },
@@ -119,8 +56,8 @@ const assertionTypes = [
 const typeOptions = ['string', 'number', 'boolean', 'array', 'object', 'null'];
 
 export function TestCaseBuilderPage() {
-  const [testCases, setTestCases] = useState<TestCase[]>(mockTestCases);
-  const [selectedCaseId, setSelectedCaseId] = useState<string>('1');
+  const [testCases, setTestCases] = useState<TestCase[]>([]);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [showBodyEditor, setShowBodyEditor] = useState(false);
 
   const selectedCase = testCases.find(tc => tc.id === selectedCaseId);
@@ -228,7 +165,26 @@ export function TestCaseBuilderPage() {
     alert('Test cases saved successfully!');
   };
 
-  if (!selectedCase) return null;
+  if (!selectedCase) {
+    return (
+      <div className="flex-1 overflow-hidden bg-[#060609] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-[#13131a] rounded-full flex items-center justify-center mx-auto mb-4">
+            <FileJson size={32} className="text-gray-500" />
+          </div>
+          <h3 className="text-white text-lg mb-2">No test cases yet</h3>
+          <p className="text-gray-500 text-sm mb-4">Add a test case to get started</p>
+          <button
+            onClick={addTestCase}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            <Plus size={16} />
+            Add Test Case
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">

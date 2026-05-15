@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronLeft,
   AppWindow,
+  SlidersHorizontal,
   Settings,
   FlaskConical,
   Box,
@@ -32,6 +33,7 @@ const menuData: MenuSection[] = [
     title: 'Setup',
     items: [
       { label: 'Registration', icon: <AppWindow size={18} />, path: '/app/registration' },
+      { label: 'Application Settings', icon: <SlidersHorizontal size={18} />, path: '/app/settings' },
       { label: 'Environment Settings', icon: <Settings size={18} />, path: '/app/environment' },
       { label: 'API Management', icon: <Box size={18} />, path: '/qc/api' },
     ],

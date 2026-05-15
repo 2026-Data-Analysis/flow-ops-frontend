@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   MessageSquare,
   Copy,
@@ -10,36 +10,18 @@ import {
   CheckCircle2,
   ChevronDown
 } from 'lucide-react';
+import { flowOpsApi, getDefaultAppId } from '../api/flowOpsClient';
 
 type AudienceType = 'internal' | 'customer' | 'cs';
 type MessageType = 'report' | 'message' | 'fix-guide' | 'escalation';
 
-const mockIncidents = [
-  { id: '1', title: 'Database connection timeout' },
-  { id: '2', title: 'High latency in authentication' },
-  { id: '3', title: 'API rate limit exceeded' },
-];
-
-const mockTemplates = [
-  {
-    id: '1',
-    title: 'Database Incident Template',
-    category: 'Database',
-    preview: 'Database connection issues detected...',
-  },
-  {
-    id: '2',
-    title: 'API Performance Degradation',
-    category: 'Performance',
-    preview: 'We are experiencing slower than normal...',
-  },
-  {
-    id: '3',
-    title: 'Service Downtime Notice',
-    category: 'Downtime',
-    preview: 'We are currently experiencing...',
-  },
-];
+interface IncidentOption {
+  id: string;
+  title: string;
+  status?: string;
+  endpoint?: string;
+  errorMessage?: string;
+}
 
 const initialContent = {
   internal: {
@@ -412,20 +394,78 @@ Receiving high volume of login-related tickets. May indicate ongoing technical i
 };
 
 export function ResponseAssistantPage() {
-  const [selectedIncident, setSelectedIncident] = useState(mockIncidents[0].id);
+  const [incidents, setIncidents] = useState<IncidentOption[]>([]);
+  const [selectedIncident, setSelectedIncident] = useState('');
   const [audience, setAudience] = useState<AudienceType>('internal');
   const [messageType, setMessageType] = useState<MessageType>('report');
   const [content, setContent] = useState(initialContent.internal.report);
   const [copied, setCopied] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const buildContent = (
+    nextAudience: AudienceType,
+    nextType: MessageType,
+    incidentId = selectedIncident,
+    sourceIncidents = incidents,
+  ) => {
+    const incident = sourceIncidents.find((item) => item.id === incidentId);
+    if (!incident) return initialContent[nextAudience][nextType];
+
+    return initialContent[nextAudience][nextType]
+      .replace(/Database Connection Timeout/g, incident.title)
+      .replace(/Database connection timeout/g, incident.title)
+      .replace(/database connectivity issue/g, incident.errorMessage || incident.title)
+      .replace(/authentication service/g, incident.endpoint || 'affected API');
+  };
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    flowOpsApi
+      .listExecutions(getDefaultAppId())
+      .then((page) => {
+        if (!active) return;
+        const nextIncidents = page.content
+          .filter((execution) => !['SUCCESS', 'QUEUED', 'RUNNING'].includes(execution.status))
+          .map((execution) => ({
+            id: String(execution.id),
+            title: execution.errorMessage || `${execution.status} in ${execution.caseName || execution.endpoint || 'execution'}`,
+            status: execution.status,
+            endpoint: execution.endpoint,
+            errorMessage: execution.errorMessage,
+          }));
+
+        setIncidents(nextIncidents);
+        const firstId = nextIncidents[0]?.id || '';
+        setSelectedIncident(firstId);
+        setContent(firstId ? buildContent(audience, messageType, firstId, nextIncidents) : initialContent[audience][messageType]);
+        setApiError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setIncidents([]);
+        setSelectedIncident('');
+        setContent(initialContent[audience][messageType]);
+        setApiError(error instanceof Error ? error.message : 'Failed to load incidents.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleAudienceChange = (newAudience: AudienceType) => {
     setAudience(newAudience);
-    setContent(initialContent[newAudience][messageType]);
+    setContent(buildContent(newAudience, messageType));
   };
 
   const handleMessageTypeChange = (newType: MessageType) => {
     setMessageType(newType);
-    setContent(initialContent[audience][newType]);
+    setContent(buildContent(audience, newType));
   };
 
   const handleCopy = () => {
@@ -483,10 +523,13 @@ export function ResponseAssistantPage() {
               <label className="block text-sm font-medium text-gray-400 mb-2">Select Incident</label>
               <select 
                 value={selectedIncident}
-                onChange={(e) => setSelectedIncident(e.target.value)}
+                onChange={(e) => {
+                  setSelectedIncident(e.target.value);
+                  setContent(buildContent(audience, messageType, e.target.value));
+                }}
                 className="w-full px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
               >
-                {mockIncidents.map((incident) => (
+                {incidents.map((incident) => (
                   <option key={incident.id} value={incident.id}>{incident.title}</option>
                 ))}
               </select>

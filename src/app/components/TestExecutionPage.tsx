@@ -16,6 +16,15 @@ import {
   StopCircle
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
+import {
+  DEFAULT_REQUESTER,
+  flowOpsApi,
+  getDefaultAppId,
+  type EnvironmentResponse,
+  type ExecutionDetailResponse,
+  type ExecutionStepLogResponse,
+  type HttpMethod,
+} from '../api/flowOpsClient';
 
 interface ExecutionLog {
   id: string;
@@ -32,67 +41,6 @@ interface ExecutionLog {
   errorMessage?: string;
 }
 
-const mockLogs: ExecutionLog[] = [
-  {
-    id: '1',
-    timestamp: '14:23:01.234',
-    testCase: 'Login - Admin Success',
-    endpoint: '/api/v1/auth/login',
-    method: 'POST',
-    status: 'success',
-    duration: 245,
-    responseCode: 200,
-    source: 'auto',
-    requestBody: '{"username": "admin@test.com", "password": "***"}',
-    responseBody: '{"token": "jwt_token", "user": {"id": "123"}}',
-  },
-  {
-    id: '2',
-    timestamp: '14:23:01.512',
-    testCase: 'Get User Profile',
-    endpoint: '/api/v1/users/usr_123',
-    method: 'GET',
-    status: 'success',
-    duration: 89,
-    responseCode: 200,
-    source: 'auto',
-  },
-  {
-    id: '3',
-    timestamp: '14:23:01.634',
-    testCase: 'Create Post - Missing Field',
-    endpoint: '/api/v1/posts',
-    method: 'POST',
-    status: 'failed',
-    duration: 56,
-    responseCode: 400,
-    source: 'edited',
-    errorMessage: 'Validation error: title is required',
-  },
-  {
-    id: '4',
-    timestamp: '14:23:01.723',
-    testCase: 'Create Post - Success',
-    endpoint: '/api/v1/posts',
-    method: 'POST',
-    status: 'success',
-    duration: 134,
-    responseCode: 201,
-    source: 'auto',
-  },
-  {
-    id: '5',
-    timestamp: '14:23:01.845',
-    testCase: 'Delete Post - Unauthorized',
-    endpoint: '/api/v1/posts/post_456',
-    method: 'DELETE',
-    status: 'failed',
-    duration: 67,
-    responseCode: 403,
-    source: 'auto',
-    errorMessage: 'Forbidden: Insufficient permissions',
-  },
-];
 
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
@@ -100,6 +48,55 @@ const methodColors = {
   PUT: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20' },
   DELETE: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
   PATCH: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
+  OPTIONS: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
+  HEAD: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' },
+};
+
+const toTime = (value?: string) => {
+  if (!value) return new Date().toLocaleTimeString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+};
+
+const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['status'] => {
+  if (status === 'RUNNING') return 'running';
+  if (status === 'FAILED' || success === false) return 'failed';
+  return 'success';
+};
+
+const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLog => ({
+  id: String(log.id ?? index + 1),
+  timestamp: toTime(log.executedAt || log.startedAt),
+  testCase: log.caseName || log.step || `Execution step ${index + 1}`,
+  endpoint: log.endpoint || '-',
+  method: (log.method || 'GET') as HttpMethod,
+  status: normalizeStatus(log.status, log.success),
+  duration: log.durationMs ?? 0,
+  responseCode: log.responseCode ?? (log.success === false ? 500 : 200),
+  source: 'auto',
+});
+
+const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
+  if (execution.timeline?.length) {
+    return execution.timeline.map(normalizeLog);
+  }
+
+  return [
+    {
+      id: String(execution.id),
+      timestamp: toTime(execution.executedAt),
+      testCase: execution.caseName || 'FlowOps execution',
+      endpoint: execution.endpoint || '-',
+      method: 'GET',
+      status: normalizeStatus(execution.status, execution.status === 'SUCCESS'),
+      duration: execution.responseTimeMs ?? execution.durationMs ?? execution.avgDurationMs ?? 0,
+      responseCode: execution.statusCode ?? (execution.status === 'SUCCESS' ? 200 : 500),
+      source: 'auto',
+      requestBody: execution.body ? JSON.stringify(execution.body, null, 2) : undefined,
+      responseBody: execution.response ? JSON.stringify(execution.response, null, 2) : undefined,
+      errorMessage: execution.errorMessage,
+    },
+  ];
 };
 
 export function TestExecutionPage() {
@@ -108,60 +105,108 @@ export function TestExecutionPage() {
   const { environment, setEnvironment, selectedAPIs, executionResults, setExecutionResults } = useTestContext();
 
   // Configuration State
-  const [executionType, setExecutionType] = useState<'apis' | 'tests' | 'scenario'>('apis');
+  const [executionType, setExecutionType] = useState<'tests' | 'scenario'>('tests');
   const [testLevel, setTestLevel] = useState('smoke');
-  const [executionMode, setExecutionMode] = useState<'existing' | 'generate'>('existing');
 
   // Execution State
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<ExecutionLog[]>([]);
   const [currentLogIndex, setCurrentLogIndex] = useState(0);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
+  const [executionError, setExecutionError] = useState<string | null>(null);
 
   // Context-aware prefill from navigation
   useEffect(() => {
     const state = location.state as any;
-    if (state?.selectedApiId) {
-      setExecutionType('apis');
-    } else if (state?.scenarioId || state?.scenarioIds) {
+    if (state?.scenarioId || state?.scenarioIds) {
       setExecutionType('scenario');
+    } else {
+      setExecutionType('tests');
     }
   }, [location.state]);
 
-  // Run execution
   useEffect(() => {
-    if (isRunning && currentLogIndex < mockLogs.length) {
-      const timer = setTimeout(() => {
-        const newLog = { ...mockLogs[currentLogIndex], status: 'running' as const };
-        setLogs(prev => [...prev, newLog]);
+    flowOpsApi
+      .listEnvironments(getDefaultAppId())
+      .then(setEnvironments)
+      .catch(() => undefined);
+  }, []);
 
-        setTimeout(() => {
-          setLogs(prev =>
-            prev.map(log =>
-              log.id === newLog.id ? mockLogs[currentLogIndex] : log
-            )
-          );
-          setCurrentLogIndex(prev => prev + 1);
-        }, 800);
-      }, 500);
-      return () => clearTimeout(timer);
-    } else if (isRunning && currentLogIndex >= mockLogs.length) {
-      setIsRunning(false);
-      setExecutionResults({
-        timestamp: new Date().toISOString(),
-        environment,
-        testLevel,
-        logs,
-        stats: calculateStats(mockLogs),
-      });
-    }
-  }, [isRunning, currentLogIndex, environment, testLevel]);
+  const resolveEnvironmentId = () => {
+    const selected = environments.find((env) => {
+      const label = `${env.name} ${env.branchName || ''}`.toLowerCase();
+      if (environment === 'dev') return label.includes('dev') || label.includes('develop');
+      if (environment === 'prod') return label.includes('prod') || label.includes('main');
+      return label.includes('staging') || label.includes('stage');
+    });
+    return selected?.id ?? environments[0]?.id ?? 1;
+  };
 
-  const handleRun = () => {
+  const getSelectedApiIds = () => {
+    const state = location.state as any;
+    const stateIds = state?.selectedApiIds || (state?.selectedApiId ? [state.selectedApiId] : []);
+    const contextIds = selectedAPIs.map((api) => api.id);
+    return [...new Set([...stateIds, ...contextIds])]
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  };
+
+  const handleRun = async () => {
     setLogs([]);
     setCurrentLogIndex(0);
     setIsRunning(true);
     setExpandedLogId(null);
+    setExecutionError(null);
+
+    const apiIds = getSelectedApiIds();
+
+    try {
+      let result: ExecutionDetailResponse;
+      if (executionType === 'scenario') {
+        const state = location.state as any;
+        const scenarioIds = state?.scenarioIds ?? (state?.scenarioId ? [state.scenarioId] : []);
+        result = await flowOpsApi.runScenario({
+          appId: getDefaultAppId(),
+          environmentId: resolveEnvironmentId(),
+          scenarioIds: scenarioIds.map(Number).filter(Number.isFinite),
+          testLevel: testLevel.toUpperCase() as any,
+          createdBy: DEFAULT_REQUESTER,
+        });
+      } else if (apiIds.length > 0) {
+        result = await flowOpsApi.runApis({
+          appId: getDefaultAppId(),
+          environmentId: resolveEnvironmentId(),
+          apiIds,
+          executionMode: 'RUN_EXISTING',
+          testLevel: testLevel.toUpperCase() as any,
+          createdBy: DEFAULT_REQUESTER,
+        });
+      } else {
+        result = await flowOpsApi.runTestCases({
+          appId: getDefaultAppId(),
+          environmentId: resolveEnvironmentId(),
+          testLevel: testLevel.toUpperCase() as any,
+          createdBy: DEFAULT_REQUESTER,
+        });
+      }
+      const nextLogs = normalizeExecution(result);
+      setLogs(nextLogs);
+      setExecutionResults({
+        timestamp: new Date().toISOString(),
+        environment,
+        testLevel,
+        execution: result,
+        logs: nextLogs,
+        stats: calculateStats(nextLogs),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '테스트 실행 요청에 실패했습니다.';
+      setExecutionError(message);
+      setLogs([]);
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleStop = () => {
@@ -169,10 +214,8 @@ export function TestExecutionPage() {
   };
 
   const handleRerunFailed = () => {
-    const failedLogs = mockLogs.filter(log => log.status === 'failed');
-    setLogs([]);
-    setCurrentLogIndex(0);
-    setIsRunning(true);
+    setLogs(logs.filter(log => log.status === 'failed').map(log => ({ ...log, status: 'running' })));
+    void handleRun();
   };
 
   const handleGenerateEdgeCases = () => {
@@ -205,27 +248,16 @@ export function TestExecutionPage() {
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
       {/* Top Execution Control Bar */}
-      <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-4 sticky top-0 z-10">
-        <div className="flex items-center justify-between gap-6">
+      <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-4 py-3 sticky top-0 z-10 sm:px-6">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Left: Configuration Controls */}
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
             {/* Execution Type - Segmented Control */}
-            <div className="flex items-center bg-[#13131a] border border-[#1f1f28] rounded-lg p-1">
-              <button
-                onClick={() => setExecutionType('apis')}
-                disabled={isRunning}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                  executionType === 'apis'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-400 hover:text-white'
-                } disabled:opacity-50`}
-              >
-                APIs
-              </button>
+            <div className="flex items-center bg-[#13131a] border border-[#1f1f28] rounded-lg p-1 flex-shrink-0">
               <button
                 onClick={() => setExecutionType('tests')}
                 disabled={isRunning}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
                   executionType === 'tests'
                     ? 'bg-blue-500 text-white'
                     : 'text-gray-400 hover:text-white'
@@ -236,7 +268,7 @@ export function TestExecutionPage() {
               <button
                 onClick={() => setExecutionType('scenario')}
                 disabled={isRunning}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
                   executionType === 'scenario'
                     ? 'bg-blue-500 text-white'
                     : 'text-gray-400 hover:text-white'
@@ -247,16 +279,16 @@ export function TestExecutionPage() {
             </div>
 
             {/* Vertical Separator */}
-            <div className="w-px h-8 bg-[#1f1f28]"></div>
+            <div className="hidden sm:block w-px h-7 bg-[#1f1f28] flex-shrink-0"></div>
 
             {/* Environment */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 uppercase tracking-wider">Env</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs text-gray-500 uppercase tracking-wider hidden sm:inline">Env</span>
               <select
                 value={environment}
                 onChange={(e) => setEnvironment(e.target.value as any)}
                 disabled={isRunning}
-                className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
+                className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
               >
                 <option value="dev">Development</option>
                 <option value="staging">Staging</option>
@@ -265,13 +297,13 @@ export function TestExecutionPage() {
             </div>
 
             {/* Test Level */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 uppercase tracking-wider">Level</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs text-gray-500 uppercase tracking-wider hidden sm:inline">Level</span>
               <select
                 value={testLevel}
                 onChange={(e) => setTestLevel(e.target.value)}
                 disabled={isRunning}
-                className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
+                className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
               >
                 <option value="smoke">Smoke</option>
                 <option value="sanity">Sanity</option>
@@ -279,48 +311,35 @@ export function TestExecutionPage() {
                 <option value="full">Full Suite</option>
               </select>
             </div>
-
-            {/* Execution Mode */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 uppercase tracking-wider">Mode</span>
-              <select
-                value={executionMode}
-                onChange={(e) => setExecutionMode(e.target.value as any)}
-                disabled={isRunning}
-                className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50 min-w-[200px]"
-              >
-                <option value="existing">Run existing tests</option>
-                <option value="generate">Generate + run tests (AI)</option>
-              </select>
-            </div>
           </div>
 
-          {/* Right: Action Buttons */}
-          <div className="flex items-center gap-3">
+          {/* Right: Action Buttons — always visible */}
+          <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
             {hasFailures && !isRunning && (
               <button
                 onClick={handleRerunFailed}
-                className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 rounded-lg transition-all text-sm"
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 rounded-lg transition-all text-sm"
               >
-                <RefreshCw size={16} />
-                Re-run Failed ({failedLogs.length})
+                <RefreshCw size={15} />
+                <span className="hidden sm:inline">Re-run Failed ({failedLogs.length})</span>
+                <span className="sm:hidden">{failedLogs.length}</span>
               </button>
             )}
 
             {isRunning ? (
               <button
                 onClick={handleStop}
-                className="flex items-center gap-2 px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-semibold"
+                className="flex items-center gap-2 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-semibold text-sm"
               >
-                <StopCircle size={18} />
+                <StopCircle size={17} />
                 Stop
               </button>
             ) : (
               <button
                 onClick={handleRun}
-                className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold"
+                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-sm"
               >
-                <Play size={18} />
+                <Play size={17} />
                 {logs.length > 0 ? 'Run Again' : 'Run Tests'}
               </button>
             )}
@@ -329,11 +348,11 @@ export function TestExecutionPage() {
       </div>
 
       {/* Main Content */}
-      <div className="responsive-detail-grid flex-1 overflow-hidden grid grid-cols-[1fr_320px]">
+      <div className="responsive-detail-grid relative flex-1 overflow-hidden grid grid-cols-[1fr_320px]">
         {/* Execution Console */}
         <main className="h-full overflow-y-auto bg-[#060609] p-6">
           {/* Console Header */}
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3 text-gray-500">
               <Terminal size={18} />
               <span className="text-sm font-mono">Test Execution Console</span>
@@ -360,6 +379,11 @@ export function TestExecutionPage() {
           </div>
 
           {/* Console Logs */}
+          {executionError && (
+            <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+              Backend execution failed: {executionError}
+            </div>
+          )}
           {logs.length === 0 && !isRunning ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="w-16 h-16 bg-[#13131a] rounded-full flex items-center justify-center mb-4">
@@ -382,7 +406,7 @@ export function TestExecutionPage() {
                 >
                   <div
                     onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}
-                    className="flex items-center gap-4 p-4 cursor-pointer"
+                    className="flex flex-col gap-4 p-4 cursor-pointer lg:flex-row lg:items-center"
                   >
                     {/* Status Icon */}
                     <div className="flex-shrink-0">
@@ -418,7 +442,7 @@ export function TestExecutionPage() {
                     </div>
 
                     {/* Metrics */}
-                    <div className="flex items-center gap-6 flex-shrink-0">
+                    <div className="grid w-full grid-cols-3 gap-3 flex-shrink-0 lg:w-auto lg:flex lg:items-center lg:gap-6">
                       <div className="text-center">
                         <div className="text-xs text-gray-500 mb-1">Code</div>
                         <div className={`text-sm font-semibold font-mono ${
@@ -435,7 +459,7 @@ export function TestExecutionPage() {
                         <div className="text-sm text-white font-mono">{log.duration}ms</div>
                       </div>
 
-                      <div className="text-xs text-gray-500 flex-shrink-0">{log.timestamp}</div>
+                      <div className="text-xs text-gray-500 flex-shrink-0 col-span-3 lg:col-span-1">{log.timestamp}</div>
 
                       {expandedLogId === log.id ? (
                         <ChevronUp size={18} className="text-gray-400" />
@@ -448,7 +472,7 @@ export function TestExecutionPage() {
                   {/* Expanded Details */}
                   {expandedLogId === log.id && (
                     <div className="border-t border-[#1f1f28] p-4 bg-[#0d0d12]">
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                         {log.requestBody && (
                           <div>
                             <div className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Request</div>
