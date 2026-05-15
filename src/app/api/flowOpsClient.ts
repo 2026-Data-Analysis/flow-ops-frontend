@@ -76,6 +76,9 @@ export interface CreateAppRequest {
 
 export interface AppDetailResponse extends CreateAppRequest {
   id: number;
+  title?: string;
+  main?: boolean;
+  primary?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -96,6 +99,8 @@ export interface ProjectResponse {
 export interface RepositoryResponse {
   id: number;
   projectId: number;
+  appId?: number;
+  appTitle?: string;
   fullName: string;
   repositoryUrl?: string;
   defaultBranch?: string;
@@ -128,6 +133,7 @@ export interface ApiInventoryResponse {
   method: HttpMethod | 'TRACE';
   endpointPath: string;
   operationId?: string;
+  domainTag?: string;
   branchName?: string;
   summary?: string;
   sourceType?: 'OPENAPI' | 'MANUAL';
@@ -139,6 +145,10 @@ export interface ApiInventoryResponse {
   totalTestCount?: number;
   coveragePercentage?: number;
   successRate?: number;
+  updatedAt?: string;
+  modifiedAt?: string;
+  lastModifiedAt?: string;
+  createdAt?: string;
 }
 
 export interface ApiInventoryBranchSummaryResponse {
@@ -194,6 +204,135 @@ export interface ExecutionDetailResponse {
   errorMessage?: string;
   createdBy?: string;
   timeline?: ExecutionStepLogResponse[];
+}
+
+export interface TestCaseResponse {
+  id: number;
+  apiId?: number;
+  apiInventoryId?: number;
+  draftId?: number;
+  name?: string;
+  title?: string;
+  active?: boolean;
+  version?: number;
+  type?: string;
+  testLevel?: TestLevel;
+  description?: string;
+  expectedResult?: string;
+  expectedSpec?: string;
+  requestPreview?: unknown;
+  requestSpec?: string;
+  assertionSpec?: string;
+  validationRules?: string[] | unknown;
+  role?: string;
+  userRole?: string;
+  stateCondition?: string;
+  dataVariant?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  selectedEndpoint?: {
+    id?: number;
+    method?: HttpMethod;
+    path?: string;
+    domainTag?: string;
+    controllerName?: string;
+  };
+}
+
+export interface ScenarioSummaryResponse {
+  id: number;
+  name: string;
+  description?: string;
+  type?: string;
+  steps?: number;
+  updatedAt?: string;
+}
+
+export interface ScenarioDetailResponse {
+  id: number;
+  appId: number;
+  name: string;
+  description?: string;
+  type?: string;
+  steps?: Array<{
+    id: number;
+    stepOrder: number;
+    apiId?: number;
+    endpoint?: {
+      id?: number;
+      method?: HttpMethod;
+      path?: string;
+      domainTag?: string;
+      controllerName?: string;
+    };
+    label?: string;
+    requestConfig?: string;
+    extractRules?: string;
+    validationRules?: string;
+  }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TestGenerationResponse {
+  id: number;
+  appId?: number;
+  environmentId?: number;
+  requestedBy?: string;
+  selectedApiIds?: number[];
+  contextSummary?: string;
+  currentCoverage?: number;
+  status?: 'REQUESTED' | 'GENERATING' | 'COMPLETED' | 'FAILED' | string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TestGenerationDraftResponse {
+  id?: number;
+  draftId?: number;
+  apiId?: number;
+  apiInventoryId?: number;
+  name?: string;
+  title?: string;
+  description?: string;
+  type?: string;
+  testLevel?: TestLevel;
+  userRole?: string;
+  role?: string;
+  stateCondition?: string;
+  edgeState?: string;
+  edgeStates?: string[] | string;
+  dataVariant?: string;
+  requestSpec?: string;
+  requestPreview?: unknown;
+  expectedResult?: string;
+  assertionSpec?: string;
+  validationRules?: string[] | unknown;
+}
+
+export interface CreateTestGenerationRequest {
+  appId: number;
+  environmentId: number;
+  requestedBy: string;
+  selectedApiIds: number[];
+  contextSummary?: string;
+  currentCoverage?: number;
+}
+
+export interface SaveTestGenerationDraftRequest {
+  testCases: Array<{
+    draftId: number;
+    name: string;
+    expectedResult: string;
+    description?: string;
+    type?: string;
+    testLevel?: TestLevel;
+    userRole?: string;
+    stateCondition?: string;
+    dataVariant?: string;
+    requestSpec?: string;
+    assertionSpec?: string;
+  }>;
 }
 
 function toQuery(params: Record<string, unknown>) {
@@ -268,6 +407,22 @@ export const flowOpsApi = {
 
   getApp: (appId = DEFAULT_APP_ID) => unwrap(request<ApiResponse<AppDetailResponse>>(`/apps/${appId}`)),
 
+  updateApp: (appId: number, body: Partial<CreateAppRequest> & { title?: string; main?: boolean }) =>
+    unwrap(
+      request<ApiResponse<AppDetailResponse>>(`/apps/${appId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  setMainApp: (appId: number, body: { title?: string } = {}) =>
+    unwrap(
+      request<ApiResponse<AppDetailResponse>>(`/apps/${appId}/main`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    ),
+
   listApis: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
     unwrap(
       request<ApiResponse<PageResponse<ApiEndpointListItemResponse>>>(
@@ -314,6 +469,28 @@ export const flowOpsApi = {
       }),
     ),
 
+  listRepositories: (projectId: number) =>
+    unwrap(request<ApiResponse<RepositoryResponse[]>>(`/projects/${projectId}/repositories`)),
+
+  updateRepository: (
+    projectId: number,
+    repositoryId: number,
+    body: Partial<Pick<RepositoryResponse, 'appId' | 'appTitle' | 'fullName' | 'defaultBranch' | 'connectionStatus'>>,
+  ) =>
+    unwrap(
+      request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories/${repositoryId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  deleteRepository: (projectId: number, repositoryId: number) =>
+    unwrap(
+      request<ApiResponse<void>>(`/projects/${projectId}/repositories/${repositoryId}`, {
+        method: 'DELETE',
+      }),
+    ),
+
   listRepositoryBranches: (projectId: number, repositoryId: number) =>
     unwrap(
       request<ApiResponse<BranchResponse[]>>(`/projects/${projectId}/repositories/${repositoryId}/branches`),
@@ -342,6 +519,56 @@ export const flowOpsApi = {
       }),
     ),
 
+  listExecutions: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
+    unwrap(
+      request<ApiResponse<PageResponse<ExecutionDetailResponse>>>(
+        `/apps/${appId}/executions${toQuery({ page: 0, size: 100, ...params })}`,
+      ),
+    ),
+
+  listTestCases: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
+    unwrap(
+      request<ApiResponse<PageResponse<TestCaseResponse>>>(
+        `/apps/${appId}/test-cases${toQuery({ page: 0, size: 100, ...params })}`,
+      ),
+    ),
+
+  listTestCasesByApi: (apiId: number) =>
+    unwrap(request<ApiResponse<TestCaseResponse[]>>(`/apis/${apiId}/test-cases`)),
+
+  createTestCase: (appId: number, body: Partial<TestCaseResponse> & Record<string, unknown>) =>
+    unwrap(
+      request<ApiResponse<TestCaseResponse>>(`/apps/${appId}/test-cases`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  createTestGeneration: (body: CreateTestGenerationRequest) =>
+    unwrap(
+      request<ApiResponse<TestGenerationResponse>>('/test-generations', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  getTestGeneration: (generationId: number) =>
+    unwrap(request<ApiResponse<TestGenerationResponse>>(`/test-generations/${generationId}`)),
+
+  listTestGenerationDrafts: (generationId: number) =>
+    unwrap(request<ApiResponse<TestGenerationDraftResponse[]>>(`/test-generations/${generationId}/drafts`)),
+
+  saveTestGenerationDrafts: (generationId: number, body: SaveTestGenerationDraftRequest) =>
+    unwrap(
+      request<ApiResponse<TestCaseResponse[] | { testCases?: TestCaseResponse[]; saved?: TestCaseResponse[] }>>(
+        `/test-generations/${generationId}/save`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      ),
+    ),
+
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
     unwrap(
       request<ApiResponse<ExecutionDetailResponse>>(`/environments/${environmentId}/quick-test`, {
@@ -349,10 +576,75 @@ export const flowOpsApi = {
         body: JSON.stringify(body),
       }),
     ),
+
+  listScenarios: (appId = DEFAULT_APP_ID) =>
+    unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
+
+  getScenario: (scenarioId: number) =>
+    unwrap(request<ApiResponse<ScenarioDetailResponse>>(`/scenarios/${scenarioId}`)),
+
+  getTestCase: (testCaseId: number) =>
+    unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`)),
+
+  updateTestCase: (testCaseId: number, body: Partial<TestCaseResponse> & Record<string, unknown>) =>
+    unwrap(
+      request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  deleteTestCase: (testCaseId: number) =>
+    unwrap(request<ApiResponse<void>>(`/test-cases/${testCaseId}`, { method: 'DELETE' })),
+
+  setTestCaseActive: (testCaseId: number, active: boolean) =>
+    unwrap(
+      request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active }),
+      }),
+    ),
+
+  runTestCases: (body: {
+    appId: number;
+    environmentId: number;
+    testCaseIds?: number[];
+    testLevel?: TestLevel;
+    createdBy: string;
+  }) =>
+    unwrap(
+      request<ApiResponse<ExecutionDetailResponse>>('/executions/run-test-cases', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  runScenario: (body: {
+    appId: number;
+    environmentId: number;
+    scenarioId?: number;
+    scenarioIds?: number[];
+    testLevel?: TestLevel;
+    createdBy: string;
+  }) =>
+    unwrap(
+      request<ApiResponse<ExecutionDetailResponse>>('/executions/run-scenario', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
+  getExecution: (executionId: number) =>
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}`)),
 };
 
 export function rememberAppId(appId: number) {
   localStorage.setItem('flowOps.appId', String(appId));
+}
+
+export function rememberAppTitle(title: string) {
+  localStorage.setItem('flowOps.appTitle', title);
+  window.dispatchEvent(new Event('flowOps.applicationChanged'));
 }
 
 export function rememberProjectId(projectId: number) {

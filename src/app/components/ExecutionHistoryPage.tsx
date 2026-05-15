@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { 
   Search,
@@ -21,6 +21,7 @@ import {
   X,
   Layers
 } from 'lucide-react';
+import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
 
 interface ExecutionRecord {
   id: string;
@@ -69,193 +70,6 @@ interface AssertionResult {
   passed: boolean;
 }
 
-const mockExecutions: ExecutionRecord[] = [
-  {
-    id: 'exec_001',
-    name: 'User Authentication Flow',
-    type: 'scenario',
-    environment: 'staging',
-    status: 'success',
-    timestamp: '2026-04-01 14:32:15',
-    duration: 2345,
-    totalSteps: 3,
-    passedSteps: 3,
-    failedSteps: 0,
-    steps: [
-      {
-        id: 's1',
-        order: 1,
-        name: 'Login - Get Auth Token',
-        apiMethod: 'POST',
-        apiPath: '/api/v1/auth/login',
-        status: 'success',
-        duration: 245,
-        request: {
-          method: 'POST',
-          url: 'https://staging.api.example.com/api/v1/auth/login',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: '{\n  "email": "test@example.com",\n  "password": "password123"\n}',
-        },
-        response: {
-          statusCode: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Request-ID': 'req_abc123',
-          },
-          body: '{\n  "success": true,\n  "data": {\n    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",\n    "user": {\n      "id": "usr_123",\n      "email": "test@example.com"\n    }\n  }\n}',
-          duration: 245,
-        },
-        assertions: [
-          { id: 'a1', type: 'exists', fieldPath: 'data.token', expected: 'exists', actual: 'exists', passed: true },
-          { id: 'a2', type: 'equals', fieldPath: 'success', expected: 'true', actual: 'true', passed: true },
-        ],
-      },
-      {
-        id: 's2',
-        order: 2,
-        name: 'Create New Post',
-        apiMethod: 'POST',
-        apiPath: '/api/v1/posts',
-        status: 'success',
-        duration: 134,
-        request: {
-          method: 'POST',
-          url: 'https://staging.api.example.com/api/v1/posts',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          },
-          body: '{\n  "title": "Test Post",\n  "content": "Test content"\n}',
-        },
-        response: {
-          statusCode: 201,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "success": true,\n  "data": {\n    "id": "post_456",\n    "title": "Test Post"\n  }\n}',
-          duration: 134,
-        },
-        assertions: [
-          { id: 'a3', type: 'equals', fieldPath: 'response.status', expected: '201', actual: '201', passed: true },
-        ],
-      },
-      {
-        id: 's3',
-        order: 3,
-        name: 'Get Post Details',
-        apiMethod: 'GET',
-        apiPath: '/api/v1/posts/post_456',
-        status: 'success',
-        duration: 89,
-        request: {
-          method: 'GET',
-          url: 'https://staging.api.example.com/api/v1/posts/post_456',
-          headers: {
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-          },
-        },
-        response: {
-          statusCode: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "success": true,\n  "data": {\n    "id": "post_456",\n    "title": "Test Post",\n    "content": "Test content"\n  }\n}',
-          duration: 89,
-        },
-        assertions: [],
-      },
-    ],
-  },
-  {
-    id: 'exec_002',
-    name: 'Login API Test',
-    type: 'api',
-    environment: 'prod',
-    status: 'failed',
-    timestamp: '2026-04-01 11:15:32',
-    duration: 567,
-    totalSteps: 2,
-    passedSteps: 1,
-    failedSteps: 1,
-    steps: [
-      {
-        id: 's4',
-        order: 1,
-        name: 'Login - Success Case',
-        apiMethod: 'POST',
-        apiPath: '/api/v1/auth/login',
-        status: 'success',
-        duration: 198,
-        request: {
-          method: 'POST',
-          url: 'https://api.example.com/api/v1/auth/login',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "email": "test@example.com",\n  "password": "password123"\n}',
-        },
-        response: {
-          statusCode: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "success": true,\n  "data": {\n    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."\n  }\n}',
-          duration: 198,
-        },
-        assertions: [
-          { id: 'a4', type: 'equals', fieldPath: 'response.status', expected: '200', actual: '200', passed: true },
-        ],
-      },
-      {
-        id: 's5',
-        order: 2,
-        name: 'Login - Missing Field',
-        apiMethod: 'POST',
-        apiPath: '/api/v1/auth/login',
-        status: 'failed',
-        duration: 369,
-        request: {
-          method: 'POST',
-          url: 'https://api.example.com/api/v1/auth/login',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "password": "password123"\n}',
-        },
-        response: {
-          statusCode: 500,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: '{\n  "success": false,\n  "error": {\n    "code": "INTERNAL_ERROR",\n    "message": "An unexpected error occurred"\n  }\n}',
-          duration: 369,
-        },
-        assertions: [
-          { id: 'a5', type: 'equals', fieldPath: 'response.status', expected: '400', actual: '500', passed: false },
-          { id: 'a6', type: 'equals', fieldPath: 'error.code', expected: 'MISSING_FIELD', actual: 'INTERNAL_ERROR', passed: false },
-        ],
-        errorMessage: 'Expected status 400 but received 500. Server error instead of validation error.',
-      },
-    ],
-  },
-  {
-    id: 'exec_003',
-    name: 'E2E Order Flow',
-    type: 'scenario',
-    environment: 'staging',
-    status: 'partial',
-    timestamp: '2026-03-31 18:42:10',
-    duration: 4521,
-    totalSteps: 5,
-    passedSteps: 4,
-    failedSteps: 1,
-    steps: [],
-  },
-];
-
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
   POST: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20' },
@@ -264,13 +78,63 @@ const methodColors = {
   PATCH: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
 };
 
+
+const normalizeMethod = (method?: string): ExecutionStep['apiMethod'] =>
+  (['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method || '') ? method : 'GET') as ExecutionStep['apiMethod'];
+
+const normalizeExecutionStep = (step: ExecutionStepLogResponse, index: number, execution: ExecutionDetailResponse): ExecutionStep => ({
+  id: String(step.id),
+  order: index + 1,
+  name: step.caseName || step.step || `Step ${index + 1}`,
+  apiMethod: normalizeMethod(step.method),
+  apiPath: step.endpoint || execution.endpoint || 'Unknown endpoint',
+  status: step.status === 'SUCCESS' || step.success ? 'success' : 'failed',
+  duration: step.durationMs || 0,
+  request: {
+    method: step.method || 'GET',
+    url: step.endpoint || execution.endpoint || '',
+    headers: {},
+  },
+  response: {
+    statusCode: step.responseCode || (step.status === 'SUCCESS' || step.success ? 200 : 500),
+    headers: {},
+    body: execution.response ? JSON.stringify(execution.response, null, 2) : '',
+    duration: step.durationMs || 0,
+  },
+  assertions: [],
+  errorMessage: execution.errorMessage,
+});
+
+const normalizeExecutionRecord = (execution: ExecutionDetailResponse): ExecutionRecord => {
+  const steps = execution.timeline?.map((step, index) => normalizeExecutionStep(step, index, execution)) || [];
+  const failedSteps = steps.filter((step) => step.status === 'failed').length;
+  const totalSteps = steps.length || execution.totalCount || 1;
+  const passedSteps = steps.length ? steps.length - failedSteps : execution.passedCount || (execution.status === 'SUCCESS' ? 1 : 0);
+
+  return {
+    id: String(execution.id),
+    name: execution.caseName || execution.executionType || `Execution #${execution.id}`,
+    type: execution.executionType === 'SCENARIO' ? 'scenario' : 'api',
+    environment: (execution.environmentName || String(execution.environmentId || 'unknown')) as ExecutionRecord['environment'],
+    status: execution.status === 'SUCCESS' ? 'success' : execution.status === 'PARTIAL_FAILED' ? 'partial' : 'failed',
+    timestamp: execution.executedAt || '',
+    duration: execution.durationMs || execution.responseTimeMs || execution.avgDurationMs || 0,
+    totalSteps,
+    passedSteps,
+    failedSteps: failedSteps || execution.failedCount || (execution.status === 'SUCCESS' ? 0 : 1),
+    steps,
+  };
+};
+
 export function ExecutionHistoryPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [executions, setExecutions] = useState<ExecutionRecord[]>(mockExecutions);
+  const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(
-    searchParams.get('id') || 'exec_001'
+    searchParams.get('id')
   );
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [environmentFilter, setEnvironmentFilter] = useState<string>('all');
@@ -281,6 +145,32 @@ export function ExecutionHistoryPage() {
   const selectedExecution = selectedExecutionId
     ? executions.find(e => e.id === selectedExecutionId)
     : null;
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    flowOpsApi
+      .listExecutions(getDefaultAppId())
+      .then((page) => {
+        if (!active) return;
+        const next = page.content.map(normalizeExecutionRecord);
+        setExecutions(next);
+        setSelectedExecutionId((current) => current || next[0]?.id || null);
+        setApiError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setExecutions([]);
+        setApiError(error instanceof Error ? error.message : 'Failed to load executions.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredExecutions = executions.filter(exec => {
     const matchesSearch = 
@@ -843,3 +733,4 @@ export function ExecutionHistoryPage() {
     </div>
   );
 }
+

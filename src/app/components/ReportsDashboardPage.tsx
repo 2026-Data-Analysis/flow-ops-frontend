@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import {
   TrendingUp,
@@ -7,25 +7,19 @@ import {
   XCircle,
   Activity,
   Calendar,
-  Filter,
   Download,
   ExternalLink,
   Clock,
   AlertTriangle
 } from 'lucide-react';
+import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse } from '../api/flowOpsClient';
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from 'recharts';
 
@@ -42,105 +36,78 @@ interface ExecutionRecord {
   status: 'completed' | 'failed' | 'partial';
 }
 
-const mockExecutions: ExecutionRecord[] = [
-  {
-    id: 'exec_001',
-    date: '2026-04-01',
-    time: '14:23:15',
-    environment: 'Staging',
-    testLevel: 'Smoke',
-    total: 45,
-    passed: 43,
-    failed: 2,
-    duration: 12450,
-    status: 'completed',
-  },
-  {
-    id: 'exec_002',
-    date: '2026-04-01',
-    time: '11:15:32',
-    environment: 'Production',
-    testLevel: 'Regression',
-    total: 156,
-    passed: 148,
-    failed: 8,
-    duration: 45780,
-    status: 'completed',
-  },
-  {
-    id: 'exec_003',
-    date: '2026-03-31',
-    time: '18:42:10',
-    environment: 'Staging',
-    testLevel: 'Full Suite',
-    total: 234,
-    passed: 220,
-    failed: 14,
-    duration: 68920,
-    status: 'completed',
-  },
-  {
-    id: 'exec_004',
-    date: '2026-03-31',
-    time: '15:20:45',
-    environment: 'Development',
-    testLevel: 'Smoke',
-    total: 42,
-    passed: 38,
-    failed: 4,
-    duration: 8340,
-    status: 'partial',
-  },
-  {
-    id: 'exec_005',
-    date: '2026-03-30',
-    time: '09:05:22',
-    environment: 'Production',
-    testLevel: 'Sanity',
-    total: 89,
-    passed: 89,
-    failed: 0,
-    duration: 21560,
-    status: 'completed',
-  },
-];
+const normalizeExecution = (exec: ExecutionDetailResponse): ExecutionRecord => {
+  const ts = exec.executedAt ? new Date(exec.executedAt) : null;
+  const total = exec.totalCount ?? 1;
+  const passed = exec.passedCount ?? (exec.status === 'SUCCESS' ? total : 0);
+  const failed = exec.failedCount ?? (total - passed);
+  return {
+    id: String(exec.id),
+    date: ts ? ts.toLocaleDateString() : '',
+    time: ts ? ts.toLocaleTimeString() : '',
+    environment: exec.environmentName || String(exec.environmentId || ''),
+    testLevel: exec.testLevel || '',
+    total,
+    passed,
+    failed,
+    duration: exec.durationMs || exec.responseTimeMs || exec.avgDurationMs || 0,
+    status: exec.status === 'SUCCESS' ? 'completed' : exec.status === 'PARTIAL_FAILED' ? 'partial' : 'failed',
+  };
+};
 
-const trendData = [
-  { date: 'Mar 25', passed: 142, failed: 8, total: 150 },
-  { date: 'Mar 26', passed: 156, failed: 6, total: 162 },
-  { date: 'Mar 27', passed: 178, failed: 12, total: 190 },
-  { date: 'Mar 28', passed: 165, failed: 5, total: 170 },
-  { date: 'Mar 29', passed: 188, failed: 7, total: 195 },
-  { date: 'Mar 30', passed: 201, failed: 4, total: 205 },
-  { date: 'Mar 31', passed: 198, failed: 11, total: 209 },
-  { date: 'Apr 01', passed: 215, failed: 10, total: 225 },
-];
-
-const failureDistribution = [
-  { name: 'Authentication', value: 12, color: '#ef4444' },
-  { name: 'Validation', value: 8, color: '#f97316' },
-  { name: 'Timeout', value: 5, color: '#f59e0b' },
-  { name: 'Server Error', value: 3, color: '#eab308' },
-  { name: 'Other', value: 2, color: '#84cc16' },
-];
+const buildTrendData = (executions: ExecutionRecord[]) => {
+  const byDate: Record<string, { passed: number; failed: number; total: number }> = {};
+  for (const exec of executions) {
+    if (!exec.date) continue;
+    if (!byDate[exec.date]) byDate[exec.date] = { passed: 0, failed: 0, total: 0 };
+    byDate[exec.date].passed += exec.passed;
+    byDate[exec.date].failed += exec.failed;
+    byDate[exec.date].total += exec.total;
+  }
+  return Object.entries(byDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-8)
+    .map(([date, values]) => ({ date, ...values }));
+};
 
 export function ReportsDashboardPage() {
   const navigate = useNavigate();
   const [dateRange, setDateRange] = useState('7d');
   const [selectedEnv, setSelectedEnv] = useState('all');
+  const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    flowOpsApi
+      .listExecutions(getDefaultAppId())
+      .then((page) => {
+        if (!active) return;
+        setExecutions(page.content.map(normalizeExecution));
+      })
+      .catch(() => {
+        if (!active) return;
+        setExecutions([]);
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const trendData = buildTrendData(executions);
 
   // Calculate metrics
-  const totalTests = mockExecutions.reduce((sum, exec) => sum + exec.total, 0);
-  const totalPassed = mockExecutions.reduce((sum, exec) => sum + exec.passed, 0);
-  const totalFailed = mockExecutions.reduce((sum, exec) => sum + exec.failed, 0);
+  const totalTests = executions.reduce((sum, exec) => sum + exec.total, 0);
+  const totalPassed = executions.reduce((sum, exec) => sum + exec.passed, 0);
+  const totalFailed = executions.reduce((sum, exec) => sum + exec.failed, 0);
   const successRate = totalTests > 0 ? ((totalPassed / totalTests) * 100).toFixed(1) : '0';
-  const avgDuration = mockExecutions.length > 0 
-    ? Math.round(mockExecutions.reduce((sum, exec) => sum + exec.duration, 0) / mockExecutions.length / 1000)
+  const avgDuration = executions.length > 0
+    ? Math.round(executions.reduce((sum, exec) => sum + exec.duration, 0) / executions.length / 1000)
     : 0;
 
-  // Previous period for comparison (mock)
-  const prevSuccessRate = 92.3;
-  const successRateDiff = parseFloat(successRate) - prevSuccessRate;
+  const successRateDiff = 0; // no previous-period comparison without historical API
 
   const handleRowClick = (executionId: string) => {
     // Navigate to execution detail or logs
@@ -229,7 +196,7 @@ export function ReportsDashboardPage() {
             </div>
             <div className="text-3xl text-white font-semibold mb-1">{totalTests.toLocaleString()}</div>
             <div className="text-sm text-gray-500">Total Tests</div>
-            <div className="mt-3 text-xs text-gray-600">{mockExecutions.length} executions</div>
+            <div className="mt-3 text-xs text-gray-600">{executions.length} executions</div>
           </div>
 
           {/* Failures */}
@@ -321,51 +288,44 @@ export function ReportsDashboardPage() {
             </ResponsiveContainer>
           </div>
 
-          {/* Failure Distribution - Pie Chart */}
+          {/* Failure Summary */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl p-6">
             <div className="mb-6">
-              <h3 className="text-white mb-1">Failure Distribution</h3>
-              <p className="text-gray-500 text-sm">By error category</p>
+              <h3 className="text-white mb-1">Failure Summary</h3>
+              <p className="text-gray-500 text-sm">Overall failure rate</p>
             </div>
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie
-                  data={failureDistribution}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={90}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {failureDistribution.map((entry, index) => (
-                    <Cell key={`failure-cell-${entry.name}-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#13131a',
-                    border: '1px solid #1f1f28',
-                    borderRadius: '8px',
-                    color: '#fff',
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-4 space-y-2">
-              {failureDistribution.map((item, index) => (
-                <div key={index} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: item.color }}
-                    ></div>
-                    <span className="text-gray-400">{item.name}</span>
-                  </div>
-                  <span className="text-white font-medium">{item.value}</span>
+            {totalTests > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400 text-sm">Total Tests</span>
+                  <span className="text-white font-semibold">{totalTests}</span>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400 text-sm">Passed</span>
+                  <span className="text-green-400 font-semibold">{totalPassed}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400 text-sm">Failed</span>
+                  <span className="text-red-400 font-semibold">{totalFailed}</span>
+                </div>
+                <div className="pt-2 border-t border-[#1f1f28]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-gray-400 text-xs">Success Rate</span>
+                    <span className="text-white text-xs">{successRate}%</span>
+                  </div>
+                  <div className="w-full bg-[#1f1f28] rounded-full h-2">
+                    <div
+                      className="bg-green-500 h-2 rounded-full"
+                      style={{ width: `${successRate}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 text-gray-600 text-sm">
+                No data yet
+              </div>
+            )}
           </div>
         </div>
 
@@ -410,7 +370,15 @@ export function ReportsDashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1f1f28]">
-                {mockExecutions.map((execution) => {
+                {executions.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center">
+                      <Activity size={32} className="text-gray-600 mx-auto mb-3" />
+                      <p className="text-gray-500 text-sm">{isLoading ? 'Loading...' : 'No executions yet'}</p>
+                    </td>
+                  </tr>
+                ) : null}
+                {executions.map((execution) => {
                   const successRate = ((execution.passed / execution.total) * 100).toFixed(0);
                   return (
                     <tr
@@ -500,8 +468,8 @@ export function ReportsDashboardPage() {
           {/* Pagination Footer */}
           <div className="px-6 py-4 border-t border-[#1f1f28] flex items-center justify-between">
             <div className="text-sm text-gray-500">
-              Showing <span className="text-white font-medium">1-5</span> of{' '}
-              <span className="text-white font-medium">127</span> executions
+              Showing <span className="text-white font-medium">{Math.min(executions.length, 5)}</span> of{' '}
+              <span className="text-white font-medium">{executions.length}</span> executions
             </div>
             <div className="flex items-center gap-2">
               <button className="px-3 py-1.5 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white hover:border-[#2f2f38] transition-colors disabled:opacity-50" disabled>

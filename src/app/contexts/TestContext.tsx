@@ -10,6 +10,11 @@ interface API {
 interface TestContextType {
   selectedAPIs: API[];
   setSelectedAPIs: (apis: API[]) => void;
+  activeApplication: {
+    appId: number;
+    title: string;
+  };
+  setActiveApplication: (application: { appId: number; title: string }) => void;
   environment: 'dev' | 'staging' | 'prod';
   setEnvironment: (env: 'dev' | 'staging' | 'prod') => void;
   testContext: {
@@ -26,15 +31,28 @@ const TestContext = createContext<TestContextType | undefined>(undefined);
 
 export function TestProvider({ children }: { children: ReactNode }) {
   const [selectedAPIs, setSelectedAPIs] = useState<API[]>([]);
+  const [activeApplication, setActiveApplicationState] = useState(() => ({
+    appId: Number(localStorage.getItem('flowOps.appId') || 1),
+    title: localStorage.getItem('flowOps.appTitle') || 'Production API',
+  }));
   const [environment, setEnvironment] = useState<'dev' | 'staging' | 'prod'>('staging');
   const [testContext, setTestContext] = useState<TestContextType['testContext']>({});
   const [executionResults, setExecutionResults] = useState<any>(undefined);
+
+  const setActiveApplication = (application: { appId: number; title: string }) => {
+    localStorage.setItem('flowOps.appId', String(application.appId));
+    localStorage.setItem('flowOps.appTitle', application.title);
+    setActiveApplicationState(application);
+    window.dispatchEvent(new Event('flowOps.applicationChanged'));
+  };
 
   return (
     <TestContext.Provider
       value={{
         selectedAPIs,
         setSelectedAPIs,
+        activeApplication,
+        setActiveApplication,
         environment,
         setEnvironment,
         testContext,

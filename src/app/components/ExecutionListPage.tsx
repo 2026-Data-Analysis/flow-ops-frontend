@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   CheckCircle2,
@@ -14,6 +14,7 @@ import {
   FileText,
   Code
 } from 'lucide-react';
+import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
 
 interface ExecutionLog {
   id: string;
@@ -24,7 +25,7 @@ interface ExecutionLog {
   path: string;
   status: 'success' | 'failed';
   duration: number;
-  environment: 'dev' | 'staging' | 'prod';
+  environment: string;
   testLevel: 'smoke' | 'sanity' | 'regression' | 'full';
   responseCode?: number;
   requestHeaders?: Record<string, string>;
@@ -37,153 +38,6 @@ interface ExecutionLog {
   assertions?: { name: string; passed: boolean; message?: string }[];
   scenarioSteps?: { step: number; name: string; method: string; path: string; status: 'success' | 'failed'; duration: number }[];
 }
-
-const mockLogs: ExecutionLog[] = [
-  {
-    id: '1',
-    timestamp: '2026-04-10 14:23:01.234',
-    execution: 'User Authentication Flow',
-    step: 'Step 1: Login',
-    method: 'POST',
-    path: '/api/v1/auth/login',
-    status: 'success',
-    duration: 245,
-    environment: 'staging',
-    testLevel: 'smoke',
-    responseCode: 200,
-    requestHeaders: { 'Content-Type': 'application/json' },
-    requestBody: '{\n  "username": "admin@test.com",\n  "password": "***"\n}',
-    responseHeaders: { 'Content-Type': 'application/json' },
-    responseBody: '{\n  "token": "jwt_abc123",\n  "user": {\n    "id": "usr_123",\n    "email": "admin@test.com"\n  }\n}',
-    assertions: [
-      { name: 'Status code is 200', passed: true },
-      { name: 'Token exists', passed: true },
-      { name: 'User ID exists', passed: true },
-    ],
-    scenarioSteps: [
-      { step: 1, name: 'Login', method: 'POST', path: '/api/v1/auth/login', status: 'success', duration: 245 },
-      { step: 2, name: 'Get Profile', method: 'GET', path: '/api/v1/users/usr_123', status: 'success', duration: 89 },
-    ],
-  },
-  {
-    id: '2',
-    timestamp: '2026-04-10 14:23:01.523',
-    execution: 'User Authentication Flow',
-    step: 'Step 2: Get Profile',
-    method: 'GET',
-    path: '/api/v1/users/usr_123',
-    status: 'success',
-    duration: 89,
-    environment: 'staging',
-    testLevel: 'smoke',
-    responseCode: 200,
-    scenarioSteps: [
-      { step: 1, name: 'Login', method: 'POST', path: '/api/v1/auth/login', status: 'success', duration: 245 },
-      { step: 2, name: 'Get Profile', method: 'GET', path: '/api/v1/users/usr_123', status: 'success', duration: 89 },
-    ],
-  },
-  {
-    id: '3',
-    timestamp: '2026-04-10 13:45:18.456',
-    execution: 'POST /api/v1/posts',
-    method: 'POST',
-    path: '/api/v1/posts',
-    status: 'failed',
-    duration: 156,
-    environment: 'staging',
-    testLevel: 'regression',
-    responseCode: 400,
-    requestBody: '{\n  "content": "Hello World"\n}',
-    responseBody: '{\n  "error": "Validation failed",\n  "details": {\n    "title": "Title is required"\n  }\n}',
-    errorMessage: 'Validation error: title field is required',
-    expectedResult: 'Status code 201',
-    actualResult: 'Status code 400',
-    assertions: [
-      { name: 'Status code is 201', passed: false, message: 'Expected 201 but got 400' },
-      { name: 'Post ID exists', passed: false, message: 'Post was not created' },
-    ],
-  },
-  {
-    id: '4',
-    timestamp: '2026-04-10 12:30:45.123',
-    execution: 'GET /api/v1/users/:id',
-    method: 'GET',
-    path: '/api/v1/users/usr_456',
-    status: 'success',
-    duration: 89,
-    environment: 'prod',
-    testLevel: 'smoke',
-    responseCode: 200,
-    responseBody: '{\n  "id": "usr_456",\n  "name": "John Doe",\n  "email": "john@example.com"\n}',
-  },
-  {
-    id: '5',
-    timestamp: '2026-04-10 11:20:15.789',
-    execution: 'Post Creation Scenario',
-    step: 'Step 2: Create Post',
-    method: 'POST',
-    path: '/api/v1/posts',
-    status: 'failed',
-    duration: 234,
-    environment: 'dev',
-    testLevel: 'sanity',
-    responseCode: 403,
-    errorMessage: 'Forbidden: Invalid authentication token',
-    expectedResult: 'Status code 201',
-    actualResult: 'Status code 403',
-    assertions: [
-      { name: 'Authentication valid', passed: false, message: 'Token expired or invalid' },
-      { name: 'Post created', passed: false },
-    ],
-    scenarioSteps: [
-      { step: 1, name: 'Login', method: 'POST', path: '/api/v1/auth/login', status: 'success', duration: 189 },
-      { step: 2, name: 'Create Post', method: 'POST', path: '/api/v1/posts', status: 'failed', duration: 234 },
-    ],
-  },
-  {
-    id: '6',
-    timestamp: '2026-04-10 10:15:22.345',
-    execution: 'DELETE /api/v1/users/:id',
-    method: 'DELETE',
-    path: '/api/v1/users/usr_789',
-    status: 'success',
-    duration: 67,
-    environment: 'staging',
-    testLevel: 'regression',
-    responseCode: 204,
-  },
-  {
-    id: '7',
-    timestamp: '2026-04-10 09:45:10.567',
-    execution: 'Token Expiration Recovery',
-    step: 'Step 3: Access Protected',
-    method: 'GET',
-    path: '/api/v1/users/profile',
-    status: 'failed',
-    duration: 123,
-    environment: 'staging',
-    testLevel: 'full',
-    responseCode: 401,
-    errorMessage: 'Unauthorized: Token has expired',
-    scenarioSteps: [
-      { step: 1, name: 'Login', method: 'POST', path: '/api/v1/auth/login', status: 'success', duration: 245 },
-      { step: 2, name: 'Wait', method: 'GET', path: '/api/v1/wait', status: 'success', duration: 5000 },
-      { step: 3, name: 'Access Protected', method: 'GET', path: '/api/v1/users/profile', status: 'failed', duration: 123 },
-    ],
-  },
-  {
-    id: '8',
-    timestamp: '2026-04-10 08:30:00.890',
-    execution: 'PUT /api/v1/posts/:id',
-    method: 'PUT',
-    path: '/api/v1/posts/post_123',
-    status: 'success',
-    duration: 134,
-    environment: 'dev',
-    testLevel: 'regression',
-    responseCode: 200,
-  },
-];
 
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
@@ -199,17 +53,90 @@ const envColors = {
   prod: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20' },
 };
 
+const getEnvColor = (environment: string) =>
+  envColors[environment as keyof typeof envColors] || { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' };
+
+
+const normalizeMethod = (method?: string): ExecutionLog['method'] =>
+  (['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method || '') ? method : 'GET') as ExecutionLog['method'];
+
+const normalizeExecutionStatus = (status?: string): ExecutionLog['status'] =>
+  status === 'SUCCESS' ? 'success' : 'failed';
+
+const normalizeStepLog = (step: ExecutionStepLogResponse, execution: ExecutionDetailResponse): ExecutionLog => ({
+  id: String(step.id),
+  timestamp: step.executedAt || step.startedAt || execution.executedAt || '',
+  execution: execution.caseName || execution.executionType || `Execution #${execution.id}`,
+  step: step.step || step.caseName,
+  method: normalizeMethod(step.method || execution.endpoint?.split(' ')[0]),
+  path: step.endpoint || execution.endpoint || 'Unknown endpoint',
+  status: normalizeExecutionStatus(step.status || (step.success === false ? 'FAILED' : 'SUCCESS')),
+  duration: step.durationMs || 0,
+  environment: execution.environmentName || String(execution.environmentId),
+  testLevel: (execution.testLevel?.toLowerCase() as ExecutionLog['testLevel']) || 'smoke',
+  responseCode: step.responseCode,
+  errorMessage: execution.errorMessage,
+});
+
+const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
+  if (execution.timeline?.length) {
+    return execution.timeline.map((step) => normalizeStepLog(step, execution));
+  }
+
+  return [{
+    id: String(execution.id),
+    timestamp: execution.executedAt || '',
+    execution: execution.caseName || execution.executionType || `Execution #${execution.id}`,
+    method: normalizeMethod(execution.endpoint?.split(' ')[0]),
+    path: execution.endpoint || 'Unknown endpoint',
+    status: normalizeExecutionStatus(execution.status),
+    duration: execution.durationMs || execution.responseTimeMs || execution.avgDurationMs || 0,
+    environment: execution.environmentName || String(execution.environmentId),
+    testLevel: (execution.testLevel?.toLowerCase() as ExecutionLog['testLevel']) || 'smoke',
+    responseCode: execution.statusCode,
+    responseBody: execution.response ? JSON.stringify(execution.response, null, 2) : undefined,
+    errorMessage: execution.errorMessage,
+  }];
+};
+
 export function ExecutionListPage() {
   const navigate = useNavigate();
-  const [logs, setLogs] = useState<ExecutionLog[]>(mockLogs);
+  const [logs, setLogs] = useState<ExecutionLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFailedOnly, setShowFailedOnly] = useState(false);
   const [showSlowOnly, setShowSlowOnly] = useState(false);
-  const [environmentFilter, setEnvironmentFilter] = useState<'all' | 'dev' | 'staging' | 'prod'>('all');
+  const [environmentFilter, setEnvironmentFilter] = useState<string>('all');
   const [testLevelFilter, setTestLevelFilter] = useState<'all' | 'smoke' | 'sanity' | 'regression' | 'full'>('all');
 
   const selectedLog = selectedLogId ? logs.find(l => l.id === selectedLogId) : null;
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    flowOpsApi
+      .listExecutions(getDefaultAppId())
+      .then((page) => {
+        if (!active) return;
+        const next = page.content.flatMap(normalizeExecution);
+        setLogs(next);
+        setApiError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setLogs([]);
+        setApiError(error instanceof Error ? error.message : 'Failed to load execution history.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredLogs = logs.filter(log => {
     const matchesSearch =
@@ -357,7 +284,7 @@ export function ExecutionListPage() {
                     {log.step ? (
                       <div className="text-xs text-gray-400">{log.step}</div>
                     ) : (
-                      <div className="text-xs text-gray-600">—</div>
+                      <div className="text-xs text-gray-600">-</div>
                     )}
                   </td>
                   <td className="px-6 py-4">
@@ -442,7 +369,7 @@ export function ExecutionListPage() {
                 )}
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">Environment</span>
-                  <span className={`text-xs px-2 py-1 rounded ${envColors[selectedLog.environment].bg} ${envColors[selectedLog.environment].text} ${envColors[selectedLog.environment].border} border capitalize`}>
+                  <span className={`text-xs px-2 py-1 rounded ${getEnvColor(selectedLog.environment).bg} ${getEnvColor(selectedLog.environment).text} ${getEnvColor(selectedLog.environment).border} border capitalize`}>
                     {selectedLog.environment}
                   </span>
                 </div>
@@ -633,7 +560,7 @@ export function ExecutionListPage() {
                                 {step.method}
                               </span>
                               <span className="text-gray-500 font-mono">{step.path}</span>
-                              <span className="text-gray-600">•</span>
+                              <span className="text-gray-600">-</span>
                               <span className="text-gray-500">{step.duration}ms</span>
                             </div>
                           </div>
@@ -675,3 +602,4 @@ export function ExecutionListPage() {
     </div>
   );
 }
+

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import {
   Search,
   Filter,
+  ArrowLeft,
   ChevronRight,
   Lock,
   TrendingUp,
@@ -34,151 +35,9 @@ interface ApiEndpoint {
   coverage: number;
   testCount: number;
   lastUpdated: string;
-  environments: ('dev' | 'staging' | 'prod')[];
+  environments: string[];
 }
 
-const mockEndpoints: ApiEndpoint[] = [
-  {
-    id: '1',
-    method: 'GET',
-    path: '/api/v1/users',
-    controller: 'UserController.getUsers',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'User',
-    testLevel: 'smoke',
-    coverage: 85,
-    testCount: 12,
-    lastUpdated: '2 hours ago',
-    environments: ['dev', 'staging', 'prod'],
-  },
-  {
-    id: '2',
-    method: 'POST',
-    path: '/api/v1/users',
-    controller: 'UserController.createUser',
-    status: 'edited',
-    requiresAuth: true,
-    domain: 'User',
-    testLevel: 'sanity',
-    coverage: 72,
-    testCount: 8,
-    lastUpdated: '5 hours ago',
-    environments: ['dev', 'staging'],
-  },
-  {
-    id: '3',
-    method: 'GET',
-    path: '/api/v1/users/:id',
-    controller: 'UserController.getUserById',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'User',
-    testLevel: 'regression',
-    coverage: 90,
-    testCount: 15,
-    lastUpdated: '1 day ago',
-    environments: ['dev', 'staging', 'prod'],
-  },
-  {
-    id: '4',
-    method: 'PUT',
-    path: '/api/v1/users/:id',
-    controller: 'UserController.updateUser',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'User',
-    testLevel: 'full',
-    coverage: 65,
-    testCount: 10,
-    lastUpdated: '3 hours ago',
-    environments: ['staging', 'prod'],
-  },
-  {
-    id: '5',
-    method: 'DELETE',
-    path: '/api/v1/users/:id',
-    controller: 'UserController.deleteUser',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'User',
-    testLevel: 'smoke',
-    coverage: 95,
-    testCount: 6,
-    lastUpdated: '12 hours ago',
-    environments: ['dev', 'staging', 'prod'],
-  },
-  {
-    id: '6',
-    method: 'POST',
-    path: '/api/v1/auth/login',
-    controller: 'AuthController.login',
-    status: 'auto',
-    requiresAuth: false,
-    domain: 'Auth',
-    testLevel: 'smoke',
-    coverage: 100,
-    testCount: 20,
-    lastUpdated: '30 minutes ago',
-    environments: ['dev', 'staging', 'prod'],
-  },
-  {
-    id: '7',
-    method: 'GET',
-    path: '/api/v1/products',
-    controller: 'ProductController.getProducts',
-    status: 'edited',
-    requiresAuth: false,
-    domain: 'Product',
-    testLevel: 'regression',
-    coverage: 58,
-    testCount: 7,
-    lastUpdated: '6 hours ago',
-    environments: ['dev', 'staging'],
-  },
-  {
-    id: '8',
-    method: 'PATCH',
-    path: '/api/v1/products/:id/stock',
-    controller: 'ProductController.updateStock',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'Product',
-    testLevel: 'full',
-    coverage: 45,
-    testCount: 5,
-    lastUpdated: '1 day ago',
-    environments: ['staging', 'prod'],
-  },
-  {
-    id: '9',
-    method: 'POST',
-    path: '/api/v1/posts',
-    controller: 'PostController.createPost',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'Post',
-    testLevel: 'sanity',
-    coverage: 80,
-    testCount: 11,
-    lastUpdated: '4 hours ago',
-    environments: ['dev', 'staging', 'prod'],
-  },
-  {
-    id: '10',
-    method: 'POST',
-    path: '/api/v1/posts/:postId/like',
-    controller: 'LikeController.likePost',
-    status: 'auto',
-    requiresAuth: true,
-    domain: 'Like',
-    testLevel: 'regression',
-    coverage: 70,
-    testCount: 9,
-    lastUpdated: '8 hours ago',
-    environments: ['dev', 'staging'],
-  },
-];
 
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
@@ -197,6 +56,14 @@ const testLevelColors = {
   full: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
 };
 
+const environmentColors = [
+  { dot: 'bg-yellow-500', active: 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' },
+  { dot: 'bg-blue-500', active: 'bg-blue-500/10 text-blue-400 border border-blue-500/20' },
+  { dot: 'bg-green-500', active: 'bg-green-500/10 text-green-400 border border-green-500/20' },
+  { dot: 'bg-purple-500', active: 'bg-purple-500/10 text-purple-400 border border-purple-500/20' },
+  { dot: 'bg-pink-500', active: 'bg-pink-500/10 text-pink-400 border border-pink-500/20' },
+];
+
 const formatRelativeTime = (value?: string) => {
   if (!value) return 'Never';
   const time = new Date(value).getTime();
@@ -208,6 +75,28 @@ const formatRelativeTime = (value?: string) => {
   return `${Math.round(hours / 24)} days ago`;
 };
 
+const titleCase = (value: string) =>
+  value
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .replace(/\s+/g, '');
+
+const inferDomainFromInventory = (inventory: ApiInventoryResponse) => {
+  if (inventory.domainTag) return inventory.domainTag;
+
+  const controllerEntity = inventory.operationId?.match(/^([A-Za-z0-9]+)Controller\b/)?.[1];
+  if (controllerEntity) return titleCase(controllerEntity);
+
+  const pathEntity = inventory.endpointPath
+    .split('/')
+    .find((segment) => segment && !segment.startsWith('{') && !segment.startsWith(':') && !/^v\d+$/i.test(segment) && segment !== 'api');
+
+  return pathEntity ? titleCase(pathEntity.replace(/s$/, '')) : 'General';
+};
+
+const resolveInventoryUpdatedAt = (inventory: ApiInventoryResponse) =>
+  inventory.updatedAt || inventory.modifiedAt || inventory.lastModifiedAt || inventory.createdAt;
+
 const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   id: String(inventory.id),
   method: (inventory.method === 'TRACE' ? 'GET' : inventory.method) as ApiEndpoint['method'],
@@ -215,12 +104,12 @@ const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   controller: inventory.operationId || inventory.summary || 'Inventory',
   status: inventory.editStatus === 'EDITED' || inventory.sourceType === 'MANUAL' ? 'edited' : 'auto',
   requiresAuth: Boolean(inventory.authRequired),
-  domain: inventory.branchName || 'General',
+  domain: inferDomainFromInventory(inventory),
   testLevel: (inventory.testLevels?.[0]?.toLowerCase() as ApiEndpoint['testLevel']) || 'smoke',
   coverage: Math.round(inventory.coveragePercentage ?? 0),
   testCount: inventory.totalTestCount ?? 0,
-  lastUpdated: inventory.specVersion || 'Inventory',
-  environments: ['dev', 'staging', 'prod'],
+  lastUpdated: formatRelativeTime(resolveInventoryUpdatedAt(inventory)),
+  environments: inventory.branchName ? [inventory.branchName] : [],
 });
 
 export function ApiManagementPage() {
@@ -231,7 +120,7 @@ export function ApiManagementPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedEnvironment, setSelectedEnvironment] = useState<'all' | 'dev' | 'staging' | 'prod'>('all');
+  const [selectedEnvironment, setSelectedEnvironment] = useState<string>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
   const [testLevelFilter, setTestLevelFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'auto' | 'edited'>('all');
@@ -263,6 +152,8 @@ export function ApiManagementPage() {
       active = false;
     };
   }, []);
+
+  const environments = ['all', ...Array.from(new Set(endpoints.flatMap((endpoint) => endpoint.environments)))];
 
   // Extract unique domains
   const domains = ['all', ...Array.from(new Set(endpoints.map(e => e.domain)))];
@@ -301,14 +192,14 @@ export function ApiManagementPage() {
   };
 
   const handleRunTests = () => {
-    if (selectedApiId) {
-      const ids = selectedApiIds.length > 0 ? selectedApiIds : [selectedApiId];
-      const selected = endpoints
-        .filter((api) => ids.includes(api.id))
-        .map((api) => ({ id: api.id, name: api.path, endpoint: api.path, method: api.method }));
-      setSelectedAPIs(selected);
-      navigate('/execution/run', { state: { selectedApiId, selectedApiIds: ids } });
-    }
+    const ids = selectedApiIds.length > 0 ? selectedApiIds : selectedApiId ? [selectedApiId] : [];
+    if (ids.length === 0) return;
+
+    const selected = endpoints
+      .filter((api) => ids.includes(api.id))
+      .map((api) => ({ id: api.id, name: api.path, endpoint: api.path, method: api.method }));
+    setSelectedAPIs(selected);
+    navigate('/execution/run', { state: { selectedApiId: ids[0], selectedApiIds: ids } });
   };
 
   const handleViewLogs = () => {
@@ -327,7 +218,7 @@ export function ApiManagementPage() {
   const totalTests = filteredEndpoints.reduce((sum, e) => sum + e.testCount, 0);
 
   return (
-    <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedApiId ? '1fr 480px' : '1fr' }}>
+    <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
       {/* Left Panel: API List */}
       <div className="flex flex-col overflow-hidden">
         {/* Header */}
@@ -397,6 +288,16 @@ export function ApiManagementPage() {
             )}
 
             <button
+              onClick={handleRunTests}
+              disabled={selectedApiIds.length === 0}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-[#13131a] disabled:text-gray-500 disabled:border disabled:border-[#1f1f28]"
+              title={selectedApiIds.length > 0 ? 'Run selected APIs' : 'Select APIs to run tests'}
+            >
+              <Play size={14} />
+              Run Tests
+            </button>
+
+            <button
               onClick={() => setShowFilters(!showFilters)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
                 showFilters ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-[#13131a] border border-[#1f1f28] text-gray-400 hover:text-white'
@@ -450,51 +351,33 @@ export function ApiManagementPage() {
 
       {/* Environment Tabs */}
       <div className="border-b border-[#1f1f28] bg-[#0a0a0f]">
-        <div className="px-8 py-3">
-          <div className="responsive-tabs flex items-center gap-2">
-            <button
-              onClick={() => setSelectedEnvironment('all')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                selectedEnvironment === 'all'
-                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                  : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
-              }`}
-            >
-              All Environments
-            </button>
-            <button
-              onClick={() => setSelectedEnvironment('dev')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
-                selectedEnvironment === 'dev'
-                  ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
-                  : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
-              Dev
-            </button>
-            <button
-              onClick={() => setSelectedEnvironment('staging')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
-                selectedEnvironment === 'staging'
-                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                  : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-              Staging
-            </button>
-            <button
-              onClick={() => setSelectedEnvironment('prod')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
-                selectedEnvironment === 'prod'
-                  ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                  : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-green-500"></span>
-              Prod
-            </button>
+        <div className="px-8 py-3 overflow-x-auto">
+          <div className="responsive-tabs flex items-center gap-2 flex-wrap">
+            {environments.map((environment, index) => {
+              const color = environmentColors[(index - 1 + environmentColors.length) % environmentColors.length];
+              const isAll = environment === 'all';
+              const activeClass = isAll
+                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                : color.active;
+
+              return (
+                <button
+                  key={environment}
+                  onClick={() => setSelectedEnvironment(environment)}
+                  title={isAll ? 'All Environments' : environment}
+                  className={`max-w-full px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                    isAll ? '' : 'flex items-center gap-2'
+                  } ${
+                    selectedEnvironment === environment
+                      ? activeClass
+                      : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
+                  }`}
+                >
+                  {!isAll && <span className={`w-2 h-2 rounded-full ${color.dot}`}></span>}
+                  <span className="max-w-[12rem] truncate">{isAll ? 'All Environments' : environment}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -502,18 +385,19 @@ export function ApiManagementPage() {
       {/* Domain Tabs */}
       <div className="border-b border-[#1f1f28] bg-[#0a0a0f]">
         <div className="px-8 py-3 overflow-x-auto">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {domains.map((domain) => (
               <button
                 key={domain}
                 onClick={() => setSelectedDomain(domain)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                title={domain === 'all' ? 'All Domains' : domain}
+                className={`max-w-full px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
                   selectedDomain === domain
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                     : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                 }`}
               >
-                {domain === 'all' ? 'All Domains' : domain}
+                <span className="block max-w-[12rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
               </button>
             ))}
           </div>
@@ -551,7 +435,7 @@ export function ApiManagementPage() {
                     selectedApiId === endpoint.id ? 'border-blue-500/50 bg-blue-500/5' : 'border-[#1f1f28]'
                   }`}
                 >
-                <div className="responsive-card-row flex items-start gap-4">
+                <div className="api-management-card-row responsive-card-row flex min-h-[108px] items-start gap-4">
                     {/* Checkbox */}
                     <div
                       onClick={(e) => toggleApiSelection(endpoint.id, e)}
@@ -564,18 +448,21 @@ export function ApiManagementPage() {
 
                     {/* Method Badge */}
                     <span
-                      className={`${methodColors[endpoint.method].bg} ${methodColors[endpoint.method].text} ${methodColors[endpoint.method].border} border px-3 py-1.5 rounded-lg text-sm font-semibold font-mono flex-shrink-0`}
+                      className={`${methodColors[endpoint.method].bg} ${methodColors[endpoint.method].text} ${methodColors[endpoint.method].border} self-start border px-3 py-1.5 rounded-lg text-sm font-semibold font-mono flex-shrink-0`}
                     >
                       {endpoint.method}
                     </span>
 
                     {/* API Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className="api-management-title-row flex items-center gap-3 mb-2">
                         <div className="text-white font-mono truncate group-hover:text-blue-400 transition-colors">
                           {endpoint.path}
                         </div>
-                        <span className="px-2 py-0.5 bg-[#1f1f28] text-gray-400 text-xs rounded-full flex-shrink-0">
+                        <span
+                          title={endpoint.domain}
+                          className="max-w-[12rem] truncate px-2 py-0.5 bg-[#1f1f28] text-gray-400 text-xs rounded-full flex-shrink-0"
+                        >
                           {endpoint.domain}
                         </span>
                         {endpoint.requiresAuth && (
@@ -585,62 +472,64 @@ export function ApiManagementPage() {
 
                       <div className="text-xs text-gray-500 mb-3">{endpoint.controller}</div>
 
-                      {/* Badges Row */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`text-xs px-2.5 py-1 rounded-full ${
-                            endpoint.status === 'auto'
-                              ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
-                              : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                          }`}
-                        >
-                          {endpoint.status}
-                        </span>
-                        <span
-                          className={`text-xs px-2.5 py-1 rounded-full capitalize ${testLevelColors[endpoint.testLevel].bg} ${testLevelColors[endpoint.testLevel].text} ${testLevelColors[endpoint.testLevel].border} border`}
-                        >
-                          {endpoint.testLevel}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Metrics */}
-                    <div className="responsive-metrics flex items-center gap-6 flex-shrink-0">
-                      {/* Coverage */}
-                      <div className="text-center">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <TrendingUp size={12} className="text-gray-500" />
-                          <span className="text-xs text-gray-500">Coverage</span>
+                      {/* Badges and Metrics Row */}
+                      <div className="api-management-bottom-row flex items-end justify-between gap-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-full ${
+                              endpoint.status === 'auto'
+                                ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                                : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                            }`}
+                          >
+                            {endpoint.status}
+                          </span>
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-full capitalize ${testLevelColors[endpoint.testLevel].bg} ${testLevelColors[endpoint.testLevel].text} ${testLevelColors[endpoint.testLevel].border} border`}
+                          >
+                            {endpoint.testLevel}
+                          </span>
                         </div>
-                        <div className={`text-lg font-semibold ${
-                          endpoint.coverage >= 80 ? 'text-green-400' :
-                          endpoint.coverage >= 60 ? 'text-yellow-400' :
-                          'text-red-400'
-                        }`}>
-                          {endpoint.coverage}%
+
+                        {/* Metrics */}
+                        <div className="api-management-metrics responsive-metrics grid flex-shrink-0 grid-cols-[repeat(3,minmax(92px,92px))_auto] items-end justify-end gap-x-4 gap-y-1">
+                          {/* Coverage */}
+                          <div className="grid grid-rows-subgrid row-span-2 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <TrendingUp size={12} className="text-gray-500" />
+                              <span className="text-xs text-gray-500">Coverage</span>
+                            </div>
+                            <div className={`text-lg font-semibold ${
+                              endpoint.coverage >= 80 ? 'text-green-400' :
+                              endpoint.coverage >= 60 ? 'text-yellow-400' :
+                              'text-red-400'
+                            }`}>
+                              {endpoint.coverage}%
+                            </div>
+                          </div>
+
+                          {/* Test Count */}
+                          <div className="grid grid-rows-subgrid row-span-2 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <FileCode size={12} className="text-gray-500" />
+                              <span className="text-xs text-gray-500">Tests</span>
+                            </div>
+                            <div className="text-lg text-white font-semibold">{endpoint.testCount}</div>
+                          </div>
+
+                          {/* Last Updated */}
+                          <div className="grid grid-rows-subgrid row-span-2 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <Clock size={12} className="text-gray-500" />
+                              <span className="text-xs text-gray-500">Updated</span>
+                            </div>
+                            <div className="text-xs text-gray-400">{endpoint.lastUpdated}</div>
+                          </div>
+
+                          {/* Arrow */}
+                          <ChevronRight size={20} className="row-span-2 self-center text-gray-500 group-hover:text-blue-400 transition-colors" />
                         </div>
                       </div>
-
-                      {/* Test Count */}
-                      <div className="text-center">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <FileCode size={12} className="text-gray-500" />
-                          <span className="text-xs text-gray-500">Tests</span>
-                        </div>
-                        <div className="text-lg text-white font-semibold">{endpoint.testCount}</div>
-                      </div>
-
-                      {/* Last Updated */}
-                      <div className="text-center min-w-[100px]">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <Clock size={12} className="text-gray-500" />
-                          <span className="text-xs text-gray-500">Updated</span>
-                        </div>
-                        <div className="text-xs text-gray-400">{endpoint.lastUpdated}</div>
-                      </div>
-
-                      {/* Arrow */}
-                      <ChevronRight size={20} className="text-gray-500 group-hover:text-blue-400 transition-colors" />
                     </div>
                   </div>
                 </div>
@@ -653,13 +542,26 @@ export function ApiManagementPage() {
 
       {/* Right Panel: API Detail */}
       {selectedApiId && selectedApi && (
-        <aside className="bg-[#0a0a0f] border-l border-[#1f1f28] flex flex-col h-full overflow-hidden">
+        <aside className="api-detail-panel absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-1/2 xl:border-l xl:border-[#1f1f28]">
           {/* Header */}
           <div className="p-5 border-b border-[#1f1f28] flex items-center justify-between">
-            <h3 className="text-white font-semibold">API Details</h3>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setSelectedApiId(null)}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#1f1f28] bg-[#13131a] text-gray-400 transition-colors hover:border-blue-500/30 hover:text-white"
+                title="Back to APIs"
+                aria-label="Back to APIs"
+              >
+                <ArrowLeft size={18} />
+              </button>
+              <h3 className="text-white font-semibold">API Details</h3>
+            </div>
             <button
               onClick={() => setSelectedApiId(null)}
-              className="p-1.5 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
+              className="hidden p-1.5 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
+              title="Close details"
+              aria-label="Close details"
             >
               <X size={18} />
             </button>

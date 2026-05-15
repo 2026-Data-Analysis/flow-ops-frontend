@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Play,
+  ArrowLeft,
   Plus,
   Trash2,
   GripVertical,
@@ -21,6 +22,13 @@ import {
   Clock,
   Zap
 } from 'lucide-react';
+import {
+  flowOpsApi,
+  getDefaultAppId,
+  type ApiInventoryResponse,
+  type EnvironmentResponse,
+  type ScenarioDetailResponse,
+} from '../api/flowOpsClient';
 
 interface ScenarioTemplate {
   id: string;
@@ -52,164 +60,6 @@ interface ExtractedVariable {
   jsonPath: string;
 }
 
-const recommendedScenarios: ScenarioTemplate[] = [
-  {
-    id: '1',
-    title: 'User Authentication Flow',
-    description: 'Complete user login and profile fetch workflow',
-    type: 'happy-path',
-    reason: 'Critical path - Most common user entry point',
-    reasonType: 'critical',
-    lastUpdated: '2 hours ago',
-    steps: [
-      {
-        id: 's1',
-        order: 1,
-        label: 'Login',
-        apiEndpoint: '/api/v1/auth/login',
-        method: 'POST',
-        requestConfig: '{\n  "username": "{{username}}",\n  "password": "{{password}}"\n}',
-        extractedVars: [
-          { id: 'v1', name: 'authToken', jsonPath: 'data.token' },
-          { id: 'v2', name: 'userId', jsonPath: 'data.user.id' },
-        ],
-        validationRules: ['Status code 200', 'Token exists', 'User ID exists'],
-        stopOnFail: true,
-      },
-      {
-        id: 's2',
-        order: 2,
-        label: 'Get User Profile',
-        apiEndpoint: '/api/v1/users/{{userId}}',
-        method: 'GET',
-        extractedVars: [],
-        validationRules: ['Status code 200', 'Profile data structure valid'],
-        stopOnFail: false,
-      },
-    ],
-  },
-  {
-    id: '2',
-    title: 'Post Creation with Authentication',
-    description: 'Login → Create post → Verify post exists',
-    type: 'happy-path',
-    reason: 'Critical path - Core content creation workflow',
-    reasonType: 'critical',
-    lastUpdated: '5 hours ago',
-    steps: [
-      {
-        id: 's3',
-        order: 1,
-        label: 'Login',
-        apiEndpoint: '/api/v1/auth/login',
-        method: 'POST',
-        extractedVars: [
-          { id: 'v3', name: 'authToken', jsonPath: 'data.token' },
-        ],
-        stopOnFail: true,
-      },
-      {
-        id: 's4',
-        order: 2,
-        label: 'Create Post',
-        apiEndpoint: '/api/v1/posts',
-        method: 'POST',
-        extractedVars: [
-          { id: 'v4', name: 'postId', jsonPath: 'data.id' },
-        ],
-        stopOnFail: true,
-      },
-      {
-        id: 's5',
-        order: 3,
-        label: 'Verify Post',
-        apiEndpoint: '/api/v1/posts/{{postId}}',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-    ],
-  },
-  {
-    id: '3',
-    title: 'Token Expiration Handling',
-    description: 'Simulate expired token and automatic refresh',
-    type: 'edge-case',
-    reason: 'High failure risk - Token management issues common',
-    reasonType: 'risk',
-    lastUpdated: '1 day ago',
-    steps: [
-      {
-        id: 's6',
-        order: 1,
-        label: 'Login',
-        apiEndpoint: '/api/v1/auth/login',
-        method: 'POST',
-        extractedVars: [
-          { id: 'v5', name: 'authToken', jsonPath: 'data.token' },
-        ],
-        stopOnFail: true,
-      },
-      {
-        id: 's7',
-        order: 2,
-        label: 'Wait for Expiration',
-        apiEndpoint: '/api/v1/wait',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-      {
-        id: 's8',
-        order: 3,
-        label: 'Access Protected Resource',
-        apiEndpoint: '/api/v1/users/profile',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-    ],
-  },
-  {
-    id: '4',
-    title: 'API Rate Limit Recovery',
-    description: 'Test rate limit response and retry logic',
-    type: 'failure-recovery',
-    reason: 'Missing coverage - Rate limiting not tested',
-    reasonType: 'coverage',
-    lastUpdated: '3 days ago',
-    steps: [
-      {
-        id: 's9',
-        order: 1,
-        label: 'Trigger Rate Limit',
-        apiEndpoint: '/api/v1/posts',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-      {
-        id: 's10',
-        order: 2,
-        label: 'Verify 429 Response',
-        apiEndpoint: '/api/v1/posts',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-      {
-        id: 's11',
-        order: 3,
-        label: 'Wait and Retry',
-        apiEndpoint: '/api/v1/posts',
-        method: 'GET',
-        extractedVars: [],
-        stopOnFail: false,
-      },
-    ],
-  },
-];
-
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
   POST: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20' },
@@ -230,20 +80,256 @@ const reasonColors = {
   coverage: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', icon: AlertCircle },
 };
 
+const RECOMMENDATION_DELAY_MS = 2000;
+
+const formatRelativeTime = (value?: string) => {
+  if (!value) return 'Never';
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return value;
+  const minutes = Math.max(1, Math.round((Date.now() - time) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+  return `${Math.round(hours / 24)} days ago`;
+};
+
+const toScenarioMethod = (method: ApiInventoryResponse['method']): ScenarioStep['method'] =>
+  (method === 'TRACE' || method === 'OPTIONS' || method === 'HEAD' ? 'GET' : method) as ScenarioStep['method'];
+
+const createStep = (
+  id: string,
+  order: number,
+  label: string,
+  method: ScenarioStep['method'],
+  apiEndpoint: string,
+  options: Partial<ScenarioStep> = {},
+): ScenarioStep => ({
+  id,
+  order,
+  label,
+  method,
+  apiEndpoint,
+  extractedVars: [],
+  validationRules: ['Status code validation', 'Response schema check'],
+  stopOnFail: order === 1,
+  ...options,
+});
+
+
+const findApi = (items: ApiInventoryResponse[], ...keywords: string[]) =>
+  items.find((api) => {
+    const haystack = `${api.method} ${api.endpointPath} ${api.operationId || ''} ${api.domainTag || ''}`.toLowerCase();
+    return keywords.some((keyword) => haystack.includes(keyword));
+  });
+
+const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate[] => {
+  if (items.length < 2) return [];
+
+  const login = findApi(items, 'login', 'auth');
+  const user = findApi(items, 'user', 'profile');
+  const cart = findApi(items, 'cart');
+  const order = findApi(items, 'order');
+  const payment = findApi(items, 'payment');
+  const product = findApi(items, 'product', 'item');
+
+  const checkoutApis = [cart, product, payment, order].filter(Boolean) as ApiInventoryResponse[];
+  const authApis = [login, user].filter(Boolean) as ApiInventoryResponse[];
+  const fallbackApis = items.slice(0, 4);
+
+  const createApiSteps = (apis: ApiInventoryResponse[], prefix: string) =>
+    apis.map((api, index) =>
+      createStep(
+        `${prefix}-${api.id}`,
+        index + 1,
+        api.operationId || `${api.method} ${api.endpointPath}`,
+        toScenarioMethod(api.method),
+        api.endpointPath,
+        {
+          extractedVars: index === 0 ? [{ id: `${prefix}-id`, name: 'resourceId', jsonPath: '$.id' }] : [],
+          validationRules: ['Status code validation', 'Response schema check', index > 0 ? 'Uses variables from previous step' : 'Extracts reusable response data'],
+        },
+      ),
+    );
+
+  const recommended = [
+    checkoutApis.length >= 3 && {
+      id: 'recommend-inventory-checkout-flow',
+      title: 'Checkout Scenario - Happy Path',
+      description: 'Create a cart, add an item, and submit an order as one end-to-end customer flow.',
+      type: 'happy-path' as const,
+      reason: 'Critical revenue journey spans cart, inventory, and payment APIs',
+      reasonType: 'critical' as const,
+      lastUpdated: formatRelativeTime(checkoutApis[0].updatedAt || checkoutApis[0].createdAt),
+      steps: createApiSteps(checkoutApis, 'inventory-checkout'),
+    },
+    authApis.length >= 2 && {
+      id: 'recommend-auth-inventory-flow',
+      title: 'Authentication and Profile Flow',
+      description: 'Login and access the user profile in sequence.',
+      type: 'happy-path' as const,
+      reason: 'Token propagation and user state changes should be tested across dependent APIs',
+      reasonType: 'coverage' as const,
+      lastUpdated: formatRelativeTime(authApis[0].updatedAt || authApis[0].createdAt),
+      steps: createApiSteps(authApis, 'auth-inventory'),
+    },
+    {
+      id: 'recommend-cross-api-regression',
+      title: 'Cross-API Regression Scenario',
+      description: 'Chain multiple discovered APIs to verify shared state, variable extraction, and dependent response contracts.',
+      type: 'edge-case' as const,
+      reason: 'Generated from backend API inventory to cover endpoints together instead of in isolation',
+      reasonType: 'coverage' as const,
+      lastUpdated: formatRelativeTime(fallbackApis[0]?.updatedAt || fallbackApis[0]?.createdAt),
+      steps: createApiSteps(fallbackApis, 'cross-api'),
+    },
+  ].filter(Boolean) as ScenarioTemplate[];
+
+  return recommended.slice(0, 4);
+};
+
+const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemplate => ({
+  id: String(scenario.id),
+  title: scenario.name,
+  description: scenario.description || 'Saved scenario from backend',
+  type:
+    scenario.type === 'EDGE_CASE'
+      ? 'edge-case'
+      : scenario.type === 'FAILURE_RECOVERY'
+      ? 'failure-recovery'
+      : 'happy-path',
+  reason: 'Saved scenario',
+  reasonType: 'coverage',
+  lastUpdated: formatRelativeTime(scenario.updatedAt || scenario.createdAt),
+  steps: (scenario.steps || []).map((step, index) =>
+    createStep(
+      String(step.id),
+      step.stepOrder || index + 1,
+      step.label || step.endpoint?.path || `Step ${index + 1}`,
+      toScenarioMethod(step.endpoint?.method || 'GET'),
+      step.endpoint?.path || 'Unlinked API',
+      {
+        requestConfig: step.requestConfig,
+        validationRules: step.validationRules ? [step.validationRules] : [],
+      },
+    ),
+  ),
+});
+
 export function ScenarioBuilderPage() {
   const navigate = useNavigate();
-  const [scenarios, setScenarios] = useState<ScenarioTemplate[]>(recommendedScenarios);
+  const [scenarios, setScenarios] = useState<ScenarioTemplate[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
   const [selectedScenarioIds, setSelectedScenarioIds] = useState<string[]>([]);
   const [showAiModal, setShowAiModal] = useState(false);
-  const [showCustomModal, setShowCustomModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>(recommendedScenarios);
+  const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
   const [customScenarioInput, setCustomScenarioInput] = useState('');
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      flowOpsApi.ensureProject(),
+      flowOpsApi.listEnvironments(getDefaultAppId()).catch(() => [] as EnvironmentResponse[]),
+    ])
+      .then(([project, items]) => {
+        if (!active) return;
+        setProjectId(project.id);
+        setEnvironments(items);
+        if (items.length > 0 && selectedEnvironmentId === 'all') {
+          setSelectedEnvironmentId(String(items[0].id));
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setProjectId(null);
+        setEnvironments([]);
+        setApiError(error instanceof Error ? `${error.message} Showing demo scenario recommendations.` : 'Failed to load environments.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const selectedEnvironment =
+      selectedEnvironmentId === 'all'
+        ? null
+        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+
+    if (!projectId) {
+      setScenarios([]);
+      setAiScenarios([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    const params = selectedEnvironment
+      ? {
+          repositoryId: selectedEnvironment.repositoryId,
+          branchName: selectedEnvironment.branchName,
+        }
+      : {};
+
+    flowOpsApi
+      .listInventories(projectId, params)
+      .then(async (inventory) => {
+        if (!active) return;
+        const environmentApiIds = new Set(inventory.items.map((item) => item.id));
+        const summaries = await flowOpsApi.listScenarios(getDefaultAppId()).catch(() => []);
+        const details = await Promise.all(
+          summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
+        );
+        const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
+          if (!scenario) return false;
+          if (!selectedEnvironment) return true;
+          return (scenario.steps || []).some((step) => step.apiId && environmentApiIds.has(step.apiId));
+        });
+
+        setScenarios(filteredDetails.map(normalizeScenarioDetail));
+        setAiScenarios(buildScenariosFromApis(inventory.items));
+        setApiError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setScenarios([]);
+        setAiScenarios([]);
+        setApiError(error instanceof Error ? error.message : 'Failed to load scenarios.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [environments, projectId, selectedEnvironmentId]);
+
+  useEffect(() => {
+    if (!showAiModal) {
+      setIsRecommendationLoading(false);
+      return;
+    }
+
+    setIsRecommendationLoading(true);
+    const timerId = setTimeout(() => {
+      setIsRecommendationLoading(false);
+    }, RECOMMENDATION_DELAY_MS);
+
+    return () => clearTimeout(timerId);
+  }, [showAiModal]);
 
   const filteredScenarios = scenarios.filter(scenario =>
     scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -261,9 +347,31 @@ export function ScenarioBuilderPage() {
     setSelectedScenarioId(scenarioId);
   };
 
+  const handleOpenRecommendations = () => {
+    setShowAiModal(true);
+  };
+
   const handleAiGenerateConfirm = () => {
+    if (isRecommendationLoading) return;
     const selectedAiScenarios = aiScenarios.filter(s => s.isSelected);
-    setScenarios([...scenarios, ...selectedAiScenarios.map(s => ({ ...s, isSelected: false }))]);
+    const savedScenarios = selectedAiScenarios.map((scenario, scenarioIndex) => {
+      const savedId = `saved-${scenario.id}-${Date.now()}-${scenarioIndex}`;
+      return {
+        ...scenario,
+        id: savedId,
+        isSelected: false,
+        lastUpdated: 'Just now',
+        steps: scenario.steps.map((step, stepIndex) => ({
+          ...step,
+          id: `${savedId}-step-${stepIndex + 1}`,
+          order: stepIndex + 1,
+        })),
+      };
+    });
+    setScenarios([...scenarios, ...savedScenarios]);
+    if (savedScenarios[0]) {
+      setSelectedScenarioId(savedScenarios[0].id);
+    }
     setShowAiModal(false);
     setAiScenarios(aiScenarios.map(s => ({ ...s, isSelected: false })));
   };
@@ -274,8 +382,8 @@ export function ScenarioBuilderPage() {
     );
   };
 
-  const handleCustomScenarioCreate = () => {
-    // In real app, this would call AI to generate scenario from natural language
+  const handleAiCustomScenarioCreate = () => {
+    if (!customScenarioInput.trim()) return;
     const newScenario: ScenarioTemplate = {
       id: `custom-${Date.now()}`,
       title: 'Custom Scenario',
@@ -288,8 +396,23 @@ export function ScenarioBuilderPage() {
     };
     setScenarios([...scenarios, newScenario]);
     setSelectedScenarioId(newScenario.id);
-    setShowCustomModal(false);
+    setShowAiModal(false);
     setCustomScenarioInput('');
+  };
+
+  const handleManualScenarioCreate = () => {
+    const newScenario: ScenarioTemplate = {
+      id: `manual-${Date.now()}`,
+      title: 'Untitled Manual Scenario',
+      description: 'Build this scenario manually by adding and editing steps.',
+      type: 'happy-path',
+      reason: 'Manual scenario',
+      reasonType: 'coverage',
+      lastUpdated: 'Just now',
+      steps: [],
+    };
+    setScenarios([...scenarios, newScenario]);
+    setSelectedScenarioId(newScenario.id);
   };
 
   const handleRunScenario = (scenarioId: string) => {
@@ -366,7 +489,7 @@ export function ScenarioBuilderPage() {
   };
 
   return (
-    <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedScenarioId ? '1fr 600px' : '1fr' }}>
+    <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
       {/* AI Generate Modal */}
       {showAiModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -385,7 +508,46 @@ export function ScenarioBuilderPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
-              {aiScenarios.map((scenario) => {
+              <div className="bg-[#13131a] border border-[#1f1f28] rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles size={18} className="text-purple-400" />
+                  <h3 className="text-white font-semibold">Generate From Custom Prompt</h3>
+                </div>
+                <label className="block text-sm text-gray-400 mb-3">
+                  Describe your scenario in natural language
+                </label>
+                <textarea
+                  value={customScenarioInput}
+                  onChange={(e) => setCustomScenarioInput(e.target.value)}
+                  placeholder="E.g., Test user registration flow with email verification and profile setup..."
+                  className="w-full bg-[#0a0a0f] border border-[#1f1f28] rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none"
+                  rows={4}
+                />
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={handleAiCustomScenarioCreate}
+                    disabled={!customScenarioInput.trim()}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  >
+                    <Sparkles size={16} />
+                    Generate Custom Scenario
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-xs text-gray-500 uppercase tracking-wider pt-2">Recommended Scenarios</div>
+
+              {isRecommendationLoading && (
+                <div className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#13131a] px-6 py-10 text-center">
+                  <Sparkles size={32} className="mb-4 animate-pulse text-purple-400" />
+                  <h3 className="mb-2 text-white font-semibold">Analyzing connected API flows</h3>
+                  <p className="max-w-md text-sm text-gray-500">
+                    Finding multi-step scenarios across authentication, cart, payment, and order APIs.
+                  </p>
+                </div>
+              )}
+
+              {!isRecommendationLoading && aiScenarios.map((scenario) => {
                 const TypeIcon = typeColors[scenario.type].icon;
                 const ReasonIcon = reasonColors[scenario.reasonType].icon;
                 return (
@@ -434,8 +596,8 @@ export function ScenarioBuilderPage() {
               </div>
               <button
                 onClick={handleAiGenerateConfirm}
-                disabled={aiScenarios.filter(s => s.isSelected).length === 0}
-                className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isRecommendationLoading || aiScenarios.filter(s => s.isSelected).length === 0}
+                className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus size={18} />
                 Add Selected Scenarios
@@ -445,61 +607,11 @@ export function ScenarioBuilderPage() {
         </div>
       )}
 
-      {/* Custom Scenario Modal */}
-      {showCustomModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl w-full max-w-2xl">
-            <div className="p-6 border-b border-[#1f1f28] flex items-center justify-between">
-              <h2 className="text-white text-xl font-semibold">Create Custom Scenario</h2>
-              <button
-                onClick={() => setShowCustomModal(false)}
-                className="p-2 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <label className="block text-sm text-gray-400 mb-3">
-                Describe your scenario in natural language
-              </label>
-              <textarea
-                value={customScenarioInput}
-                onChange={(e) => setCustomScenarioInput(e.target.value)}
-                placeholder="E.g., Test user registration flow with email verification and profile setup..."
-                className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none"
-                rows={6}
-              />
-              <div className="mt-2 text-xs text-gray-500">
-                AI will generate scenario steps based on your description
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-[#1f1f28] flex items-center justify-end gap-3">
-              <button
-                onClick={() => setShowCustomModal(false)}
-                className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:border-[#2f2f38] text-white rounded-lg transition-colors text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCustomScenarioCreate}
-                disabled={!customScenarioInput.trim()}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-              >
-                <Sparkles size={16} />
-                Generate Scenario
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Panel: Scenario List */}
       <main className="flex flex-col overflow-hidden bg-[#060609]">
         {/* Header */}
-        <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-          <div className="flex items-center justify-between mb-6">
+        <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
+          <div className="responsive-header flex items-center justify-between mb-6">
             <div>
               <h1 className="text-white text-2xl font-semibold mb-1">Scenario Builder</h1>
               <p className="text-gray-500 text-sm">AI-powered multi-step API scenario testing</p>
@@ -517,21 +629,35 @@ export function ScenarioBuilderPage() {
           </div>
 
           {/* Top Actions */}
-          <div className="flex items-center gap-3 mb-4">
+          <div className="responsive-filters flex items-center gap-3 mb-4">
+            <select
+              value={selectedEnvironmentId}
+              onChange={(e) => setSelectedEnvironmentId(e.target.value)}
+              className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/30"
+            >
+              <option value="all">All Environments</option>
+              {environments.map((environment) => (
+                <option key={environment.id} value={String(environment.id)}>
+                  {environment.name}
+                  {environment.branchName ? ` (${environment.branchName})` : ''}
+                </option>
+              ))}
+            </select>
+
             <button
-              onClick={() => setShowAiModal(true)}
-              className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
+              onClick={handleOpenRecommendations}
+              className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
             >
               <Sparkles size={20} />
               Generate Scenarios (AI)
             </button>
 
             <button
-              onClick={() => setShowCustomModal(true)}
+              onClick={handleManualScenarioCreate}
               className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white px-6 py-3 rounded-lg transition-all"
             >
               <Plus size={20} />
-              Custom Scenario
+              Manual Scenario
             </button>
           </div>
 
@@ -549,8 +675,25 @@ export function ScenarioBuilderPage() {
         </div>
 
         {/* Scenario List */}
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
+            {filteredScenarios.length === 0 && (
+              <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
+                <Sparkles size={32} className="mb-3 text-purple-400" />
+                <h3 className="mb-2 text-white font-semibold">No saved scenarios yet</h3>
+                <p className="mb-5 max-w-md text-sm text-gray-500">
+                  Add an AI-recommended scenario to save a multi-step API flow in Builder.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenRecommendations}
+                  className="scenario-ai-action flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:from-purple-700 hover:to-blue-700"
+                >
+                  <Sparkles size={16} />
+                  Open Recommendations
+                </button>
+              </div>
+            )}
             {filteredScenarios.map((scenario) => {
               const TypeIcon = typeColors[scenario.type].icon;
               const ReasonIcon = reasonColors[scenario.reasonType].icon;
@@ -558,11 +701,11 @@ export function ScenarioBuilderPage() {
                 <div
                   key={scenario.id}
                   onClick={() => handleSelectScenario(scenario.id)}
-                  className={`group bg-[#0a0a0f] border rounded-xl p-5 cursor-pointer transition-all hover:border-blue-500/30 ${
+                  className={`scenario-list-card group bg-[#0a0a0f] border rounded-xl p-5 cursor-pointer transition-all hover:border-blue-500/30 ${
                     selectedScenarioId === scenario.id ? 'border-blue-500/50 bg-blue-500/5' : 'border-[#1f1f28]'
                   }`}
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
                     {/* Checkbox */}
                     <div
                       onClick={(e) => toggleScenarioSelection(scenario.id, e)}
@@ -575,7 +718,7 @@ export function ScenarioBuilderPage() {
 
                     {/* Scenario Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className="flex flex-wrap items-center gap-3 mb-2">
                         <h3 className="text-white font-semibold">{scenario.title}</h3>
                         <span className={`text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 ${typeColors[scenario.type].bg} ${typeColors[scenario.type].text} ${typeColors[scenario.type].border} border`}>
                           <TypeIcon size={12} />
@@ -589,7 +732,7 @@ export function ScenarioBuilderPage() {
 
                       <p className="text-sm text-gray-400 mb-3">{scenario.description}</p>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <div className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded ${reasonColors[scenario.reasonType].bg} ${reasonColors[scenario.reasonType].text} ${reasonColors[scenario.reasonType].border} border`}>
                           <ReasonIcon size={12} />
                           {scenario.reason}
@@ -626,28 +769,37 @@ export function ScenarioBuilderPage() {
 
       {/* Right Panel: Scenario Detail */}
       {selectedScenarioId && selectedScenario && (
-        <aside className="bg-[#0a0a0f] border-l border-[#1f1f28] flex flex-col h-full overflow-hidden">
+        <aside className="absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-1/2 xl:border-l xl:border-[#1f1f28]">
           {/* Header */}
           <div className="p-6 border-b border-[#1f1f28]">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedScenarioId(null)}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[#1f1f28] bg-[#13131a] text-gray-400 transition-colors hover:border-blue-500/30 hover:text-white"
+                  title="Back to scenarios"
+                  aria-label="Back to scenarios"
+                >
+                  <ArrowLeft size={18} />
+                </button>
                 <input
                   type="text"
                   value={selectedScenario.title}
                   onChange={(e) => updateScenario({ title: e.target.value })}
-                  className="text-white text-xl font-semibold bg-transparent border-b border-transparent hover:border-[#1f1f28] focus:border-blue-500/30 focus:outline-none px-2 -mx-2"
+                className="min-w-0 text-white text-xl font-semibold bg-transparent border-b border-transparent hover:border-[#1f1f28] focus:border-blue-500/30 focus:outline-none px-2 -mx-2"
                 />
                 <Edit3 size={16} className="text-gray-500" />
               </div>
               <button
                 onClick={() => setSelectedScenarioId(null)}
-                className="p-2 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
+                className="hidden p-2 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <select
                 value={selectedScenario.type}
                 onChange={(e) => updateScenario({ type: e.target.value as any })}
@@ -796,7 +948,7 @@ export function ScenarioBuilderPage() {
                             {step.extractedVars.map((v) => (
                               <div key={v.id} className="flex items-center gap-2 text-xs">
                                 <span className="text-white font-mono">{v.name}</span>
-                                <span className="text-gray-500">→</span>
+                                <span className="text-gray-500">-</span>
                                 <span className="text-gray-400 font-mono">{v.jsonPath}</span>
                               </div>
                             ))}
@@ -870,3 +1022,4 @@ export function ScenarioBuilderPage() {
     </div>
   );
 }
+

@@ -13,7 +13,8 @@ import {
   Calendar,
   Check
 } from 'lucide-react';
-import { flowOpsApi, rememberAppId, type ScanResultResponse } from '../api/flowOpsClient';
+import { flowOpsApi, rememberAppId, rememberAppTitle, type ScanResultResponse } from '../api/flowOpsClient';
+import { useTestContext } from '../contexts/TestContext';
 
 interface Repository {
   id: string;
@@ -25,6 +26,27 @@ interface Repository {
 }
 
 const commonBranches = ['main', 'develop', 'staging', 'feature/api-v2', 'hotfix/security-patch'];
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+
+interface StoredRegisteredRepository {
+  id: number;
+  projectId: number;
+  appId: number;
+  title: string;
+  fullName: string;
+  repositoryUrl?: string;
+  defaultBranch?: string;
+  connectionStatus?: string;
+}
+
+const rememberRegisteredRepository = (repository: StoredRegisteredRepository) => {
+  const existing = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]') as StoredRegisteredRepository[];
+  const next = [
+    repository,
+    ...existing.filter((item) => item.id !== repository.id && item.fullName !== repository.fullName),
+  ];
+  localStorage.setItem(REGISTERED_REPOSITORIES_KEY, JSON.stringify(next));
+};
 
 const parseRepository = (fullName: string): Repository | null => {
   const normalized = fullName.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '');
@@ -42,6 +64,7 @@ const parseRepository = (fullName: string): Repository | null => {
 
 export function RegistrationPage() {
   const navigate = useNavigate();
+  const { setActiveApplication } = useTestContext();
   const [currentStep, setCurrentStep] = useState(1);
   const [isGithubConnected, setIsGithubConnected] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
@@ -105,6 +128,8 @@ export function RegistrationPage() {
         branches: selectedBranches,
       });
       rememberAppId(app.id);
+      rememberAppTitle(repo.name);
+      setActiveApplication({ appId: app.id, title: repo.name });
       setRegisteredAppId(app.id);
 
       const project = await flowOpsApi.ensureProject();
@@ -113,6 +138,16 @@ export function RegistrationPage() {
       const repository = await flowOpsApi.registerRepository(project.id, {
         fullName: repo.fullName,
         appId: app.id,
+      });
+      rememberRegisteredRepository({
+        id: repository.id,
+        projectId: project.id,
+        appId: app.id,
+        title: repo.name,
+        fullName: repo.fullName,
+        repositoryUrl: repository.repositoryUrl || `https://github.com/${repo.fullName}`,
+        defaultBranch: repository.defaultBranch || selectedBranches[0],
+        connectionStatus: repository.connectionStatus || 'ACTIVE',
       });
       setRegisteredRepositoryId(repository.id);
 
@@ -157,6 +192,8 @@ export function RegistrationPage() {
           branches: selectedBranches,
         });
         rememberAppId(app.id);
+        rememberAppTitle(selectedRepo.name);
+        setActiveApplication({ appId: app.id, title: selectedRepo.name });
         setRegisteredAppId(app.id);
         appId = app.id;
 
@@ -164,6 +201,16 @@ export function RegistrationPage() {
           fullName,
           appId,
           selectedBranches,
+        });
+        rememberRegisteredRepository({
+          id: repository.id,
+          projectId,
+          appId,
+          title: selectedRepo.name,
+          fullName,
+          repositoryUrl: repository.repositoryUrl || `https://github.com/${fullName}`,
+          defaultBranch: repository.defaultBranch || selectedBranches[0],
+          connectionStatus: repository.connectionStatus || 'ACTIVE',
         });
         setRegisteredRepositoryId(repository.id);
         repositoryId = repository.id;
