@@ -30,9 +30,9 @@ export function FlowIndicator() {
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                     isActive
-                      ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/50'
+                      ? 'flow-step-active bg-blue-500 text-white shadow-lg shadow-blue-500/50'
                       : isCompleted
-                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      ? 'flow-step-completed bg-blue-500/20 text-blue-400 border border-blue-500/30'
                       : isImprove && currentStepIndex === 2
                       ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 animate-pulse'
                       : 'bg-[#13131a] text-gray-500 border border-[#1f1f28]'
@@ -43,9 +43,9 @@ export function FlowIndicator() {
                 <span
                   className={`text-sm font-medium transition-colors ${
                     isActive
-                      ? 'text-white'
+                      ? 'flow-step-active-label text-white'
                       : isCompleted
-                      ? 'text-blue-400'
+                      ? 'flow-step-completed-label text-blue-400'
                       : isImprove && currentStepIndex === 2
                       ? 'text-purple-400'
                       : 'text-gray-500'
@@ -59,9 +59,9 @@ export function FlowIndicator() {
                 <div
                   className={`flex-1 h-[2px] mx-4 transition-all ${
                     isCompleted
-                      ? 'bg-blue-500'
+                      ? 'flow-step-line-completed bg-blue-500'
                       : index === currentStepIndex && isImprove === false
-                      ? 'bg-gradient-to-r from-blue-500 to-[#1f1f28]'
+                      ? 'flow-step-line-active bg-gradient-to-r from-blue-500 to-[#1f1f28]'
                       : 'bg-[#1f1f28]'
                   }`}
                 />

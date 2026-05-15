@@ -6,6 +6,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    historyApiFallback: true,
     proxy: {
       '/flow-ops-api': {
         target: 'https://flow-ops-server.onrender.com',
