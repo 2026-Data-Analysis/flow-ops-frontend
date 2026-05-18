@@ -46,6 +46,7 @@ export interface ApiEndpointDetailResponse extends ApiEndpointListItemResponse {
   appId: number;
   requestSchema?: unknown;
   responseSchema?: unknown;
+  successRate?: number;
   createdAt?: string;
   updatedAt?: string;
 }

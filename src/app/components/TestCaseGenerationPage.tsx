@@ -101,9 +101,6 @@ const formatRelativeTime = (value?: string) => {
   return `${Math.round(hours / 24)} days ago`;
 };
 
-const titleCase = (value: string) =>
-  value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()).replace(/\s+/g, '');
-
 const mapBackendType = (type?: string): TestCase['type'] => {
   const normalized = (type || '').toLowerCase();
   if (normalized.includes('auth')) return 'auth';
@@ -159,16 +156,14 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: 
   }
 };
 
-const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
-  const pathEntity = inventory.endpointPath
-    .split('/')
-    .find((segment) => segment && !segment.startsWith('{') && !segment.startsWith(':') && !/^v\d+$/i.test(segment) && segment !== 'api');
+const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
 
+const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
   return {
     id: String(inventory.id),
     method: (inventory.method === 'TRACE' ? 'GET' : inventory.method) as ApiEndpoint['method'],
     path: inventory.endpointPath,
-    domain: inventory.domainTag || (pathEntity ? titleCase(pathEntity.replace(/s$/, '')) : 'General'),
+    domain: inventory.domainTag?.trim() || '',
     coverage: Math.round(inventory.coveragePercentage ?? 0),
     testCount: inventory.totalTestCount ?? 0,
     lastUpdated: formatRelativeTime(inventory.updatedAt || inventory.modifiedAt || inventory.lastModifiedAt || inventory.createdAt),
@@ -446,7 +441,12 @@ export function TestCaseGenerationPage() {
   const selectedApi = selectedApiId ? apis.find(a => a.id === selectedApiId) : null;
   const currentApiTests = existingTests.filter(t => t.apiId === selectedApiId);
 
-  const domains = ['all', ...Array.from(new Set(apis.map((api) => api.domain)))];
+  const hasEmptyDomain = apis.some((api) => !api.domain);
+  const domains = [
+    'all',
+    ...Array.from(new Set(apis.map((api) => api.domain).filter(Boolean))),
+    ...(hasEmptyDomain ? ['__empty__'] : []),
+  ];
   const selectedEnvironment = selectedEnvironmentId === 'all'
     ? null
     : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
@@ -455,7 +455,9 @@ export function TestCaseGenerationPage() {
     const matchesSearch =
       api.path.toLowerCase().includes(query.toLowerCase()) ||
       api.domain.toLowerCase().includes(query.toLowerCase());
-    const matchesDomain = selectedDomain === 'all' || api.domain === selectedDomain;
+    const matchesDomain =
+      selectedDomain === 'all' ||
+      (selectedDomain === '__empty__' ? !api.domain : api.domain === selectedDomain);
     const matchesMethod = methodFilter === 'all' || api.method === methodFilter;
     return matchesSearch && matchesDomain && matchesMethod;
   };
@@ -846,7 +848,9 @@ export function TestCaseGenerationPage() {
                         : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                     }`}
                   >
-                    <span className="block max-w-[10rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
+                    <span className="block max-w-[10rem] truncate">
+                      {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -878,7 +882,7 @@ export function TestCaseGenerationPage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-mono text-sm mb-1">{api.path}</div>
                         <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-500">{api.domain}</span>
+                          <span className="text-xs text-gray-500">{formatDomainLabel(api.domain)}</span>
                           <span className={`text-xs font-medium ${
                             api.coverage >= 80 ? 'text-green-400' :
                             api.coverage >= 60 ? 'text-yellow-400' :
@@ -1072,7 +1076,9 @@ export function TestCaseGenerationPage() {
                         <div className="flex-1 min-w-0">
                           <div className="text-white font-mono text-sm truncate">{api.path}</div>
                           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                            <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">{api.domain}</span>
+                            <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">
+                              {formatDomainLabel(api.domain)}
+                            </span>
                             <span>{apiGeneratedTests.length} generated tests</span>
                             <span>{api.coverage}% to {apiProjectedCoverage}% coverage</span>
                           </div>
@@ -1386,7 +1392,9 @@ export function TestCaseGenerationPage() {
                           : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                       }`}
                     >
-                      <span className="block max-w-[12rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
+                      <span className="block max-w-[12rem] truncate">
+                        {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -1412,7 +1420,7 @@ export function TestCaseGenerationPage() {
                         <div className="text-white font-mono text-sm mb-1">{api.path}</div>
                         <div className="flex items-center gap-3 text-xs">
                           <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">
-                            {api.domain}
+                            {formatDomainLabel(api.domain)}
                           </span>
                           <span className={`font-medium ${
                             api.coverage >= 80 ? 'text-green-400' :
