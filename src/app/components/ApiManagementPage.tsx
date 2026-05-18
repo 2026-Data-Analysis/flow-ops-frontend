@@ -15,12 +15,11 @@ import {
   Play,
   Eye,
   CheckCircle2,
-  XCircle,
   Target,
   BarChart3,
   Check
 } from 'lucide-react';
-import { flowOpsApi, type ApiEndpointDetailResponse, type ApiInventoryResponse } from '../api/flowOpsClient';
+import { flowOpsApi, type ApiInventoryResponse } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
 interface ApiEndpoint {
@@ -38,6 +37,7 @@ interface ApiEndpoint {
   environments: string[];
   requestSchema?: unknown;
   responseSchema?: unknown;
+  successRate: number;
 }
 
 
@@ -77,27 +77,30 @@ const formatRelativeTime = (value?: string) => {
   return `${Math.round(hours / 24)} days ago`;
 };
 
-const titleCase = (value: string) =>
-  value
-    .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-    .replace(/\s+/g, '');
-
-const inferDomainFromInventory = (inventory: ApiInventoryResponse) => {
-  if (inventory.domainTag) return inventory.domainTag;
-
-  const controllerEntity = inventory.operationId?.match(/^([A-Za-z0-9]+)Controller\b/)?.[1];
-  if (controllerEntity) return titleCase(controllerEntity);
-
-  const pathEntity = inventory.endpointPath
-    .split('/')
-    .find((segment) => segment && !segment.startsWith('{') && !segment.startsWith(':') && !/^v\d+$/i.test(segment) && segment !== 'api');
-
-  return pathEntity ? titleCase(pathEntity.replace(/s$/, '')) : 'General';
-};
-
 const resolveInventoryUpdatedAt = (inventory: ApiInventoryResponse) =>
   inventory.updatedAt || inventory.modifiedAt || inventory.lastModifiedAt || inventory.createdAt;
+
+const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
+
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+
+interface StoredRegisteredRepository {
+  id: number;
+  appId: number;
+}
+
+const readStoredRepositories = (): StoredRegisteredRepository[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((item) => item?.id && item?.appId)
+          .map((item) => ({ id: Number(item.id), appId: Number(item.appId) }))
+      : [];
+  } catch {
+    return [];
+  }
+};
 
 const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   id: String(inventory.id),
@@ -106,7 +109,7 @@ const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   controller: inventory.operationId || inventory.summary || 'Inventory',
   status: inventory.editStatus === 'EDITED' || inventory.sourceType === 'MANUAL' ? 'edited' : 'auto',
   requiresAuth: Boolean(inventory.authRequired),
-  domain: inferDomainFromInventory(inventory),
+  domain: inventory.domainTag?.trim() || '',
   testLevel: (inventory.testLevels?.[0]?.toLowerCase() as ApiEndpoint['testLevel']) || 'smoke',
   coverage: Math.round(inventory.coveragePercentage ?? 0),
   testCount: inventory.totalTestCount ?? 0,
@@ -114,6 +117,7 @@ const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   environments: inventory.branchName ? [inventory.branchName] : [],
   requestSchema: inventory.requestSchema,
   responseSchema: inventory.responseSchema,
+  successRate: Math.round(inventory.successRate ?? 0),
 });
 
 const sampleForSchema = (schema: any): any => {
@@ -150,9 +154,10 @@ const buildRequestDefaults = (schema: unknown) => {
 
 export function ApiManagementPage() {
   const navigate = useNavigate();
-  const { setSelectedAPIs } = useTestContext();
+  const { activeApplication, setSelectedAPIs } = useTestContext();
   const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
-  const [apiDetails, setApiDetails] = useState<Record<string, ApiEndpointDetailResponse>>({});
+  const [apiDetails, setApiDetails] = useState<Record<string, ApiInventoryResponse>>({});
+  const [projectId, setProjectId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -168,9 +173,29 @@ export function ApiManagementPage() {
   useEffect(() => {
     let active = true;
     setIsLoading(true);
-    flowOpsApi
-      .ensureProject()
-      .then((project) => flowOpsApi.listInventories(project.id))
+
+    const loadInventories = async () => {
+      const project = await flowOpsApi.ensureProject();
+      setProjectId(project.id);
+      const repositories = await flowOpsApi.listRepositories(project.id).catch(() => []);
+      const storedRepositories = readStoredRepositories();
+      const activeRepository =
+        repositories.find((repository) => repository.appId === activeApplication.appId) ||
+        storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+      if (!activeRepository) {
+        throw new Error('No repository is linked to the selected application. Re-register or rescan this repository after the backend deploy finishes.');
+      }
+
+      return flowOpsApi.listInventories(project.id, { repositoryId: activeRepository.id });
+    };
+
+    setSelectedDomain('all');
+    setSelectedEnvironment('all');
+    setSelectedApiId(null);
+    setSelectedApiIds([]);
+    setApiDetails({});
+
+    loadInventories()
       .then((inventory) => {
         if (!active) return;
         setEndpoints(inventory.items.map(normalizeInventory));
@@ -187,12 +212,16 @@ export function ApiManagementPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeApplication.appId]);
 
   const environments = ['all', ...Array.from(new Set(endpoints.flatMap((endpoint) => endpoint.environments)))];
 
-  // Extract unique domains
-  const domains = ['all', ...Array.from(new Set(endpoints.map(e => e.domain)))];
+  const hasEmptyDomain = endpoints.some((endpoint) => !endpoint.domain);
+  const domains = [
+    'all',
+    ...Array.from(new Set(endpoints.map((endpoint) => endpoint.domain).filter(Boolean))),
+    ...(hasEmptyDomain ? ['__empty__'] : []),
+  ];
 
   const filteredEndpoints = endpoints.filter(endpoint => {
     const matchesSearch =
@@ -202,7 +231,9 @@ export function ApiManagementPage() {
     const matchesMethod = methodFilter === 'all' || endpoint.method === methodFilter;
     const matchesTestLevel = testLevelFilter === 'all' || endpoint.testLevel === testLevelFilter;
     const matchesSource = sourceFilter === 'all' || endpoint.status === sourceFilter;
-    const matchesDomain = selectedDomain === 'all' || endpoint.domain === selectedDomain;
+    const matchesDomain =
+      selectedDomain === 'all' ||
+      (selectedDomain === '__empty__' ? !endpoint.domain : endpoint.domain === selectedDomain);
     return matchesSearch && matchesEnvironment && matchesMethod && matchesTestLevel && matchesSource && matchesDomain;
   });
 
@@ -247,16 +278,17 @@ export function ApiManagementPage() {
   const selectedApi = selectedApiId ? endpoints.find(e => e.id === selectedApiId) : null;
   const selectedApiDetail = selectedApiId ? apiDetails[selectedApiId] : undefined;
   const selectedRequestDefaults = buildRequestDefaults(selectedApiDetail?.requestSchema || selectedApi?.requestSchema);
+  const selectedRequiresAuth = selectedApiDetail?.authRequired ?? selectedApi?.requiresAuth ?? false;
 
   useEffect(() => {
-    if (!selectedApiId || apiDetails[selectedApiId]) return;
+    if (!projectId || !selectedApiId || apiDetails[selectedApiId]) return;
     const apiId = Number(selectedApiId);
     if (!Number.isFinite(apiId)) return;
     flowOpsApi
-      .getApiDetail(apiId)
+      .getInventoryDetail(projectId, apiId)
       .then((detail) => setApiDetails((prev) => ({ ...prev, [selectedApiId]: detail })))
       .catch(() => undefined);
-  }, [apiDetails, selectedApiId]);
+  }, [apiDetails, projectId, selectedApiId]);
 
   // Calculate summary stats
   const totalEndpoints = filteredEndpoints.length;
@@ -438,14 +470,16 @@ export function ApiManagementPage() {
               <button
                 key={domain}
                 onClick={() => setSelectedDomain(domain)}
-                title={domain === 'all' ? 'All Domains' : domain}
+                title={domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
                 className={`max-w-full px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
                   selectedDomain === domain
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                     : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                 }`}
               >
-                <span className="block max-w-[12rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
+                <span className="block max-w-[12rem] truncate">
+                  {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                </span>
               </button>
             ))}
           </div>
@@ -457,7 +491,7 @@ export function ApiManagementPage() {
         <div className="max-w-7xl mx-auto">
           {apiError && (
             <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
-              Backend unavailable: {apiError}. Showing cached sample data.
+              {apiError}
             </div>
           )}
           {isLoading && (
@@ -508,10 +542,10 @@ export function ApiManagementPage() {
                           {endpoint.path}
                         </div>
                         <span
-                          title={endpoint.domain}
+                          title={formatDomainLabel(endpoint.domain)}
                           className="max-w-[12rem] truncate px-2 py-0.5 bg-[#1f1f28] text-gray-400 text-xs rounded-full flex-shrink-0"
                         >
-                          {endpoint.domain}
+                          {formatDomainLabel(endpoint.domain)}
                         </span>
                         {endpoint.requiresAuth && (
                           <Lock size={14} className="text-gray-500 flex-shrink-0" />
@@ -634,12 +668,12 @@ export function ApiManagementPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Domain</span>
                     <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 text-xs rounded border border-purple-500/20">
-                      {selectedApi.domain}
+                      {formatDomainLabel(selectedApi.domain)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Auth Required</span>
-                    {selectedApi.requiresAuth ? (
+                    {selectedRequiresAuth ? (
                       <Lock size={14} className="text-yellow-400" />
                     ) : (
                       <span className="text-xs text-gray-400">No</span>
@@ -726,7 +760,7 @@ export function ApiManagementPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">Success Rate</span>
-                  <span className="text-sm text-green-400 font-semibold">95%</span>
+                  <span className="text-sm text-green-400 font-semibold">{selectedApi.successRate}%</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">Status</span>
@@ -771,40 +805,6 @@ export function ApiManagementPage() {
               </div>
             </div>
 
-            {/* E. Test Preview */}
-            <div>
-              <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Sample Test Cases</div>
-              <div className="space-y-2">
-                {[
-                  { name: 'Success - Valid User', type: 'auto', status: 'passed' },
-                  { name: 'Error - Invalid ID', type: 'auto', status: 'passed' },
-                  { name: 'Auth - Missing Token', type: 'edited', status: 'failed' },
-                ].map((test, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-[#13131a] border border-[#1f1f28] rounded-lg p-3"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-white text-sm">{test.name}</span>
-                      {test.status === 'passed' ? (
-                        <CheckCircle2 size={14} className="text-green-400" />
-                      ) : (
-                        <XCircle size={14} className="text-red-400" />
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs ${
-                        test.type === 'auto'
-                          ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
-                          : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                      }`}>
-                        {test.type}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </aside>
       )}

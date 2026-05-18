@@ -46,6 +46,7 @@ export interface ApiEndpointDetailResponse extends ApiEndpointListItemResponse {
   appId: number;
   requestSchema?: unknown;
   responseSchema?: unknown;
+  successRate?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -574,6 +575,9 @@ export const flowOpsApi = {
         `/projects/${projectId}/api-inventories${toQuery(params)}`,
       ),
     ),
+
+  getInventoryDetail: (projectId: number, inventoryId: number) =>
+    unwrap(request<ApiResponse<ApiInventoryResponse>>(`/projects/${projectId}/api-inventories/${inventoryId}`)),
 
   listEnvironments: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<EnvironmentResponse[]>>(`/apps/${appId}/environments`)),

@@ -30,6 +30,8 @@ import {
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
+import { allowMockData, isProductionBuild } from '../config/runtime';
+import { filterInventoryForEnvironment, inventoryQueryParamsForEnvironment } from '../utils/environmentScope';
 
 interface ApiEndpoint {
   id: string;
@@ -101,9 +103,6 @@ const formatRelativeTime = (value?: string) => {
   return `${Math.round(hours / 24)} days ago`;
 };
 
-const titleCase = (value: string) =>
-  value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()).replace(/\s+/g, '');
-
 const mapBackendType = (type?: string): TestCase['type'] => {
   const normalized = (type || '').toLowerCase();
   if (normalized.includes('auth')) return 'auth';
@@ -116,34 +115,6 @@ const mapBackendType = (type?: string): TestCase['type'] => {
 const stringifySpec = (value?: unknown) => {
   if (value === undefined || value === null || value === '') return undefined;
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-};
-
-const sampleForSchema = (schema: any): any => {
-  if (!schema) return undefined;
-  if (schema.example !== undefined) return schema.example;
-  if (schema.default !== undefined) return schema.default;
-  if (schema.enum?.length) return schema.enum[0];
-  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
-  if (type === 'string') return schema.format === 'email' ? 'test@example.com' : 'sample';
-  if (type === 'integer' || type === 'number') return 1;
-  if (type === 'boolean') return true;
-  if (type === 'array') return [sampleForSchema(schema.items) ?? 'sample'];
-  if (type === 'object' || schema.properties) {
-    return Object.fromEntries(Object.entries(schema.properties || {}).map(([key, value]) => [key, sampleForSchema(value)]));
-  }
-  return schema;
-};
-
-const buildRequestDefaults = (schema?: unknown) => {
-  const value = schema as any;
-  if (!value) return undefined;
-  if (value.pathParams || value.queryParams || value.headers || value.body) return value;
-  return {
-    pathParams: sampleForSchema(value.pathParamsSchema || value.parameters?.path) || {},
-    queryParams: sampleForSchema(value.queryParamsSchema || value.parameters?.query) || {},
-    headers: sampleForSchema(value.headersSchema || value.parameters?.header) || {},
-    body: sampleForSchema(value.bodySchema || value.requestBody || value),
-  };
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
@@ -159,16 +130,14 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: 
   }
 };
 
-const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
-  const pathEntity = inventory.endpointPath
-    .split('/')
-    .find((segment) => segment && !segment.startsWith('{') && !segment.startsWith(':') && !/^v\d+$/i.test(segment) && segment !== 'api');
+const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
 
+const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
   return {
     id: String(inventory.id),
     method: (inventory.method === 'TRACE' ? 'GET' : inventory.method) as ApiEndpoint['method'],
     path: inventory.endpointPath,
-    domain: inventory.domainTag || (pathEntity ? titleCase(pathEntity.replace(/s$/, '')) : 'General'),
+    domain: inventory.domainTag?.trim() || '',
     coverage: Math.round(inventory.coveragePercentage ?? 0),
     testCount: inventory.totalTestCount ?? 0,
     lastUpdated: formatRelativeTime(inventory.updatedAt || inventory.modifiedAt || inventory.lastModifiedAt || inventory.createdAt),
@@ -252,60 +221,22 @@ const normalizeAiDraft = (draft: AiTestCaseDraftResponse, index: number): TestCa
   assertionSpec: draft.assertionSpec,
 });
 
-const buildMockGeneratedTests = (
+const buildMockGeneratedTests: (
   selectedApis: ApiEndpoint[],
   roles: string[],
   states: string[],
   variants: string[],
   existingTests: TestCase[],
-): TestCase[] =>
-  selectedApis.flatMap((api) => {
-    const samples = [
-      { role: roles[0] || 'User', state: states[0] || 'Logged In', variant: variants[0] || 'Valid Input', type: 'HAPPY_PATH' },
-      { role: roles[1] || roles[0] || 'User', state: states[1] || 'Token Expired', variant: variants[1] || 'Invalid Input', type: 'VALIDATION' },
-      { role: roles[0] || 'Admin', state: states[2] || 'Rate Limited', variant: variants[2] || 'Boundary Value', type: 'EDGE_CASE' },
-    ];
-
-    return samples.map((sample, index) => {
-      const isDuplicate = existingTests.some(
-        (existing) =>
-          existing.apiId === api.id &&
-          existing.role === sample.role &&
-          existing.stateCondition === sample.state &&
-          existing.dataVariant === sample.variant,
-      );
-      const requestSpec = JSON.stringify(
-        buildRequestDefaults(api.requestSchema) || {
-          method: api.method,
-          path: api.path,
-          ...(api.method === 'GET' || api.method === 'HEAD'
-            ? { queryParams: { id: 'sample-id', includeMeta: true } }
-            : { body: { sample: true, variant: sample.variant } }),
-        },
-        null,
-        2,
-      );
-
-      return {
-        id: `mock-${api.id}-${index}`,
-        name: `${api.method} ${api.path} - ${sample.role} ${sample.variant}`,
-        type: mapBackendType(sample.type),
-        backendType: sample.type,
-        testLevel: index === 0 ? 'SMOKE' : 'REGRESSION',
-        apiId: api.id,
-        role: sample.role,
-        stateCondition: sample.state,
-        dataVariant: sample.variant,
-        status: isDuplicate ? 'duplicate' : 'new',
-        description: `AI-generated draft to validate ${api.path} for ${sample.role} with ${sample.state}.`,
-        expectedResult: JSON.stringify({ status: index === 0 ? 200 : 400 }, null, 2),
-        requestPreview: requestSpec,
-        requestSpec,
-        assertionSpec: JSON.stringify({ status: index === 0 ? '2xx' : '4xx or documented error', schema: 'matches OpenAPI contract' }, null, 2),
-        validationRules: ['Status code matches expectation', 'Response schema is valid', 'Error body is documented'],
-      } as TestCase;
-    });
-  });
+) => Promise<TestCase[]> = import.meta.env.DEV ? async (
+  selectedApis: ApiEndpoint[],
+  roles: string[],
+  states: string[],
+  variants: string[],
+  existingTests: TestCase[],
+) => {
+    const mock = await import('../mock/testCaseGenerationMock');
+    return mock.buildMockGeneratedTests(selectedApis, roles, states, variants, existingTests);
+  } : async () => [];
 
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
@@ -398,18 +329,21 @@ export function TestCaseGenerationPage() {
     }
 
     setIsLoadingApis(true);
-    const params = selectedEnvironment
-      ? {
-          repositoryId: selectedEnvironment.repositoryId,
-          branchName: selectedEnvironment.branchName,
-        }
-      : {};
+    setSelectedApiId(null);
+    setSelectedApiIdsForGeneration([]);
+    setPendingApiIdsForGeneration([]);
+    setGeneratedTests([]);
+    setSelectedGeneratedTestIds([]);
+    setExpandedGeneratedApiIds([]);
+    setSelectedDomain('all');
+    const params = inventoryQueryParamsForEnvironment(selectedEnvironment);
 
     flowOpsApi
       .listInventories(projectId, params)
       .then(async (inventory) => {
         if (!active) return;
-        const normalized = inventory.items.map(normalizeApiInventory);
+        const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
+        const normalized = scopedInventory.map(normalizeApiInventory);
         setApis(normalized);
         setApiError(null);
 
@@ -446,7 +380,12 @@ export function TestCaseGenerationPage() {
   const selectedApi = selectedApiId ? apis.find(a => a.id === selectedApiId) : null;
   const currentApiTests = existingTests.filter(t => t.apiId === selectedApiId);
 
-  const domains = ['all', ...Array.from(new Set(apis.map((api) => api.domain)))];
+  const hasEmptyDomain = apis.some((api) => !api.domain);
+  const domains = [
+    'all',
+    ...Array.from(new Set(apis.map((api) => api.domain).filter(Boolean))),
+    ...(hasEmptyDomain ? ['__empty__'] : []),
+  ];
   const selectedEnvironment = selectedEnvironmentId === 'all'
     ? null
     : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
@@ -455,7 +394,9 @@ export function TestCaseGenerationPage() {
     const matchesSearch =
       api.path.toLowerCase().includes(query.toLowerCase()) ||
       api.domain.toLowerCase().includes(query.toLowerCase());
-    const matchesDomain = selectedDomain === 'all' || api.domain === selectedDomain;
+    const matchesDomain =
+      selectedDomain === 'all' ||
+      (selectedDomain === '__empty__' ? !api.domain : api.domain === selectedDomain);
     const matchesMethod = methodFilter === 'all' || api.method === methodFilter;
     return matchesSearch && matchesDomain && matchesMethod;
   };
@@ -553,15 +494,17 @@ export function TestCaseGenerationPage() {
             existing.dataVariant === test.dataVariant,
         );
         return { ...test, status: isDuplicate ? 'duplicate' : 'new' } as TestCase;
-      });
+      }).filter((test) => apiIdsForGeneration.includes(test.apiId));
       const newTests = backendTests.length > 0
         ? backendTests
-        : buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+        : allowMockData
+          ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
+          : [];
 
       setGeneratedTests(newTests);
       setSelectedGeneratedTestIds(newTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      setSaveMessage(null);
+      setSaveMessage(newTests.length > 0 ? null : 'AI did not return any test case drafts.');
     } catch (error) {
       try {
         const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
@@ -591,21 +534,37 @@ export function TestCaseGenerationPage() {
         );
         setGenerationId(generation.id);
         setGenerationStatus(status.status || generation.status || null);
-        const backendTests = drafts.map(normalizeDraft);
+        const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
         const newTests = backendTests.length > 0
           ? backendTests
-          : buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+          : allowMockData
+            ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
+            : [];
         setGeneratedTests(newTests);
         setSelectedGeneratedTestIds(newTests.map((test) => test.id));
         setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(null);
-      } catch {
-        const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-        const newTests = buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
-        setGeneratedTests(newTests);
-        setSelectedGeneratedTestIds(newTests.map((test) => test.id));
-        setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(null);
+        setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
+      } catch (fallbackError) {
+        const message =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : error instanceof Error
+              ? error.message
+              : 'Failed to generate AI test cases.';
+
+        if (allowMockData) {
+          const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
+          const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+          setGeneratedTests(newTests);
+          setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+          setExpandedGeneratedApiIds(apiIdsForGeneration);
+          setSaveMessage(null);
+        } else {
+          setGeneratedTests([]);
+          setSelectedGeneratedTestIds([]);
+          setExpandedGeneratedApiIds([]);
+          setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
+        }
       }
     } finally {
       setIsGenerating(false);
@@ -846,7 +805,9 @@ export function TestCaseGenerationPage() {
                         : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                     }`}
                   >
-                    <span className="block max-w-[10rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
+                    <span className="block max-w-[10rem] truncate">
+                      {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -878,7 +839,7 @@ export function TestCaseGenerationPage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-mono text-sm mb-1">{api.path}</div>
                         <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-500">{api.domain}</span>
+                          <span className="text-xs text-gray-500">{formatDomainLabel(api.domain)}</span>
                           <span className={`text-xs font-medium ${
                             api.coverage >= 80 ? 'text-green-400' :
                             api.coverage >= 60 ? 'text-yellow-400' :
@@ -1072,7 +1033,9 @@ export function TestCaseGenerationPage() {
                         <div className="flex-1 min-w-0">
                           <div className="text-white font-mono text-sm truncate">{api.path}</div>
                           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                            <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">{api.domain}</span>
+                            <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">
+                              {formatDomainLabel(api.domain)}
+                            </span>
                             <span>{apiGeneratedTests.length} generated tests</span>
                             <span>{api.coverage}% to {apiProjectedCoverage}% coverage</span>
                           </div>
@@ -1386,7 +1349,9 @@ export function TestCaseGenerationPage() {
                           : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
                       }`}
                     >
-                      <span className="block max-w-[12rem] truncate">{domain === 'all' ? 'All Domains' : domain}</span>
+                      <span className="block max-w-[12rem] truncate">
+                        {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -1412,7 +1377,7 @@ export function TestCaseGenerationPage() {
                         <div className="text-white font-mono text-sm mb-1">{api.path}</div>
                         <div className="flex items-center gap-3 text-xs">
                           <span className="px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">
-                            {api.domain}
+                            {formatDomainLabel(api.domain)}
                           </span>
                           <span className={`font-medium ${
                             api.coverage >= 80 ? 'text-green-400' :
