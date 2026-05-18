@@ -32,6 +32,7 @@ import {
   type ScenarioDetailResponse,
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
+import { filterInventoryForEnvironment, inventoryQueryParamsForEnvironment } from '../utils/environmentScope';
 
 interface ScenarioTemplate {
   id: string;
@@ -303,18 +304,16 @@ export function ScenarioBuilderPage() {
     }
 
     setIsLoading(true);
-    const params = selectedEnvironment
-      ? {
-          repositoryId: selectedEnvironment.repositoryId,
-          branchName: selectedEnvironment.branchName,
-        }
-      : {};
+    setSelectedScenarioId(null);
+    setSelectedScenarioIds([]);
+    const params = inventoryQueryParamsForEnvironment(selectedEnvironment);
 
     flowOpsApi
       .listInventories(projectId, params)
       .then(async (inventory) => {
         if (!active) return;
-        const environmentApiIds = new Set(inventory.items.map((item) => item.id));
+        const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
+        const environmentApiIds = new Set(scopedInventory.map((item) => item.id));
         const summaries = await flowOpsApi.listScenarios(getDefaultAppId()).catch(() => []);
         const details = await Promise.all(
           summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
@@ -322,12 +321,13 @@ export function ScenarioBuilderPage() {
         const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
           if (!scenario) return false;
           if (!selectedEnvironment) return true;
-          return (scenario.steps || []).some((step) => step.apiId && environmentApiIds.has(step.apiId));
+          const linkedSteps = (scenario.steps || []).filter((step) => step.apiId);
+          return linkedSteps.length > 0 && linkedSteps.every((step) => step.apiId && environmentApiIds.has(step.apiId));
         });
 
-        setInventoryApis(inventory.items);
+        setInventoryApis(scopedInventory);
         setScenarios(filteredDetails.map(normalizeScenarioDetail));
-        setAiScenarios(allowMockData ? await buildScenariosFromApis(inventory.items) : []);
+        setAiScenarios(allowMockData ? await buildScenariosFromApis(scopedInventory) : []);
         setApiError(null);
       })
       .catch((error) => {

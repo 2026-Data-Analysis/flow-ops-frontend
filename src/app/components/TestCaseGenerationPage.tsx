@@ -31,6 +31,7 @@ import {
   type TestLevel,
 } from '../api/flowOpsClient';
 import { allowMockData, isProductionBuild } from '../config/runtime';
+import { filterInventoryForEnvironment, inventoryQueryParamsForEnvironment } from '../utils/environmentScope';
 
 interface ApiEndpoint {
   id: string;
@@ -328,18 +329,21 @@ export function TestCaseGenerationPage() {
     }
 
     setIsLoadingApis(true);
-    const params = selectedEnvironment
-      ? {
-          repositoryId: selectedEnvironment.repositoryId,
-          branchName: selectedEnvironment.branchName,
-        }
-      : {};
+    setSelectedApiId(null);
+    setSelectedApiIdsForGeneration([]);
+    setPendingApiIdsForGeneration([]);
+    setGeneratedTests([]);
+    setSelectedGeneratedTestIds([]);
+    setExpandedGeneratedApiIds([]);
+    setSelectedDomain('all');
+    const params = inventoryQueryParamsForEnvironment(selectedEnvironment);
 
     flowOpsApi
       .listInventories(projectId, params)
       .then(async (inventory) => {
         if (!active) return;
-        const normalized = inventory.items.map(normalizeApiInventory);
+        const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
+        const normalized = scopedInventory.map(normalizeApiInventory);
         setApis(normalized);
         setApiError(null);
 
@@ -490,7 +494,7 @@ export function TestCaseGenerationPage() {
             existing.dataVariant === test.dataVariant,
         );
         return { ...test, status: isDuplicate ? 'duplicate' : 'new' } as TestCase;
-      });
+      }).filter((test) => apiIdsForGeneration.includes(test.apiId));
       const newTests = backendTests.length > 0
         ? backendTests
         : allowMockData
@@ -530,7 +534,7 @@ export function TestCaseGenerationPage() {
         );
         setGenerationId(generation.id);
         setGenerationStatus(status.status || generation.status || null);
-        const backendTests = drafts.map(normalizeDraft);
+        const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
         const newTests = backendTests.length > 0
           ? backendTests
           : allowMockData
