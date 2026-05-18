@@ -31,6 +31,7 @@ import {
   type EnvironmentResponse,
   type ScenarioDetailResponse,
 } from '../api/flowOpsClient';
+import { allowMockData } from '../config/runtime';
 
 interface ScenarioTemplate {
   id: string;
@@ -118,80 +119,13 @@ const createStep = (
 });
 
 
-const findApi = (items: ApiInventoryResponse[], ...keywords: string[]) =>
-  items.find((api) => {
-    const haystack = `${api.method} ${api.endpointPath} ${api.operationId || ''} ${api.domainTag || ''}`.toLowerCase();
-    return keywords.some((keyword) => haystack.includes(keyword));
-  });
-
-const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate[] => {
-  if (items.length < 2) return [];
-
-  const login = findApi(items, 'login', 'auth');
-  const user = findApi(items, 'user', 'profile');
-  const cart = findApi(items, 'cart');
-  const order = findApi(items, 'order');
-  const payment = findApi(items, 'payment');
-  const product = findApi(items, 'product', 'item');
-
-  const checkoutApis = [cart, product, payment, order].filter(Boolean) as ApiInventoryResponse[];
-  const authApis = [login, user].filter(Boolean) as ApiInventoryResponse[];
-  const fallbackApis = items.slice(0, 4);
-
-  const createApiSteps = (apis: ApiInventoryResponse[], prefix: string) =>
-    apis.map((api, index) =>
-      createStep(
-        `${prefix}-${api.id}`,
-        index + 1,
-        api.operationId || `${api.method} ${api.endpointPath}`,
-        toScenarioMethod(api.method),
-        api.endpointPath,
-        {
-          apiId: api.id,
-          extractedVars: index === 0 ? [{ id: `${prefix}-id`, name: 'resourceId', jsonPath: '$.id' }] : [],
-          validationRules: ['Status code validation', 'Response schema check', index > 0 ? 'Uses variables from previous step' : 'Extracts reusable response data'],
-        },
-      ),
-    );
-
-  const recommended = [
-    checkoutApis.length >= 3 && {
-      id: 'recommend-inventory-checkout-flow',
-      title: 'Checkout Scenario - Happy Path',
-      description: 'Create a cart, add an item, and submit an order as one end-to-end customer flow.',
-      type: 'happy-path' as const,
-      reason: 'Critical revenue journey spans cart, inventory, and payment APIs',
-      recommendationReason: 'Critical revenue journey spans cart, inventory, and payment APIs',
-      reasonType: 'critical' as const,
-      lastUpdated: formatRelativeTime(checkoutApis[0].updatedAt || checkoutApis[0].createdAt),
-      steps: createApiSteps(checkoutApis, 'inventory-checkout'),
-    },
-    authApis.length >= 2 && {
-      id: 'recommend-auth-inventory-flow',
-      title: 'Authentication and Profile Flow',
-      description: 'Login and access the user profile in sequence.',
-      type: 'happy-path' as const,
-      reason: 'Token propagation and user state changes should be tested across dependent APIs',
-      recommendationReason: 'Token propagation and user state changes should be tested across dependent APIs',
-      reasonType: 'coverage' as const,
-      lastUpdated: formatRelativeTime(authApis[0].updatedAt || authApis[0].createdAt),
-      steps: createApiSteps(authApis, 'auth-inventory'),
-    },
-    {
-      id: 'recommend-cross-api-regression',
-      title: 'Cross-API Regression Scenario',
-      description: 'Chain multiple discovered APIs to verify shared state, variable extraction, and dependent response contracts.',
-      type: 'edge-case' as const,
-      reason: 'Generated from backend API inventory to cover endpoints together instead of in isolation',
-      recommendationReason: 'Generated from backend API inventory to cover endpoints together instead of in isolation',
-      reasonType: 'coverage' as const,
-      lastUpdated: formatRelativeTime(fallbackApis[0]?.updatedAt || fallbackApis[0]?.createdAt),
-      steps: createApiSteps(fallbackApis, 'cross-api'),
-    },
-  ].filter(Boolean) as ScenarioTemplate[];
-
-  return recommended.slice(0, 4);
-};
+const buildScenariosFromApis: (items: ApiInventoryResponse[]) => Promise<ScenarioTemplate[]> =
+  import.meta.env.DEV
+    ? async (items) => {
+        const mock = await import('../mock/scenarioRecommendationMock');
+        return mock.buildScenariosFromApis(items);
+      }
+    : async () => [];
 
 const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemplate => ({
   id: String(scenario.id),
@@ -346,7 +280,7 @@ export function ScenarioBuilderPage() {
         if (!active) return;
         setProjectId(null);
         setEnvironments([]);
-        setApiError(error instanceof Error ? `${error.message} Showing demo scenario recommendations.` : 'Failed to load environments.');
+        setApiError(error instanceof Error ? error.message : 'Failed to load environments.');
       });
 
     return () => {
@@ -393,7 +327,7 @@ export function ScenarioBuilderPage() {
 
         setInventoryApis(inventory.items);
         setScenarios(filteredDetails.map(normalizeScenarioDetail));
-        setAiScenarios(buildScenariosFromApis(inventory.items));
+        setAiScenarios(allowMockData ? await buildScenariosFromApis(inventory.items) : []);
         setApiError(null);
       })
       .catch((error) => {
@@ -470,9 +404,15 @@ export function ScenarioBuilderPage() {
         setAiScenarios([normalizeAiScenario(scenario, inventoryApis, 'recommend')]);
         setApiError(null);
       })
-      .catch((error) => {
-        setAiScenarios(buildScenariosFromApis(inventoryApis));
-        setApiError(error instanceof Error ? `${error.message} Showing local recommendations.` : 'Failed to generate AI scenarios.');
+      .catch(async (error) => {
+        setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApis) : []);
+        setApiError(
+          error instanceof Error
+            ? allowMockData
+              ? `${error.message} Showing local recommendations.`
+              : error.message
+            : 'Failed to generate AI scenarios.',
+        );
       })
       .finally(() => {
         setIsRecommendationLoading(false);
@@ -547,19 +487,23 @@ export function ScenarioBuilderPage() {
       setSelectedScenarioId(newScenario.id);
       setApiError(null);
     } catch (error) {
-      const newScenario: ScenarioTemplate = {
-        id: `custom-${Date.now()}`,
-        title: 'Custom Scenario',
-        description: customScenarioInput,
-        type: 'happy-path',
-        reason: 'Custom user-defined scenario',
-        reasonType: 'coverage',
-        lastUpdated: 'Just now',
-        steps: [],
-      };
-      setScenarios([...scenarios, newScenario]);
-      setSelectedScenarioId(newScenario.id);
-      setApiError(error instanceof Error ? `${error.message} Created a local scenario draft.` : 'Failed to generate custom scenario.');
+      if (allowMockData) {
+        const newScenario: ScenarioTemplate = {
+          id: `custom-${Date.now()}`,
+          title: 'Custom Scenario',
+          description: customScenarioInput,
+          type: 'happy-path',
+          reason: 'Custom user-defined scenario',
+          reasonType: 'coverage',
+          lastUpdated: 'Just now',
+          steps: [],
+        };
+        setScenarios([...scenarios, newScenario]);
+        setSelectedScenarioId(newScenario.id);
+        setApiError(error instanceof Error ? `${error.message} Created a local scenario draft.` : 'Failed to generate custom scenario.');
+      } else {
+        setApiError(error instanceof Error ? error.message : 'Failed to generate custom scenario.');
+      }
     } finally {
       setShowAiModal(false);
       setCustomScenarioInput('');

@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
-import { AIAssistant } from './AIAssistant';
 import { FlowIndicator } from './FlowIndicator';
 import { TestProvider } from '../contexts/TestContext';
+import { allowMockData } from '../config/runtime';
 
 type ThemeMode = 'dark' | 'light';
+
+const DevAIAssistant = allowMockData
+  ? lazy(() => import('./AIAssistant').then((module) => ({ default: module.AIAssistant })))
+  : null;
 
 export function Layout() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -50,7 +54,11 @@ export function Layout() {
           <FlowIndicator />
           <Outlet />
         </div>
-        <AIAssistant />
+        {DevAIAssistant && (
+          <Suspense fallback={null}>
+            <DevAIAssistant />
+          </Suspense>
+        )}
       </div>
     </TestProvider>
   );

@@ -30,6 +30,7 @@ import {
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
+import { allowMockData, isProductionBuild } from '../config/runtime';
 
 interface ApiEndpoint {
   id: string;
@@ -113,34 +114,6 @@ const mapBackendType = (type?: string): TestCase['type'] => {
 const stringifySpec = (value?: unknown) => {
   if (value === undefined || value === null || value === '') return undefined;
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-};
-
-const sampleForSchema = (schema: any): any => {
-  if (!schema) return undefined;
-  if (schema.example !== undefined) return schema.example;
-  if (schema.default !== undefined) return schema.default;
-  if (schema.enum?.length) return schema.enum[0];
-  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
-  if (type === 'string') return schema.format === 'email' ? 'test@example.com' : 'sample';
-  if (type === 'integer' || type === 'number') return 1;
-  if (type === 'boolean') return true;
-  if (type === 'array') return [sampleForSchema(schema.items) ?? 'sample'];
-  if (type === 'object' || schema.properties) {
-    return Object.fromEntries(Object.entries(schema.properties || {}).map(([key, value]) => [key, sampleForSchema(value)]));
-  }
-  return schema;
-};
-
-const buildRequestDefaults = (schema?: unknown) => {
-  const value = schema as any;
-  if (!value) return undefined;
-  if (value.pathParams || value.queryParams || value.headers || value.body) return value;
-  return {
-    pathParams: sampleForSchema(value.pathParamsSchema || value.parameters?.path) || {},
-    queryParams: sampleForSchema(value.queryParamsSchema || value.parameters?.query) || {},
-    headers: sampleForSchema(value.headersSchema || value.parameters?.header) || {},
-    body: sampleForSchema(value.bodySchema || value.requestBody || value),
-  };
 };
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
@@ -247,60 +220,22 @@ const normalizeAiDraft = (draft: AiTestCaseDraftResponse, index: number): TestCa
   assertionSpec: draft.assertionSpec,
 });
 
-const buildMockGeneratedTests = (
+const buildMockGeneratedTests: (
   selectedApis: ApiEndpoint[],
   roles: string[],
   states: string[],
   variants: string[],
   existingTests: TestCase[],
-): TestCase[] =>
-  selectedApis.flatMap((api) => {
-    const samples = [
-      { role: roles[0] || 'User', state: states[0] || 'Logged In', variant: variants[0] || 'Valid Input', type: 'HAPPY_PATH' },
-      { role: roles[1] || roles[0] || 'User', state: states[1] || 'Token Expired', variant: variants[1] || 'Invalid Input', type: 'VALIDATION' },
-      { role: roles[0] || 'Admin', state: states[2] || 'Rate Limited', variant: variants[2] || 'Boundary Value', type: 'EDGE_CASE' },
-    ];
-
-    return samples.map((sample, index) => {
-      const isDuplicate = existingTests.some(
-        (existing) =>
-          existing.apiId === api.id &&
-          existing.role === sample.role &&
-          existing.stateCondition === sample.state &&
-          existing.dataVariant === sample.variant,
-      );
-      const requestSpec = JSON.stringify(
-        buildRequestDefaults(api.requestSchema) || {
-          method: api.method,
-          path: api.path,
-          ...(api.method === 'GET' || api.method === 'HEAD'
-            ? { queryParams: { id: 'sample-id', includeMeta: true } }
-            : { body: { sample: true, variant: sample.variant } }),
-        },
-        null,
-        2,
-      );
-
-      return {
-        id: `mock-${api.id}-${index}`,
-        name: `${api.method} ${api.path} - ${sample.role} ${sample.variant}`,
-        type: mapBackendType(sample.type),
-        backendType: sample.type,
-        testLevel: index === 0 ? 'SMOKE' : 'REGRESSION',
-        apiId: api.id,
-        role: sample.role,
-        stateCondition: sample.state,
-        dataVariant: sample.variant,
-        status: isDuplicate ? 'duplicate' : 'new',
-        description: `AI-generated draft to validate ${api.path} for ${sample.role} with ${sample.state}.`,
-        expectedResult: JSON.stringify({ status: index === 0 ? 200 : 400 }, null, 2),
-        requestPreview: requestSpec,
-        requestSpec,
-        assertionSpec: JSON.stringify({ status: index === 0 ? '2xx' : '4xx or documented error', schema: 'matches OpenAPI contract' }, null, 2),
-        validationRules: ['Status code matches expectation', 'Response schema is valid', 'Error body is documented'],
-      } as TestCase;
-    });
-  });
+) => Promise<TestCase[]> = import.meta.env.DEV ? async (
+  selectedApis: ApiEndpoint[],
+  roles: string[],
+  states: string[],
+  variants: string[],
+  existingTests: TestCase[],
+) => {
+    const mock = await import('../mock/testCaseGenerationMock');
+    return mock.buildMockGeneratedTests(selectedApis, roles, states, variants, existingTests);
+  } : async () => [];
 
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
@@ -558,12 +493,14 @@ export function TestCaseGenerationPage() {
       });
       const newTests = backendTests.length > 0
         ? backendTests
-        : buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+        : allowMockData
+          ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
+          : [];
 
       setGeneratedTests(newTests);
       setSelectedGeneratedTestIds(newTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      setSaveMessage(null);
+      setSaveMessage(newTests.length > 0 ? null : 'AI did not return any test case drafts.');
     } catch (error) {
       try {
         const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
@@ -596,18 +533,34 @@ export function TestCaseGenerationPage() {
         const backendTests = drafts.map(normalizeDraft);
         const newTests = backendTests.length > 0
           ? backendTests
-          : buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+          : allowMockData
+            ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
+            : [];
         setGeneratedTests(newTests);
         setSelectedGeneratedTestIds(newTests.map((test) => test.id));
         setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(null);
-      } catch {
-        const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-        const newTests = buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
-        setGeneratedTests(newTests);
-        setSelectedGeneratedTestIds(newTests.map((test) => test.id));
-        setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(null);
+        setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
+      } catch (fallbackError) {
+        const message =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : error instanceof Error
+              ? error.message
+              : 'Failed to generate AI test cases.';
+
+        if (allowMockData) {
+          const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
+          const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+          setGeneratedTests(newTests);
+          setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+          setExpandedGeneratedApiIds(apiIdsForGeneration);
+          setSaveMessage(null);
+        } else {
+          setGeneratedTests([]);
+          setSelectedGeneratedTestIds([]);
+          setExpandedGeneratedApiIds([]);
+          setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
+        }
       }
     } finally {
       setIsGenerating(false);
