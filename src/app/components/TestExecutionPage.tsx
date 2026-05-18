@@ -74,6 +74,9 @@ const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLo
   duration: log.durationMs ?? 0,
   responseCode: log.responseCode ?? (log.success === false ? 500 : 200),
   source: 'auto',
+  requestBody: log.requestBody ? JSON.stringify(log.requestBody, null, 2) : undefined,
+  responseBody: log.responseBody ? JSON.stringify(log.responseBody, null, 2) : undefined,
+  errorMessage: log.errorMessage,
 });
 
 const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
@@ -98,6 +101,9 @@ const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] 
     },
   ];
 };
+
+const hasUnfilledPathParameter = (path: string) =>
+  /[:{][A-Za-z0-9_]+}?/.test(path) && /(sample|undefined|null|^$)/i.test(path);
 
 export function TestExecutionPage() {
   const navigate = useNavigate();
@@ -140,7 +146,7 @@ export function TestExecutionPage() {
       if (environment === 'prod') return label.includes('prod') || label.includes('main');
       return label.includes('staging') || label.includes('stage');
     });
-    return selected?.id ?? environments[0]?.id ?? 1;
+    return selected?.id ?? environments[0]?.id ?? null;
   };
 
   const getSelectedApiIds = () => {
@@ -160,35 +166,45 @@ export function TestExecutionPage() {
     setExecutionError(null);
 
     const apiIds = getSelectedApiIds();
+    const environmentId = resolveEnvironmentId();
 
     try {
+      if (!environmentId) {
+        throw new Error('Select an environment before running tests.');
+      }
+      if (executionType === 'tests') {
+        const invalidApi = selectedAPIs.find((api) => !api.method || !api.endpoint || hasUnfilledPathParameter(api.endpoint));
+        if (invalidApi) {
+          throw new Error(`Check method/path and path parameter values for ${invalidApi.endpoint || invalidApi.name}.`);
+        }
+      }
+
       let result: ExecutionDetailResponse;
       if (executionType === 'scenario') {
         const state = location.state as any;
         const scenarioIds = state?.scenarioIds ?? (state?.scenarioId ? [state.scenarioId] : []);
+        const normalizedScenarioIds = scenarioIds.map(Number).filter(Number.isFinite);
+        if (normalizedScenarioIds.length === 0) {
+          throw new Error('Select a scenario before running tests.');
+        }
         result = await flowOpsApi.runScenario({
           appId: getDefaultAppId(),
-          environmentId: resolveEnvironmentId(),
-          scenarioIds: scenarioIds.map(Number).filter(Number.isFinite),
+          environmentId,
+          scenarioIds: normalizedScenarioIds,
           testLevel: testLevel.toUpperCase() as any,
           createdBy: DEFAULT_REQUESTER,
         });
       } else if (apiIds.length > 0) {
         result = await flowOpsApi.runApis({
           appId: getDefaultAppId(),
-          environmentId: resolveEnvironmentId(),
+          environmentId,
           apiIds,
           executionMode: 'RUN_EXISTING',
           testLevel: testLevel.toUpperCase() as any,
           createdBy: DEFAULT_REQUESTER,
         });
       } else {
-        result = await flowOpsApi.runTestCases({
-          appId: getDefaultAppId(),
-          environmentId: resolveEnvironmentId(),
-          testLevel: testLevel.toUpperCase() as any,
-          createdBy: DEFAULT_REQUESTER,
-        });
+        throw new Error('Select test cases or APIs before running tests.');
       }
       const nextLogs = normalizeExecution(result);
       setLogs(nextLogs);
@@ -447,6 +463,7 @@ export function TestExecutionPage() {
                         <div className="text-xs text-gray-500 mb-1">Code</div>
                         <div className={`text-sm font-semibold font-mono ${
                           log.responseCode >= 200 && log.responseCode < 300 ? 'text-green-400' :
+                          log.responseCode === 0 ? 'text-yellow-400' :
                           log.responseCode >= 400 ? 'text-red-400' :
                           'text-yellow-400'
                         }`}>
@@ -497,6 +514,17 @@ export function TestExecutionPage() {
                             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-sm text-red-400">
                               {log.errorMessage}
                             </div>
+                            {log.responseCode === 0 && (
+                              <div className="mt-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-300">
+                                HTTP request did not reach a valid response. Check baseUrl, DNS, connection, timeout, SSL, or server availability.
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {log.responseCode === 0 && !log.errorMessage && (
+                          <div className="col-span-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-300">
+                            HTTP request did not reach a valid response. Check baseUrl, DNS, connection, timeout, SSL, or server availability.
                           </div>
                         )}
                       </div>
