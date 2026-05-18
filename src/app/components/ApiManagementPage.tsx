@@ -36,6 +36,8 @@ interface ApiEndpoint {
   testCount: number;
   lastUpdated: string;
   environments: string[];
+  requestSchema?: unknown;
+  responseSchema?: unknown;
 }
 
 
@@ -110,7 +112,41 @@ const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   testCount: inventory.totalTestCount ?? 0,
   lastUpdated: formatRelativeTime(resolveInventoryUpdatedAt(inventory)),
   environments: inventory.branchName ? [inventory.branchName] : [],
+  requestSchema: inventory.requestSchema,
+  responseSchema: inventory.responseSchema,
 });
+
+const sampleForSchema = (schema: any): any => {
+  if (!schema) return undefined;
+  if (schema.example !== undefined) return schema.example;
+  if (schema.default !== undefined) return schema.default;
+  if (schema.enum?.length) return schema.enum[0];
+
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  if (type === 'string') return schema.format === 'email' ? 'test@example.com' : 'sample';
+  if (type === 'integer' || type === 'number') return 1;
+  if (type === 'boolean') return true;
+  if (type === 'array') return [sampleForSchema(schema.items) ?? 'sample'];
+  if (type === 'object' || schema.properties) {
+    return Object.fromEntries(
+      Object.entries(schema.properties || {}).map(([key, value]) => [key, sampleForSchema(value)]),
+    );
+  }
+  return schema;
+};
+
+const buildRequestDefaults = (schema: unknown) => {
+  const value = schema as any;
+  if (!value) return {};
+  if (value.pathParams || value.queryParams || value.headers || value.body) return value;
+
+  return {
+    pathParams: sampleForSchema(value.pathParamsSchema || value.parameters?.path) || {},
+    queryParams: sampleForSchema(value.queryParamsSchema || value.parameters?.query) || {},
+    headers: sampleForSchema(value.headersSchema || value.parameters?.header) || {},
+    body: sampleForSchema(value.bodySchema || value.requestBody || value),
+  };
+};
 
 export function ApiManagementPage() {
   const navigate = useNavigate();
@@ -209,6 +245,18 @@ export function ApiManagementPage() {
   };
 
   const selectedApi = selectedApiId ? endpoints.find(e => e.id === selectedApiId) : null;
+  const selectedApiDetail = selectedApiId ? apiDetails[selectedApiId] : undefined;
+  const selectedRequestDefaults = buildRequestDefaults(selectedApiDetail?.requestSchema || selectedApi?.requestSchema);
+
+  useEffect(() => {
+    if (!selectedApiId || apiDetails[selectedApiId]) return;
+    const apiId = Number(selectedApiId);
+    if (!Number.isFinite(apiId)) return;
+    flowOpsApi
+      .getApiDetail(apiId)
+      .then((detail) => setApiDetails((prev) => ({ ...prev, [selectedApiId]: detail })))
+      .catch(() => undefined);
+  }, [apiDetails, selectedApiId]);
 
   // Calculate summary stats
   const totalEndpoints = filteredEndpoints.length;
@@ -601,16 +649,27 @@ export function ApiManagementPage() {
               </div>
             </div>
 
-            {/* B. Test Overview */}
-            {apiDetails[selectedApi.id] && (
+            {/* B. Generated Request Defaults */}
+            {(selectedApiDetail?.requestSchema || selectedApi.requestSchema) && (
               <div>
-                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Schemas</div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Generated Request Defaults</div>
                 <div className="bg-[#13131a] border border-[#1f1f28] rounded-xl p-4 space-y-3">
-                  <pre className="max-h-32 overflow-auto text-xs text-gray-300 whitespace-pre-wrap">
-                    {JSON.stringify(apiDetails[selectedApi.id].requestSchema || {}, null, 2)}
+                  <pre className="max-h-56 overflow-auto text-xs text-gray-300 whitespace-pre-wrap">
+                    {JSON.stringify(selectedRequestDefaults, null, 2)}
                   </pre>
-                  <pre className="max-h-32 overflow-auto text-xs text-gray-300 whitespace-pre-wrap border-t border-[#1f1f28] pt-3">
-                    {JSON.stringify(apiDetails[selectedApi.id].responseSchema || {}, null, 2)}
+                  <div className="border-t border-[#1f1f28] pt-3 text-xs text-gray-500">
+                    Use this as the starting requestSpec/requestConfig and edit only the values that need to change.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(selectedApiDetail?.responseSchema || selectedApi.responseSchema) && (
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Response Schema</div>
+                <div className="bg-[#13131a] border border-[#1f1f28] rounded-xl p-4">
+                  <pre className="max-h-40 overflow-auto text-xs text-gray-300 whitespace-pre-wrap">
+                    {JSON.stringify(selectedApiDetail?.responseSchema || selectedApi.responseSchema || {}, null, 2)}
                   </pre>
                 </div>
               </div>

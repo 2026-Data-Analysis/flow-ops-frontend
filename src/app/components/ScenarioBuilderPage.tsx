@@ -23,8 +23,10 @@ import {
   Zap
 } from 'lucide-react';
 import {
+  DEFAULT_REQUESTER,
   flowOpsApi,
   getDefaultAppId,
+  type AiScenarioBuildResponse,
   type ApiInventoryResponse,
   type EnvironmentResponse,
   type ScenarioDetailResponse,
@@ -36,6 +38,7 @@ interface ScenarioTemplate {
   description: string;
   type: 'happy-path' | 'edge-case' | 'failure-recovery';
   reason: string;
+  recommendationReason?: string;
   reasonType: 'critical' | 'risk' | 'coverage';
   steps: ScenarioStep[];
   isSelected?: boolean;
@@ -45,6 +48,7 @@ interface ScenarioTemplate {
 interface ScenarioStep {
   id: string;
   order: number;
+  apiId?: number;
   label: string;
   apiEndpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -79,8 +83,6 @@ const reasonColors = {
   risk: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20', icon: AlertTriangle },
   coverage: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', icon: AlertCircle },
 };
-
-const RECOMMENDATION_DELAY_MS = 2000;
 
 const formatRelativeTime = (value?: string) => {
   if (!value) return 'Never';
@@ -145,6 +147,7 @@ const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate
         toScenarioMethod(api.method),
         api.endpointPath,
         {
+          apiId: api.id,
           extractedVars: index === 0 ? [{ id: `${prefix}-id`, name: 'resourceId', jsonPath: '$.id' }] : [],
           validationRules: ['Status code validation', 'Response schema check', index > 0 ? 'Uses variables from previous step' : 'Extracts reusable response data'],
         },
@@ -158,6 +161,7 @@ const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate
       description: 'Create a cart, add an item, and submit an order as one end-to-end customer flow.',
       type: 'happy-path' as const,
       reason: 'Critical revenue journey spans cart, inventory, and payment APIs',
+      recommendationReason: 'Critical revenue journey spans cart, inventory, and payment APIs',
       reasonType: 'critical' as const,
       lastUpdated: formatRelativeTime(checkoutApis[0].updatedAt || checkoutApis[0].createdAt),
       steps: createApiSteps(checkoutApis, 'inventory-checkout'),
@@ -168,6 +172,7 @@ const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate
       description: 'Login and access the user profile in sequence.',
       type: 'happy-path' as const,
       reason: 'Token propagation and user state changes should be tested across dependent APIs',
+      recommendationReason: 'Token propagation and user state changes should be tested across dependent APIs',
       reasonType: 'coverage' as const,
       lastUpdated: formatRelativeTime(authApis[0].updatedAt || authApis[0].createdAt),
       steps: createApiSteps(authApis, 'auth-inventory'),
@@ -178,6 +183,7 @@ const buildScenariosFromApis = (items: ApiInventoryResponse[]): ScenarioTemplate
       description: 'Chain multiple discovered APIs to verify shared state, variable extraction, and dependent response contracts.',
       type: 'edge-case' as const,
       reason: 'Generated from backend API inventory to cover endpoints together instead of in isolation',
+      recommendationReason: 'Generated from backend API inventory to cover endpoints together instead of in isolation',
       reasonType: 'coverage' as const,
       lastUpdated: formatRelativeTime(fallbackApis[0]?.updatedAt || fallbackApis[0]?.createdAt),
       steps: createApiSteps(fallbackApis, 'cross-api'),
@@ -198,6 +204,7 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
       ? 'failure-recovery'
       : 'happy-path',
   reason: 'Saved scenario',
+  recommendationReason: 'Saved scenario',
   reasonType: 'coverage',
   lastUpdated: formatRelativeTime(scenario.updatedAt || scenario.createdAt),
   steps: (scenario.steps || []).map((step, index) =>
@@ -208,12 +215,97 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
       toScenarioMethod(step.endpoint?.method || 'GET'),
       step.endpoint?.path || 'Unlinked API',
       {
+        apiId: step.apiId,
         requestConfig: step.requestConfig,
         validationRules: step.validationRules ? [step.validationRules] : [],
       },
     ),
   ),
 });
+
+const normalizeAiScenario = (
+  scenario: AiScenarioBuildResponse,
+  items: ApiInventoryResponse[],
+  idPrefix = 'ai',
+): ScenarioTemplate => {
+  const apiByEndpointId = new Map(items.map((api) => [String(api.id), api]));
+  const apiByPath = new Map(items.map((api) => [api.endpointPath, api]));
+
+  const steps = scenario.steps.map((step, index) => {
+    const api = apiByEndpointId.get(String(step.endpoint_id)) || apiByPath.get(step.endpoint_id);
+    const extractRules = step.chained_variables
+      ? [{ id: `${idPrefix}-extract-${index + 1}`, name: 'chainedVariables', jsonPath: step.chained_variables }]
+      : [];
+
+    return createStep(
+      `${idPrefix}-step-${index + 1}-${step.endpoint_id}`,
+      step.order || index + 1,
+      step.name,
+      toScenarioMethod(api?.method || 'GET'),
+      api?.endpointPath || step.endpoint_id,
+      {
+        apiId: api?.id,
+        requestConfig: step.static_payload,
+        extractedVars: extractRules,
+        validationRules: step.expected_assertions ? [step.expected_assertions] : ['Status code validation', 'Response schema check'],
+      },
+    );
+  });
+
+  return {
+    id: `${idPrefix}-${crypto.randomUUID()}`,
+    title: scenario.name,
+    description: scenario.description || scenario.meta?.rationale || 'AI-generated scenario',
+    type:
+      scenario.type === 'EDGE_CASE'
+        ? 'edge-case'
+        : scenario.type === 'FAILURE_RECOVERY'
+        ? 'failure-recovery'
+        : 'happy-path',
+    reason: scenario.meta?.rationale || 'Generated by AI from selected API inventory',
+    recommendationReason: scenario.meta?.rationale || 'Generated by AI from selected API inventory',
+    reasonType: scenario.type === 'EDGE_CASE' ? 'risk' : 'coverage',
+    lastUpdated: 'Just now',
+    steps,
+  };
+};
+
+const toAiScenarioApis = (items: ApiInventoryResponse[]) =>
+  items.map((api) => ({
+    endpoint_id: String(api.id),
+    method: api.method,
+    path: api.endpointPath,
+    request_body_schema: api.requestSchema && typeof api.requestSchema === 'object' ? api.requestSchema as object : undefined,
+    response_schema: api.responseSchema && typeof api.responseSchema === 'object' ? api.responseSchema as object : undefined,
+  }));
+
+const sampleForSchema = (schema: any): any => {
+  if (!schema) return undefined;
+  if (schema.example !== undefined) return schema.example;
+  if (schema.default !== undefined) return schema.default;
+  if (schema.enum?.length) return schema.enum[0];
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  if (type === 'string') return schema.format === 'email' ? 'test@example.com' : 'sample';
+  if (type === 'integer' || type === 'number') return 1;
+  if (type === 'boolean') return true;
+  if (type === 'array') return [sampleForSchema(schema.items) ?? 'sample'];
+  if (type === 'object' || schema.properties) {
+    return Object.fromEntries(Object.entries(schema.properties || {}).map(([key, value]) => [key, sampleForSchema(value)]));
+  }
+  return schema;
+};
+
+const buildRequestDefaults = (schema?: unknown) => {
+  const value = schema as any;
+  if (!value) return undefined;
+  if (value.pathParams || value.queryParams || value.headers || value.body) return value;
+  return {
+    pathParams: sampleForSchema(value.pathParamsSchema || value.parameters?.path) || {},
+    queryParams: sampleForSchema(value.queryParamsSchema || value.parameters?.query) || {},
+    headers: sampleForSchema(value.headersSchema || value.parameters?.header) || {},
+    body: sampleForSchema(value.bodySchema || value.requestBody || value),
+  };
+};
 
 export function ScenarioBuilderPage() {
   const navigate = useNavigate();
@@ -227,6 +319,7 @@ export function ScenarioBuilderPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [inventoryApis, setInventoryApis] = useState<ApiInventoryResponse[]>([]);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
   const [customScenarioInput, setCustomScenarioInput] = useState('');
@@ -298,6 +391,7 @@ export function ScenarioBuilderPage() {
           return (scenario.steps || []).some((step) => step.apiId && environmentApiIds.has(step.apiId));
         });
 
+        setInventoryApis(inventory.items);
         setScenarios(filteredDetails.map(normalizeScenarioDetail));
         setAiScenarios(buildScenariosFromApis(inventory.items));
         setApiError(null);
@@ -306,6 +400,7 @@ export function ScenarioBuilderPage() {
         if (!active) return;
         setScenarios([]);
         setAiScenarios([]);
+        setInventoryApis([]);
         setApiError(error instanceof Error ? error.message : 'Failed to load scenarios.');
       })
       .finally(() => {
@@ -316,20 +411,6 @@ export function ScenarioBuilderPage() {
       active = false;
     };
   }, [environments, projectId, selectedEnvironmentId]);
-
-  useEffect(() => {
-    if (!showAiModal) {
-      setIsRecommendationLoading(false);
-      return;
-    }
-
-    setIsRecommendationLoading(true);
-    const timerId = setTimeout(() => {
-      setIsRecommendationLoading(false);
-    }, RECOMMENDATION_DELAY_MS);
-
-    return () => clearTimeout(timerId);
-  }, [showAiModal]);
 
   const filteredScenarios = scenarios.filter(scenario =>
     scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -349,6 +430,53 @@ export function ScenarioBuilderPage() {
 
   const handleOpenRecommendations = () => {
     setShowAiModal(true);
+    if (inventoryApis.length === 0) return;
+
+    setIsRecommendationLoading(true);
+    const selectedEnvironment =
+      selectedEnvironmentId === 'all'
+        ? null
+        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+
+    flowOpsApi
+      .buildAiScenario({
+        agent: 'SCENARIO_BUILDER',
+        requestId: crypto.randomUUID(),
+        requestedBy: DEFAULT_REQUESTER,
+        project: { projectId: projectId || undefined, appId: getDefaultAppId() },
+        environment: selectedEnvironment
+          ? {
+              environmentId: selectedEnvironment.id,
+              name: selectedEnvironment.name,
+              baseUrl: selectedEnvironment.baseUrl,
+              defaultTestLevel: selectedEnvironment.defaultTestLevel,
+            }
+          : undefined,
+        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
+        scenarioContext: {
+          appId: getDefaultAppId(),
+          user_intent: 'Recommend high-value multi-step API scenarios from the current inventory.',
+          mode: 'RECOMMEND',
+          testLevel: selectedEnvironment?.defaultTestLevel,
+        },
+        apis: toAiScenarioApis(inventoryApis),
+        existingScenarios: scenarios.map((scenario) => ({
+          name: scenario.title,
+          description: scenario.description,
+          type: scenario.type,
+        })),
+      })
+      .then((scenario) => {
+        setAiScenarios([normalizeAiScenario(scenario, inventoryApis, 'recommend')]);
+        setApiError(null);
+      })
+      .catch((error) => {
+        setAiScenarios(buildScenariosFromApis(inventoryApis));
+        setApiError(error instanceof Error ? `${error.message} Showing local recommendations.` : 'Failed to generate AI scenarios.');
+      })
+      .finally(() => {
+        setIsRecommendationLoading(false);
+      });
   };
 
   const handleAiGenerateConfirm = () => {
@@ -382,22 +510,61 @@ export function ScenarioBuilderPage() {
     );
   };
 
-  const handleAiCustomScenarioCreate = () => {
+  const handleAiCustomScenarioCreate = async () => {
     if (!customScenarioInput.trim()) return;
-    const newScenario: ScenarioTemplate = {
-      id: `custom-${Date.now()}`,
-      title: 'Custom Scenario',
-      description: customScenarioInput,
-      type: 'happy-path',
-      reason: 'Custom user-defined scenario',
-      reasonType: 'coverage',
-      lastUpdated: 'Just now',
-      steps: [],
-    };
-    setScenarios([...scenarios, newScenario]);
-    setSelectedScenarioId(newScenario.id);
-    setShowAiModal(false);
-    setCustomScenarioInput('');
+    setIsRecommendationLoading(true);
+    const selectedEnvironment =
+      selectedEnvironmentId === 'all'
+        ? null
+        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+
+    try {
+      const scenario = await flowOpsApi.buildAiScenario({
+        agent: 'SCENARIO_BUILDER',
+        requestId: crypto.randomUUID(),
+        requestedBy: DEFAULT_REQUESTER,
+        project: { projectId: projectId || undefined, appId: getDefaultAppId() },
+        environment: selectedEnvironment
+          ? {
+              environmentId: selectedEnvironment.id,
+              name: selectedEnvironment.name,
+              baseUrl: selectedEnvironment.baseUrl,
+              defaultTestLevel: selectedEnvironment.defaultTestLevel,
+            }
+          : undefined,
+        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
+        scenarioContext: {
+          appId: getDefaultAppId(),
+          user_intent: customScenarioInput.trim(),
+          mode: 'NATURAL_LANGUAGE',
+          testLevel: selectedEnvironment?.defaultTestLevel,
+        },
+        apis: toAiScenarioApis(inventoryApis),
+        existingScenarios: scenarios.map((item) => ({ name: item.title, type: item.type })),
+      });
+      const newScenario = normalizeAiScenario(scenario, inventoryApis, 'custom');
+      setScenarios([...scenarios, newScenario]);
+      setSelectedScenarioId(newScenario.id);
+      setApiError(null);
+    } catch (error) {
+      const newScenario: ScenarioTemplate = {
+        id: `custom-${Date.now()}`,
+        title: 'Custom Scenario',
+        description: customScenarioInput,
+        type: 'happy-path',
+        reason: 'Custom user-defined scenario',
+        reasonType: 'coverage',
+        lastUpdated: 'Just now',
+        steps: [],
+      };
+      setScenarios([...scenarios, newScenario]);
+      setSelectedScenarioId(newScenario.id);
+      setApiError(error instanceof Error ? `${error.message} Created a local scenario draft.` : 'Failed to generate custom scenario.');
+    } finally {
+      setShowAiModal(false);
+      setCustomScenarioInput('');
+      setIsRecommendationLoading(false);
+    }
   };
 
   const handleManualScenarioCreate = () => {
@@ -434,13 +601,17 @@ export function ScenarioBuilderPage() {
 
   const addStep = () => {
     if (!selectedScenario) return;
+    const defaultApi = inventoryApis[0];
+    const defaultRequestConfig = buildRequestDefaults(defaultApi?.requestSchema);
     const newStep: ScenarioStep = {
       id: `step-${Date.now()}`,
       order: selectedScenario.steps.length + 1,
       label: 'New Step',
-      apiEndpoint: '/api/v1/',
-      method: 'GET',
+      apiEndpoint: defaultApi?.endpointPath || '/api/v1/',
+      method: defaultApi ? toScenarioMethod(defaultApi.method) : 'GET',
+      requestConfig: defaultRequestConfig ? JSON.stringify(defaultRequestConfig, null, 2) : undefined,
       extractedVars: [],
+      validationRules: ['{"status": 200}'],
       stopOnFail: false,
     };
     updateScenario({ steps: [...selectedScenario.steps, newStep] });
@@ -857,6 +1028,9 @@ export function ScenarioBuilderPage() {
                             <span className="text-white text-sm font-medium">{step.label}</span>
                           </div>
                           <div className="text-xs text-gray-500 font-mono truncate">{step.apiEndpoint}</div>
+                          {step.apiId && (
+                            <div className="mt-1 text-xs text-gray-600">apiId: {step.apiId}</div>
+                          )}
                         </div>
 
                         <button
@@ -930,17 +1104,16 @@ export function ScenarioBuilderPage() {
                           />
                         </div>
 
-                        {step.requestConfig && (
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-2">Request Config</label>
-                            <textarea
-                              value={step.requestConfig}
-                              onChange={(e) => updateStep(step.id, { requestConfig: e.target.value })}
-                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
-                              rows={4}
-                            />
-                          </div>
-                        )}
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-2">Request Config</label>
+                          <textarea
+                            value={step.requestConfig || ''}
+                            onChange={(e) => updateStep(step.id, { requestConfig: e.target.value })}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                            rows={4}
+                            placeholder='{"pathParams":{},"queryParams":{},"headers":{},"body":{}}'
+                          />
+                        </div>
 
                         <div>
                           <label className="block text-xs text-gray-500 mb-2">Extract Variables</label>
@@ -958,14 +1131,13 @@ export function ScenarioBuilderPage() {
                         {step.validationRules && step.validationRules.length > 0 && (
                           <div>
                             <label className="block text-xs text-gray-500 mb-2">Validation Rules</label>
-                            <div className="space-y-1">
-                              {step.validationRules.map((rule, idx) => (
-                                <div key={idx} className="flex items-center gap-2 text-xs text-gray-400">
-                                  <CheckCircle2 size={12} className="text-green-400" />
-                                  {rule}
-                                </div>
-                              ))}
-                            </div>
+                            <textarea
+                              value={step.validationRules.join('\n')}
+                              onChange={(e) => updateStep(step.id, { validationRules: e.target.value.split('\n').filter(Boolean) })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                              rows={3}
+                              placeholder='{"status": 200}'
+                            />
                           </div>
                         )}
                       </div>
@@ -1022,4 +1194,3 @@ export function ScenarioBuilderPage() {
     </div>
   );
 }
-

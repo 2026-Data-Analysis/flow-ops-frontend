@@ -127,6 +127,8 @@ export function EnvironmentSettingsPage() {
     const [testingConnection, setTestingConnection] = useState(false);
     const [runningQuickTest, setRunningQuickTest] = useState(false);
     const [apiError, setApiError] = useState<string | null>(null);
+    const [headersJsonText, setHeadersJsonText] = useState('{}');
+    const [headersJsonError, setHeadersJsonError] = useState<string | null>(null);
 
     const selectedEnv = selectedEnvId ? environments.find((env) => env.id === selectedEnvId) : null;
 
@@ -148,6 +150,22 @@ export function EnvironmentSettingsPage() {
                 setIsLoading(false);
             });
     }, []);
+
+    useEffect(() => {
+        if (!selectedEnv) {
+            setHeadersJsonText('{}');
+            setHeadersJsonError(null);
+            return;
+        }
+        setHeadersJsonText(
+            JSON.stringify(
+                Object.fromEntries(selectedEnv.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
+                null,
+                2,
+            ),
+        );
+        setHeadersJsonError(null);
+    }, [selectedEnvId]);
 
     const updateEnvironment = (updates: Partial<Environment>) => {
         setEnvironments((envs) => envs.map((env) => (env.id === selectedEnvId ? { ...env, ...updates } : env)));
@@ -224,6 +242,26 @@ export function EnvironmentSettingsPage() {
         updateEnvironment({
             headers: selectedEnv.headers.filter((h) => h.id !== id),
         });
+    };
+
+    const updateHeadersFromJson = (value: string) => {
+        setHeadersJsonText(value);
+        try {
+            const parsed = value.trim() ? JSON.parse(value) : {};
+            if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+                throw new Error('Headers must be a JSON object.');
+            }
+            setHeadersJsonError(null);
+            updateEnvironment({
+                headers: Object.entries(parsed).map(([key, headerValue], index) => ({
+                    id: `${selectedEnvId || 'new'}-json-${index}`,
+                    key,
+                    value: String(headerValue),
+                })),
+            });
+        } catch (error) {
+            setHeadersJsonError(error instanceof Error ? error.message : 'Invalid JSON object.');
+        }
     };
 
     const handleSave = async () => {
@@ -521,8 +559,11 @@ export function EnvironmentSettingsPage() {
                                         value={selectedEnv.baseUrl}
                                         onChange={(e) => updateEnvironment({ baseUrl: e.target.value })}
                                         className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500/30 transition-colors font-mono text-sm"
-                                        placeholder="https://api.example.com"
+                                        placeholder="https://api.example.com or http://localhost:8080"
                                     />
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        The backend normalizes missing schemes and falls back to http://localhost:8080 when empty.
+                                    </p>
                                 </div>
 
                                 {selectedEnv.authType !== 'none' && (
@@ -549,7 +590,7 @@ export function EnvironmentSettingsPage() {
                                 {/* Headers */}
                                 <div>
                                     <div className="flex items-center justify-between mb-3">
-                                        <label className="text-sm text-gray-400">Headers</label>
+                                        <label className="text-sm text-gray-400">Headers JSON</label>
                                         <button
                                             onClick={addHeader}
                                             className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -558,6 +599,20 @@ export function EnvironmentSettingsPage() {
                                             Add Header
                                         </button>
                                     </div>
+                                    <textarea
+                                        value={headersJsonText}
+                                        onChange={(e) => updateHeadersFromJson(e.target.value)}
+                                        rows={5}
+                                        className={`mb-3 w-full rounded-lg border bg-[#13131a] px-4 py-3 font-mono text-sm text-white transition-colors focus:outline-none ${
+                                            headersJsonError
+                                                ? 'border-red-500/40 focus:border-red-500/60'
+                                                : 'border-[#1f1f28] focus:border-blue-500/30'
+                                        }`}
+                                        placeholder={'{\n  "Authorization": "Bearer token",\n  "X-Tenant-Id": "flowops"\n}'}
+                                    />
+                                    {headersJsonError && (
+                                        <div className="mb-3 text-xs text-red-400">{headersJsonError}</div>
+                                    )}
                                     {selectedEnv.headers.length === 0 ? (
                                         <div className="text-center py-4 text-gray-500 text-xs bg-[#13131a] border border-[#1f1f28] rounded-lg">
                                             No headers defined
