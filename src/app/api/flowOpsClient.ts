@@ -132,6 +132,8 @@ export interface ApiInventoryResponse {
   repositoryId?: number;
   method: HttpMethod | 'TRACE';
   endpointPath: string;
+  requestSchema?: unknown;
+  responseSchema?: unknown;
   operationId?: string;
   domainTag?: string;
   branchName?: string;
@@ -176,6 +178,11 @@ export interface ExecutionStepLogResponse {
   success?: boolean;
   status?: 'SUCCESS' | 'FAILED' | 'RUNNING';
   responseCode?: number;
+  requestBody?: unknown;
+  responseBody?: unknown;
+  errorMessage?: string;
+  assertionResults?: unknown;
+  validationResults?: unknown;
   durationMs?: number;
   startedAt?: string;
   endedAt?: string;
@@ -332,6 +339,135 @@ export interface SaveTestGenerationDraftRequest {
     dataVariant?: string;
     requestSpec?: string;
     assertionSpec?: string;
+  }>;
+}
+
+export interface AiAgentBaseRequest {
+  requestId: string;
+  requestedBy: string;
+  project: {
+    projectId?: number;
+    appId: number;
+    appName?: string;
+  };
+  environment?: {
+    environmentId?: number;
+    name?: string;
+    baseUrl?: string;
+    defaultTestLevel?: TestLevel;
+  } | Record<string, unknown>;
+  metadata: {
+    language?: 'ko' | 'en' | string;
+    createdAt: string;
+    source: 'MANUAL' | 'INTERNAL';
+  };
+}
+
+export interface AiAgentApiInput {
+  apiId?: number;
+  endpoint_id: string;
+  method: string;
+  path: string;
+  domainTag?: string;
+  request_body_schema?: object;
+  response_schema?: object;
+  authRequired?: boolean;
+  deprecated?: boolean;
+}
+
+export interface AiTestCaseGenerationRequest extends AiAgentBaseRequest {
+  agent: 'TEST_CASE_GENERATOR';
+  generationContext: {
+    generationId?: number;
+    mode: 'SELECTED_APIS' | 'FROM_FAILURE';
+    testLevel: string;
+    currentCoverage?: number;
+    targetCoverage?: number;
+    contextSummary?: string;
+  };
+  apis: AiAgentApiInput[];
+  existingTestCases?: Array<any>;
+  failureContext?: object;
+}
+
+export interface AiTestCaseDraftResponse {
+  apiId?: number;
+  endpoint_id?: string;
+  title: string;
+  description?: string;
+  type: string;
+  userRole?: string;
+  stateCondition?: string;
+  dataVariant?: string;
+  requestSpec: string;
+  expectedSpec: string;
+  assertionSpec: string;
+  duplicate: boolean;
+  testLevel?: TestLevel;
+}
+
+export interface AiTestCaseGenerationResponse {
+  drafts: AiTestCaseDraftResponse[];
+}
+
+export interface AiScenarioBuildRequest extends AiAgentBaseRequest {
+  agent: 'SCENARIO_BUILDER';
+  scenarioContext: {
+    appId: number;
+    user_intent: string;
+    mode: 'NATURAL_LANGUAGE' | 'RECOMMEND';
+    testLevel?: string;
+    businessDomain?: string;
+  };
+  apis: Array<Pick<AiAgentApiInput, 'endpoint_id' | 'method' | 'path' | 'request_body_schema' | 'response_schema'>>;
+  existingScenarios?: Array<any>;
+}
+
+export interface AiScenarioBuildResponse {
+  name: string;
+  description?: string;
+  type: string;
+  meta?: {
+    rationale?: string;
+  };
+  steps: Array<{
+    order: number;
+    endpoint_id: string;
+    name: string;
+    static_payload?: string;
+    chained_variables?: string;
+    expected_assertions?: string;
+  }>;
+}
+
+export interface AiLogAnalysisResponse {
+  diagnosis: string;
+  failureCategory: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  confidence: number;
+  likelyCauses?: string[];
+  recommendedActions?: string[];
+  reproduction?: {
+    method?: string;
+    path?: string;
+    body?: object;
+    expectedStatusCode?: number;
+  };
+  suggestedTestCases?: Array<{
+    title?: string;
+    type?: string;
+    expectedSpec?: string;
+  }>;
+}
+
+export interface AiTestStrategyClassifyRequest extends AiAgentBaseRequest {
+  agent?: 'TEST_STRATEGY_CLASSIFIER';
+  drafts: Array<Record<string, unknown>>;
+}
+
+export interface AiTestStrategyClassifyResponse {
+  drafts: Array<{
+    testLevel: TestLevel;
   }>;
 }
 
@@ -519,6 +655,14 @@ export const flowOpsApi = {
       }),
     ),
 
+  createExecution: (body: Record<string, unknown>) =>
+    unwrap(
+      request<ApiResponse<ExecutionDetailResponse>>('/executions', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
   listExecutions: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
     unwrap(
       request<ApiResponse<PageResponse<ExecutionDetailResponse>>>(
@@ -568,6 +712,30 @@ export const flowOpsApi = {
         },
       ),
     ),
+
+  generateAiTestCases: (body: AiTestCaseGenerationRequest) =>
+    request<AiTestCaseGenerationResponse>('/ai/agents/test-cases/generate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  buildAiScenario: (body: AiScenarioBuildRequest) =>
+    request<AiScenarioBuildResponse>('/ai/agents/scenarios/build', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  analyzeAiLogs: (body: Record<string, unknown>) =>
+    request<AiLogAnalysisResponse>('/ai/agents/logs/analyze', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  classifyAiTestStrategy: (body: AiTestStrategyClassifyRequest) =>
+    request<AiTestStrategyClassifyResponse>('/ai/agents/test-strategy/classify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
     unwrap(
@@ -633,6 +801,12 @@ export const flowOpsApi = {
         body: JSON.stringify(body),
       }),
     ),
+
+  rerunExecution: (executionId: number) =>
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}/rerun`, { method: 'POST' })),
+
+  rerunFailedExecution: (executionId: number) =>
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}/rerun-failed`, { method: 'POST' })),
 
   getExecution: (executionId: number) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}`)),

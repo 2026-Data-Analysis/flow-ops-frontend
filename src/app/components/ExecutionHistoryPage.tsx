@@ -19,9 +19,18 @@ import {
   Zap,
   Calendar,
   X,
-  Layers
+  Layers,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
-import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
+import {
+  DEFAULT_REQUESTER,
+  flowOpsApi,
+  getDefaultAppId,
+  type AiLogAnalysisResponse,
+  type ExecutionDetailResponse,
+  type ExecutionStepLogResponse,
+} from '../api/flowOpsClient';
 
 interface ExecutionRecord {
   id: string;
@@ -98,11 +107,20 @@ const normalizeExecutionStep = (step: ExecutionStepLogResponse, index: number, e
   response: {
     statusCode: step.responseCode || (step.status === 'SUCCESS' || step.success ? 200 : 500),
     headers: {},
-    body: execution.response ? JSON.stringify(execution.response, null, 2) : '',
+    body: step.responseBody ? JSON.stringify(step.responseBody, null, 2) : execution.response ? JSON.stringify(execution.response, null, 2) : '',
     duration: step.durationMs || 0,
   },
-  assertions: [],
-  errorMessage: execution.errorMessage,
+  assertions: Array.isArray(step.assertionResults)
+    ? step.assertionResults.map((assertion: any, assertionIndex) => ({
+        id: String(assertion.id ?? assertionIndex + 1),
+        type: String(assertion.type ?? assertion.name ?? 'assertion'),
+        fieldPath: String(assertion.fieldPath ?? assertion.path ?? ''),
+        expected: String(assertion.expected ?? ''),
+        actual: String(assertion.actual ?? ''),
+        passed: Boolean(assertion.passed ?? assertion.success),
+      }))
+    : [],
+  errorMessage: step.errorMessage || execution.errorMessage,
 });
 
 const normalizeExecutionRecord = (execution: ExecutionDetailResponse): ExecutionRecord => {
@@ -141,10 +159,18 @@ export function ExecutionHistoryPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [logAnalysis, setLogAnalysis] = useState<AiLogAnalysisResponse | null>(null);
+  const [isAnalyzingLogs, setIsAnalyzingLogs] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const selectedExecution = selectedExecutionId
     ? executions.find(e => e.id === selectedExecutionId)
     : null;
+
+  useEffect(() => {
+    setLogAnalysis(null);
+    setAnalysisError(null);
+  }, [selectedExecutionId]);
 
   useEffect(() => {
     let active = true;
@@ -209,8 +235,53 @@ export function ExecutionHistoryPage() {
     }
   };
 
+  const handleAnalyzeLogs = async () => {
+    if (!selectedExecution) return;
+
+    setIsAnalyzingLogs(true);
+    setAnalysisError(null);
+    try {
+      const failedSteps = selectedExecution.steps.filter((step) => step.status === 'failed');
+      const analysis = await flowOpsApi.analyzeAiLogs({
+        requestId: crypto.randomUUID(),
+        requestedBy: DEFAULT_REQUESTER,
+        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
+        execution: {
+          id: selectedExecution.id,
+          name: selectedExecution.name,
+          type: selectedExecution.type,
+          environment: selectedExecution.environment,
+          status: selectedExecution.status,
+          totalSteps: selectedExecution.totalSteps,
+          passedSteps: selectedExecution.passedSteps,
+          failedSteps: selectedExecution.failedSteps,
+          durationMs: selectedExecution.duration,
+        },
+        logs: failedSteps.map((step) => ({
+          stepId: step.id,
+          name: step.name,
+          method: step.apiMethod,
+          path: step.apiPath,
+          statusCode: step.response.statusCode,
+          request: step.request,
+          response: step.response,
+          assertions: step.assertions,
+          errorMessage: step.errorMessage,
+        })),
+      });
+      setLogAnalysis(analysis);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Failed to analyze logs.');
+      setLogAnalysis(null);
+    } finally {
+      setIsAnalyzingLogs(false);
+    }
+  };
+
   const handleClosePanel = () => {
     setSelectedExecutionId(null);
+    setLogAnalysis(null);
+    setAnalysisError(null);
   };
 
   const formatDuration = (ms: number) => {
@@ -484,6 +555,16 @@ export function ExecutionHistoryPage() {
                   Run Failed Steps Only
                 </button>
               )}
+              {selectedExecution.failedSteps > 0 && (
+                <button
+                  onClick={handleAnalyzeLogs}
+                  disabled={isAnalyzingLogs}
+                  className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isAnalyzingLogs ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  Analyze Failure
+                </button>
+              )}
               <button
                 onClick={handleOpenInBuilder}
                 className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 hover:bg-blue-500/5 text-white px-4 py-2 rounded-lg transition-all"
@@ -492,6 +573,98 @@ export function ExecutionHistoryPage() {
                 Open in Builder
               </button>
             </div>
+
+            {(logAnalysis || analysisError) && (
+              <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl p-6">
+                <h3 className="text-white mb-4 flex items-center gap-2">
+                  <Sparkles size={18} className="text-purple-400" />
+                  AI Failure Analysis
+                </h3>
+                {analysisError ? (
+                  <p className="text-sm text-red-400">{analysisError}</p>
+                ) : logAnalysis && (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="mb-1 text-xs text-gray-500">Diagnosis</div>
+                      <p className="text-sm leading-6 text-gray-300">{logAnalysis.diagnosis}</p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-lg bg-[#13131a] p-3">
+                        <div className="mb-1 text-xs text-gray-500">Category</div>
+                        <div className="text-sm text-white">{logAnalysis.failureCategory}</div>
+                      </div>
+                      <div className="rounded-lg bg-[#13131a] p-3">
+                        <div className="mb-1 text-xs text-gray-500">Severity</div>
+                        <div className="text-sm text-white">{logAnalysis.severity}</div>
+                      </div>
+                      <div className="rounded-lg bg-[#13131a] p-3">
+                        <div className="mb-1 text-xs text-gray-500">Confidence</div>
+                        <div className="text-sm text-white">{Math.round(logAnalysis.confidence * 100)}%</div>
+                      </div>
+                    </div>
+                    {logAnalysis.likelyCauses && logAnalysis.likelyCauses.length > 0 && (
+                      <div>
+                        <div className="mb-2 text-xs text-gray-500">Likely causes</div>
+                        <div className="space-y-1">
+                          {logAnalysis.likelyCauses.map((cause) => (
+                            <div key={cause} className="text-sm text-gray-300">- {cause}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {logAnalysis.recommendedActions && logAnalysis.recommendedActions.length > 0 && (
+                      <div>
+                        <div className="mb-2 text-xs text-gray-500">Recommended actions</div>
+                        <div className="space-y-1">
+                          {logAnalysis.recommendedActions.map((action) => (
+                            <div key={action} className="text-sm text-gray-300">- {action}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {logAnalysis.reproduction && (
+                      <div>
+                        <div className="mb-2 text-xs text-gray-500">Reproduction</div>
+                        <pre className="max-h-48 overflow-auto rounded-lg bg-[#13131a] p-3 text-xs text-gray-300">
+                          {JSON.stringify(logAnalysis.reproduction, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {logAnalysis.suggestedTestCases && logAnalysis.suggestedTestCases.length > 0 && (
+                      <div>
+                        <div className="mb-2 text-xs text-gray-500">Suggested test cases</div>
+                        <div className="space-y-2">
+                          {logAnalysis.suggestedTestCases.map((testCase, index) => (
+                            <div key={`${testCase.title || 'suggested'}-${index}`} className="rounded-lg border border-[#1f1f28] bg-[#13131a] p-3">
+                              <div className="text-sm text-white">{testCase.title || `Suggested test #${index + 1}`}</div>
+                              <div className="mt-1 text-xs text-gray-500">{testCase.type || 'Generated from failure'}</div>
+                              {testCase.expectedSpec && (
+                                <div className="mt-2 text-xs text-gray-300">{testCase.expectedSpec}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate('/monitoring/response', {
+                          state: {
+                            analysis: logAnalysis,
+                            executionId: selectedExecution.id,
+                          },
+                        })
+                      }
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-sm text-white transition-all hover:border-blue-500/30 hover:bg-blue-500/5"
+                    >
+                      <ExternalLink size={14} />
+                      Use in Response Assistant
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* [2] Step Timeline */}
             {selectedExecution.steps.length > 0 ? (
@@ -549,6 +722,18 @@ export function ExecutionHistoryPage() {
                                   <AlertTriangle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
                                   <div className="text-xs text-red-400">{step.errorMessage}</div>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleAnalyzeLogs();
+                                  }}
+                                  disabled={isAnalyzingLogs}
+                                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-1.5 text-xs text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+                                >
+                                  {isAnalyzingLogs ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                  Log Analysis
+                                </button>
                               </div>
                             )}
                           </div>
@@ -733,4 +918,3 @@ export function ExecutionHistoryPage() {
     </div>
   );
 }
-

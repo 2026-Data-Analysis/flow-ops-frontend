@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router';
 import { 
   MessageSquare,
   Copy,
@@ -7,8 +8,7 @@ import {
   Sparkles,
   Users,
   Mail,
-  CheckCircle2,
-  ChevronDown
+  CheckCircle2
 } from 'lucide-react';
 import { flowOpsApi, getDefaultAppId } from '../api/flowOpsClient';
 
@@ -394,6 +394,7 @@ Receiving high volume of login-related tickets. May indicate ongoing technical i
 };
 
 export function ResponseAssistantPage() {
+  const location = useLocation();
   const [incidents, setIncidents] = useState<IncidentOption[]>([]);
   const [selectedIncident, setSelectedIncident] = useState('');
   const [audience, setAudience] = useState<AudienceType>('internal');
@@ -402,6 +403,7 @@ export function ResponseAssistantPage() {
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
+  const analysisReference = (location.state as any)?.analysis;
 
   const buildContent = (
     nextAudience: AudienceType,
@@ -417,6 +419,15 @@ export function ResponseAssistantPage() {
       .replace(/Database connection timeout/g, incident.title)
       .replace(/database connectivity issue/g, incident.errorMessage || incident.title)
       .replace(/authentication service/g, incident.endpoint || 'affected API');
+  };
+
+  const refreshTemplateContent = (
+    nextAudience = audience,
+    nextType = messageType,
+    incidentId = selectedIncident,
+    sourceIncidents = incidents,
+  ) => {
+    setContent(buildContent(nextAudience, nextType, incidentId, sourceIncidents));
   };
 
   useEffect(() => {
@@ -460,12 +471,12 @@ export function ResponseAssistantPage() {
 
   const handleAudienceChange = (newAudience: AudienceType) => {
     setAudience(newAudience);
-    setContent(buildContent(newAudience, messageType));
+    refreshTemplateContent(newAudience, messageType);
   };
 
   const handleMessageTypeChange = (newType: MessageType) => {
     setMessageType(newType);
-    setContent(buildContent(audience, newType));
+    refreshTemplateContent(audience, newType);
   };
 
   const handleCopy = () => {
@@ -481,10 +492,10 @@ export function ResponseAssistantPage() {
         <div className="p-8 space-y-6">
           {/* Header */}
           <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
-              <p className="text-gray-400">AI-generated communication for incidents</p>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
+            <p className="text-gray-400">AI-generated communication for incidents</p>
+          </div>
             
             <div className="flex items-center gap-3">
               <button 
@@ -517,6 +528,31 @@ export function ResponseAssistantPage() {
           </div>
 
           {/* Selectors */}
+          {analysisReference && (
+            <div className="rounded-2xl border border-purple-500/20 bg-purple-500/10 p-5">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-purple-300">
+                <Sparkles size={16} />
+                Log Analysis Reference
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <div className="mb-1 text-purple-200/70">Category</div>
+                  <div className="text-white">{analysisReference.failureCategory}</div>
+                </div>
+                <div>
+                  <div className="mb-1 text-purple-200/70">Severity</div>
+                  <div className="text-white">{analysisReference.severity}</div>
+                </div>
+                <div>
+                  <div className="mb-1 text-purple-200/70">Confidence</div>
+                  <div className="text-white">{Math.round((analysisReference.confidence || 0) * 100)}%</div>
+                </div>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-gray-300">{analysisReference.diagnosis}</p>
+            </div>
+          )}
+
+          {/* Selectors */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 space-y-4">
             {/* Incident Selector */}
             <div>
@@ -525,7 +561,7 @@ export function ResponseAssistantPage() {
                 value={selectedIncident}
                 onChange={(e) => {
                   setSelectedIncident(e.target.value);
-                  setContent(buildContent(audience, messageType, e.target.value));
+                  refreshTemplateContent(audience, messageType, e.target.value);
                 }}
                 className="w-full px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
               >
