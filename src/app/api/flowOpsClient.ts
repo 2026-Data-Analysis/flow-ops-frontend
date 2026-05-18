@@ -576,6 +576,9 @@ export const flowOpsApi = {
       ),
     ),
 
+  getInventoryDetail: (projectId: number, inventoryId: number) =>
+    unwrap(request<ApiResponse<ApiInventoryResponse>>(`/projects/${projectId}/api-inventories/${inventoryId}`)),
+
   listEnvironments: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<EnvironmentResponse[]>>(`/apps/${appId}/environments`)),
 

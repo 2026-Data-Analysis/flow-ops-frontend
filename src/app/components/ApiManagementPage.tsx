@@ -19,7 +19,7 @@ import {
   BarChart3,
   Check
 } from 'lucide-react';
-import { flowOpsApi, type ApiEndpointDetailResponse, type ApiInventoryResponse } from '../api/flowOpsClient';
+import { flowOpsApi, type ApiInventoryResponse } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
 interface ApiEndpoint {
@@ -82,6 +82,26 @@ const resolveInventoryUpdatedAt = (inventory: ApiInventoryResponse) =>
 
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
 
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+
+interface StoredRegisteredRepository {
+  id: number;
+  appId: number;
+}
+
+const readStoredRepositories = (): StoredRegisteredRepository[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((item) => item?.id && item?.appId)
+          .map((item) => ({ id: Number(item.id), appId: Number(item.appId) }))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
 const normalizeInventory = (inventory: ApiInventoryResponse): ApiEndpoint => ({
   id: String(inventory.id),
   method: (inventory.method === 'TRACE' ? 'GET' : inventory.method) as ApiEndpoint['method'],
@@ -134,9 +154,10 @@ const buildRequestDefaults = (schema: unknown) => {
 
 export function ApiManagementPage() {
   const navigate = useNavigate();
-  const { setSelectedAPIs } = useTestContext();
+  const { activeApplication, setSelectedAPIs } = useTestContext();
   const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
-  const [apiDetails, setApiDetails] = useState<Record<string, ApiEndpointDetailResponse>>({});
+  const [apiDetails, setApiDetails] = useState<Record<string, ApiInventoryResponse>>({});
+  const [projectId, setProjectId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -152,9 +173,29 @@ export function ApiManagementPage() {
   useEffect(() => {
     let active = true;
     setIsLoading(true);
-    flowOpsApi
-      .ensureProject()
-      .then((project) => flowOpsApi.listInventories(project.id))
+
+    const loadInventories = async () => {
+      const project = await flowOpsApi.ensureProject();
+      setProjectId(project.id);
+      const repositories = await flowOpsApi.listRepositories(project.id).catch(() => []);
+      const storedRepositories = readStoredRepositories();
+      const activeRepository =
+        repositories.find((repository) => repository.appId === activeApplication.appId) ||
+        storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+      if (!activeRepository) {
+        throw new Error('No repository is linked to the selected application. Re-register or rescan this repository after the backend deploy finishes.');
+      }
+
+      return flowOpsApi.listInventories(project.id, { repositoryId: activeRepository.id });
+    };
+
+    setSelectedDomain('all');
+    setSelectedEnvironment('all');
+    setSelectedApiId(null);
+    setSelectedApiIds([]);
+    setApiDetails({});
+
+    loadInventories()
       .then((inventory) => {
         if (!active) return;
         setEndpoints(inventory.items.map(normalizeInventory));
@@ -171,7 +212,7 @@ export function ApiManagementPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeApplication.appId]);
 
   const environments = ['all', ...Array.from(new Set(endpoints.flatMap((endpoint) => endpoint.environments)))];
 
@@ -237,16 +278,17 @@ export function ApiManagementPage() {
   const selectedApi = selectedApiId ? endpoints.find(e => e.id === selectedApiId) : null;
   const selectedApiDetail = selectedApiId ? apiDetails[selectedApiId] : undefined;
   const selectedRequestDefaults = buildRequestDefaults(selectedApiDetail?.requestSchema || selectedApi?.requestSchema);
+  const selectedRequiresAuth = selectedApiDetail?.authRequired ?? selectedApi?.requiresAuth ?? false;
 
   useEffect(() => {
-    if (!selectedApiId || apiDetails[selectedApiId]) return;
+    if (!projectId || !selectedApiId || apiDetails[selectedApiId]) return;
     const apiId = Number(selectedApiId);
     if (!Number.isFinite(apiId)) return;
     flowOpsApi
-      .getApiDetail(apiId)
+      .getInventoryDetail(projectId, apiId)
       .then((detail) => setApiDetails((prev) => ({ ...prev, [selectedApiId]: detail })))
       .catch(() => undefined);
-  }, [apiDetails, selectedApiId]);
+  }, [apiDetails, projectId, selectedApiId]);
 
   // Calculate summary stats
   const totalEndpoints = filteredEndpoints.length;
@@ -449,7 +491,7 @@ export function ApiManagementPage() {
         <div className="max-w-7xl mx-auto">
           {apiError && (
             <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
-              Backend unavailable: {apiError}. Showing cached sample data.
+              {apiError}
             </div>
           )}
           {isLoading && (
@@ -631,7 +673,7 @@ export function ApiManagementPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Auth Required</span>
-                    {selectedApi.requiresAuth ? (
+                    {selectedRequiresAuth ? (
                       <Lock size={14} className="text-yellow-400" />
                     ) : (
                       <span className="text-xs text-gray-400">No</span>
