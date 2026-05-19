@@ -35,6 +35,7 @@ import {
     rememberAppTitle,
     type EnvironmentResponse,
 } from '../api/flowOpsClient';
+import { useTestContext } from '../contexts/TestContext';
 
 interface KeyValuePair {
     id: string;
@@ -126,6 +127,7 @@ const serializeEnvironment = (env: Environment) => ({
 
 export function EnvironmentSettingsPage() {
     const navigate = useNavigate();
+    const { activeApplication } = useTestContext();
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [mainAppId, setMainAppId] = useState<number | null>(null);
     const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
@@ -147,14 +149,13 @@ export function EnvironmentSettingsPage() {
             setApiError(null);
 
             try {
-                const mainApplication = await flowOpsApi.resolveMainApplication();
-                const items = await flowOpsApi.listEnvironments(mainApplication.appId);
+                const items = await flowOpsApi.listEnvironments(activeApplication.appId);
                 const normalized = items.map(normalizeEnvironment);
                 if (!active) return;
 
-                setMainAppId(mainApplication.appId);
-                rememberAppId(mainApplication.appId);
-                rememberAppTitle(mainApplication.title);
+                setMainAppId(activeApplication.appId);
+                rememberAppId(activeApplication.appId);
+                rememberAppTitle(activeApplication.title);
                 setEnvironments(normalized.length > 0 ? normalized : []);
                 setSelectedEnvId(normalized[0]?.id ?? null);
                 setApiError(null);
@@ -174,7 +175,7 @@ export function EnvironmentSettingsPage() {
         return () => {
             active = false;
         };
-    }, []);
+    }, [activeApplication.appId, activeApplication.title]);
 
     useEffect(() => {
         if (!selectedEnv) {
