@@ -22,8 +22,6 @@ import { useTestContext } from '../contexts/TestContext';
 import {
   DEFAULT_REQUESTER,
   flowOpsApi,
-  getDefaultAppId,
-  type AiTestCaseDraftResponse,
   type ApiInventoryResponse,
   type EnvironmentResponse,
   type RepositoryResponse,
@@ -52,7 +50,7 @@ interface TestCase {
   id: string;
   draftId?: number;
   name: string;
-  type: 'success' | 'validation' | 'auth' | 'edge' | 'error';
+  type: 'success' | 'validation' | 'auth' | 'performance' | 'edge' | 'error';
   backendType?: string;
   testLevel?: TestLevel;
   apiId: string;
@@ -72,7 +70,6 @@ interface TestCase {
 const userRoles = ['Admin', 'User', 'Guest', 'Moderator'];
 const stateConditions = ['Logged In', 'Token Expired', 'Valid Token', 'Resource Exists', 'Rate Limited'];
 const dataVariants = ['Valid Input', 'Invalid Input', 'Boundary Value', 'Null / Empty'];
-const DEMO_TEST_GENERATION_FALLBACK_MS = 800;
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 
@@ -89,7 +86,8 @@ const methodColors = {
 const typeColors = {
   success: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', label: 'Success' },
   validation: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Validation' },
-  auth: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Auth' },
+  auth: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Authorization' },
+  performance: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20', label: 'Performance' },
   edge: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', label: 'Edge' },
   error: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'Error' },
 };
@@ -108,6 +106,7 @@ const formatRelativeTime = (value?: string) => {
 const mapBackendType = (type?: string): TestCase['type'] => {
   const normalized = (type || '').toLowerCase();
   if (normalized.includes('auth')) return 'auth';
+  if (normalized.includes('performance') || normalized.includes('load') || normalized.includes('latency')) return 'performance';
   if (normalized.includes('edge') || normalized.includes('boundary')) return 'edge';
   if (normalized.includes('error') || normalized.includes('negative')) return 'error';
   if (normalized.includes('validation') || normalized.includes('invalid')) return 'validation';
@@ -117,19 +116,6 @@ const mapBackendType = (type?: string): TestCase['type'] => {
 const stringifySpec = (value?: unknown) => {
   if (value === undefined || value === null || value === '') return undefined;
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-};
-
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 };
 
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
@@ -202,7 +188,7 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     role: draft.userRole || draft.role,
     stateCondition,
     dataVariant: draft.dataVariant,
-    status: 'new',
+    status: draft.duplicate ? 'duplicate' : 'new',
     description: draft.description,
     expectedResult: draft.expectedResult,
     requestPreview: requestSpec,
@@ -213,24 +199,6 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
       : undefined,
   };
 };
-
-const normalizeAiDraft = (draft: AiTestCaseDraftResponse, index: number): TestCase => ({
-  id: `ai-draft-${draft.endpoint_id || draft.apiId || index}-${crypto.randomUUID()}`,
-  name: draft.title,
-  type: mapBackendType(draft.type),
-  backendType: draft.type,
-  testLevel: draft.testLevel,
-  apiId: String(draft.apiId || draft.endpoint_id || ''),
-  role: draft.userRole,
-  stateCondition: draft.stateCondition,
-  dataVariant: draft.dataVariant,
-  status: draft.duplicate ? 'duplicate' : 'new',
-  description: draft.description,
-  expectedResult: draft.expectedSpec,
-  requestPreview: draft.requestSpec,
-  requestSpec: draft.requestSpec,
-  assertionSpec: draft.assertionSpec,
-});
 
 const buildMockGeneratedTests: (
   selectedApis: ApiEndpoint[],
@@ -299,7 +267,7 @@ export function TestCaseGenerationPage() {
       .ensureProject()
       .then(async (project) => {
         const [items, repositories] = await Promise.all([
-          flowOpsApi.listEnvironments(getDefaultAppId()).catch(() => [] as EnvironmentResponse[]),
+          flowOpsApi.listEnvironments(activeApplication.appId).catch(() => [] as EnvironmentResponse[]),
           flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]),
         ]);
         return { project, items, repositories };
@@ -461,143 +429,57 @@ export function TestCaseGenerationPage() {
     setGenerationStatus(null);
     setSaveMessage(null);
 
-    try {
-      const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-      const contextSummary = [
-        `${selectedApis.length} selected APIs`,
-        `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
-        `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
-        `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
-      ].join(' | ');
+    const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
+    const contextSummary = [
+      `${selectedApis.length} selected APIs`,
+      `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
+      `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
+      `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
+    ].join(' | ');
 
-      const aiResponse = await flowOpsApi.generateAiTestCases({
-        agent: 'TEST_CASE_GENERATOR',
-        requestId: crypto.randomUUID(),
+    try {
+      const environmentId = selectedEnvironment?.id ?? environments[0]?.id;
+      if (!environmentId) {
+        throw new Error('Select an environment before generating tests.');
+      }
+
+      const generation = await flowOpsApi.createTestGeneration({
+        appId: activeApplication.appId,
+        environmentId,
         requestedBy: DEFAULT_REQUESTER,
-        project: {
-          projectId: projectId || undefined,
-          appId: getDefaultAppId(),
-          appName: activeApplication.title,
-        },
-        environment: selectedEnvironment
-          ? {
-              environmentId: selectedEnvironment.id,
-              name: selectedEnvironment.name,
-              baseUrl: selectedEnvironment.baseUrl,
-              defaultTestLevel: selectedEnvironment.defaultTestLevel,
-            }
-          : undefined,
-        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
-        generationContext: {
-          mode: 'SELECTED_APIS',
-          testLevel: selectedEnvironment?.defaultTestLevel || 'REGRESSION',
-          currentCoverage,
-          contextSummary,
-        },
-        apis: selectedApis.map((api) => ({
-          apiId: Number(api.id),
-          endpoint_id: api.id,
-          method: api.method,
-          path: api.path,
-          domainTag: api.domain,
-          request_body_schema: api.requestSchema && typeof api.requestSchema === 'object' ? api.requestSchema as object : undefined,
-          response_schema: api.responseSchema && typeof api.responseSchema === 'object' ? api.responseSchema as object : undefined,
-        })),
-        existingTestCases: existingTests
-          .filter((test) => apiIdsForGeneration.includes(test.apiId))
-          .map((test) => ({
-            apiId: Number(test.apiId),
-            title: test.name,
-            type: test.backendType || test.type,
-            userRole: test.role,
-            stateCondition: test.stateCondition,
-            dataVariant: test.dataVariant,
-            requestSpec: test.requestSpec,
-            expectedSpec: test.expectedResult,
-            assertionSpec: test.assertionSpec,
-          })),
+        selectedApiIds: apiIds,
+        contextSummary,
+        currentCoverage,
       });
-      setGenerationStatus('AI_DRAFTED');
-      const backendTests = (aiResponse.drafts || []).map(normalizeAiDraft).map((test) => {
-        const isDuplicate = existingTests.some(
-          (existing) =>
-            existing.apiId === test.apiId &&
-            existing.role === test.role &&
-            existing.stateCondition === test.stateCondition &&
-            existing.dataVariant === test.dataVariant,
-        );
-        return { ...test, status: isDuplicate ? 'duplicate' : 'new' } as TestCase;
-      }).filter((test) => apiIdsForGeneration.includes(test.apiId));
+      const status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
+      const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
+
+      setGenerationId(generation.id);
+      setGenerationStatus(status.status || generation.status || null);
+      const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
       const newTests = backendTests.length > 0
         ? backendTests
         : allowMockData
           ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
           : [];
-
       setGeneratedTests(newTests);
       setSelectedGeneratedTestIds(newTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      setSaveMessage(newTests.length > 0 ? null : 'AI did not return any test case drafts.');
+      setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
     } catch (error) {
-      try {
-        const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-        const contextSummary = [
-          `${selectedApis.length} selected APIs`,
-          `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
-          `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
-          `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
-        ].join(' | ');
-        const { generation, status, drafts } = await withTimeout(
-          (async () => {
-            const environmentId = selectedEnvironment?.id ?? environments[0]?.id ?? 3;
-            const generation = await flowOpsApi.createTestGeneration({
-              appId: getDefaultAppId(),
-              environmentId,
-              requestedBy: DEFAULT_REQUESTER,
-              selectedApiIds: apiIds,
-              contextSummary,
-              currentCoverage,
-            });
-            const status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
-            const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
-            return { generation, status, drafts };
-          })(),
-          DEMO_TEST_GENERATION_FALLBACK_MS,
-          'Backend test generation timed out.',
-        );
-        setGenerationId(generation.id);
-        setGenerationStatus(status.status || generation.status || null);
-        const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
-        const newTests = backendTests.length > 0
-          ? backendTests
-          : allowMockData
-            ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
-            : [];
+      const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
+
+      if (allowMockData) {
+        const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
         setGeneratedTests(newTests);
         setSelectedGeneratedTestIds(newTests.map((test) => test.id));
         setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
-      } catch (fallbackError) {
-        const message =
-          fallbackError instanceof Error
-            ? fallbackError.message
-            : error instanceof Error
-              ? error.message
-              : 'Failed to generate AI test cases.';
-
-        if (allowMockData) {
-          const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-          const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
-          setGeneratedTests(newTests);
-          setSelectedGeneratedTestIds(newTests.map((test) => test.id));
-          setExpandedGeneratedApiIds(apiIdsForGeneration);
-          setSaveMessage(null);
-        } else {
-          setGeneratedTests([]);
-          setSelectedGeneratedTestIds([]);
-          setExpandedGeneratedApiIds([]);
-          setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
-        }
+        setSaveMessage(null);
+      } else {
+        setGeneratedTests([]);
+        setSelectedGeneratedTestIds([]);
+        setExpandedGeneratedApiIds([]);
+        setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
       }
     } finally {
       setIsGenerating(false);
@@ -699,7 +581,7 @@ export function TestCaseGenerationPage() {
         : backendDraftsToSave.map((test) => ({ ...test, status: 'existing' as const }));
       const createdDirectDrafts = await Promise.all(
         demoTestsToSave.map((test) =>
-          flowOpsApi.createTestCase(getDefaultAppId(), {
+          flowOpsApi.createTestCase(activeApplication.appId, {
             apiId: Number(test.apiId),
             name: test.name.trim(),
             title: test.name.trim(),

@@ -8,7 +8,7 @@ type ApiEndpoint = {
 type TestCase = {
   id: string;
   name: string;
-  type: 'success' | 'validation' | 'auth' | 'edge' | 'error';
+  type: 'success' | 'validation' | 'auth' | 'performance' | 'edge' | 'error';
   backendType?: string;
   testLevel?: 'SMOKE' | 'SANITY' | 'REGRESSION' | 'FULL';
   apiId: string;
@@ -27,6 +27,7 @@ type TestCase = {
 const mapBackendType = (type?: string): TestCase['type'] => {
   const normalized = (type || '').toLowerCase();
   if (normalized.includes('auth')) return 'auth';
+  if (normalized.includes('performance') || normalized.includes('load') || normalized.includes('latency')) return 'performance';
   if (normalized.includes('edge') || normalized.includes('boundary')) return 'edge';
   if (normalized.includes('error') || normalized.includes('negative')) return 'error';
   if (normalized.includes('validation') || normalized.includes('invalid')) return 'validation';

@@ -343,6 +343,7 @@ export interface TestGenerationDraftResponse {
   expectedResult?: string;
   assertionSpec?: string;
   validationRules?: string[] | unknown;
+  duplicate?: boolean;
 }
 
 export interface CreateTestGenerationRequest {
