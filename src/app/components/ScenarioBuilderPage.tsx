@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Play,
@@ -35,7 +35,7 @@ import {
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
 import { useTestContext } from '../contexts/TestContext';
-import { filterInventoryForEnvironment, inventoryQueryParamsForEnvironment } from '../utils/environmentScope';
+import { filterInventoryForEnvironment } from '../utils/environmentScope';
 
 interface ScenarioTemplate {
   id: string;
@@ -265,9 +265,6 @@ const buildRequestDefaults = (schema?: unknown) => {
   };
 };
 
-const RECOMMENDATION_INVENTORY_WAIT_MS = 8000;
-const RECOMMENDATION_INVENTORY_POLL_MS = 200;
-
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
   inventoryEndpoint?: string;
@@ -307,6 +304,13 @@ const inventoryQueryParamsForAppRepository = (
     : {}),
 });
 
+const inventoryQueryParamsForDefaultBranch = (
+  repository: Pick<RepositoryResponse, 'id' | 'defaultBranch'> | StoredRegisteredRepository | undefined,
+) => ({
+  ...(repository?.id ? { repositoryId: repository.id } : {}),
+  ...(repository?.defaultBranch ? { branchName: repository.defaultBranch } : {}),
+});
+
 export function ScenarioBuilderPage() {
   const navigate = useNavigate();
   const { activeApplication } = useTestContext();
@@ -328,35 +332,8 @@ export function ScenarioBuilderPage() {
   const [customScenarioInput, setCustomScenarioInput] = useState('');
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
-  const inventoryApisRef = useRef<ApiInventoryResponse[]>([]);
-  const isLoadingRef = useRef(false);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
-
-  useEffect(() => {
-    inventoryApisRef.current = inventoryApis;
-  }, [inventoryApis]);
-
-  useEffect(() => {
-    isLoadingRef.current = isLoading;
-  }, [isLoading]);
-
-  const waitForInventoryApis = () =>
-    new Promise<ApiInventoryResponse[]>((resolve) => {
-      const startedAt = Date.now();
-
-      const check = () => {
-        const items = inventoryApisRef.current;
-        if (!isLoadingRef.current || items.length > 0 || Date.now() - startedAt >= RECOMMENDATION_INVENTORY_WAIT_MS) {
-          resolve(items);
-          return;
-        }
-
-        window.setTimeout(check, RECOMMENDATION_INVENTORY_POLL_MS);
-      };
-
-      check();
-    });
 
   useEffect(() => {
     let active = true;
@@ -476,23 +453,6 @@ export function ScenarioBuilderPage() {
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
     try {
-<<<<<<< Updated upstream
-      let recommendationApis = isLoadingRef.current ? await waitForInventoryApis() : inventoryApisRef.current;
-
-      if (recommendationApis.length === 0) {
-        const project = projectId ? { id: projectId } : await flowOpsApi.ensureProject();
-        const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
-        const storedRepositories = readStoredRepositories();
-        const activeRepository =
-          repositories.find((repository) => repository.appId === activeApplication.appId) ||
-          storedRepositories.find((repository) => repository.appId === activeApplication.appId);
-        const params = inventoryQueryParamsForAppRepository(activeRepository, selectedEnvironment);
-        const inventory = await flowOpsApi.listInventories(project.id, params);
-        recommendationApis = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
-        setProjectId(project.id);
-        setInventoryApis(recommendationApis);
-      }
-=======
       const project = projectId ? { id: projectId } : await flowOpsApi.ensureProject();
       const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
       const storedRepositories = readStoredRepositories();
@@ -516,7 +476,6 @@ export function ScenarioBuilderPage() {
         branchName: inventoryParams.branchName as string | undefined,
         apiIds: recommendationApis.map((api) => api.id),
       });
->>>>>>> Stashed changes
 
       const businessDomains = Array.from(
         new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
@@ -539,7 +498,7 @@ export function ScenarioBuilderPage() {
       setApiError(null);
     } catch (error) {
       setRecommendationStatus('error');
-      setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApisRef.current) : []);
+      setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApis) : []);
       setApiError(
         error instanceof Error
           ? allowMockData
