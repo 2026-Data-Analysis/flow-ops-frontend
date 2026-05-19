@@ -28,7 +28,13 @@ import {
     Settings,
     Eye,
 } from 'lucide-react';
-import { DEFAULT_REQUESTER, flowOpsApi, getDefaultAppId, type EnvironmentResponse } from '../api/flowOpsClient';
+import {
+    DEFAULT_REQUESTER,
+    flowOpsApi,
+    rememberAppId,
+    rememberAppTitle,
+    type EnvironmentResponse,
+} from '../api/flowOpsClient';
 
 interface KeyValuePair {
     id: string;
@@ -121,6 +127,7 @@ const serializeEnvironment = (env: Environment) => ({
 export function EnvironmentSettingsPage() {
     const navigate = useNavigate();
     const [environments, setEnvironments] = useState<Environment[]>([]);
+    const [mainAppId, setMainAppId] = useState<number | null>(null);
     const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -133,22 +140,40 @@ export function EnvironmentSettingsPage() {
     const selectedEnv = selectedEnvId ? environments.find((env) => env.id === selectedEnvId) : null;
 
     useEffect(() => {
-        flowOpsApi
-            .listEnvironments(getDefaultAppId())
-            .then((items) => {
+        let active = true;
+
+        const loadMainApplicationEnvironments = async () => {
+            setIsLoading(true);
+            setApiError(null);
+
+            try {
+                const mainApplication = await flowOpsApi.resolveMainApplication();
+                const items = await flowOpsApi.listEnvironments(mainApplication.appId);
                 const normalized = items.map(normalizeEnvironment);
+                if (!active) return;
+
+                setMainAppId(mainApplication.appId);
+                rememberAppId(mainApplication.appId);
+                rememberAppTitle(mainApplication.title);
                 setEnvironments(normalized.length > 0 ? normalized : []);
-                setSelectedEnvId(null);
+                setSelectedEnvId(normalized[0]?.id ?? null);
                 setApiError(null);
-            })
-            .catch((error) => {
+            } catch (error) {
+                if (!active) return;
                 setEnvironments([]);
                 setSelectedEnvId(null);
                 setApiError(error instanceof Error ? error.message : 'Failed to load environments.');
-            })
-            .finally(() => {
+            } finally {
+                if (!active) return;
                 setIsLoading(false);
-            });
+            }
+        };
+
+        loadMainApplicationEnvironments();
+
+        return () => {
+            active = false;
+        };
     }, []);
 
     useEffect(() => {
@@ -274,7 +299,10 @@ export function EnvironmentSettingsPage() {
             const saved =
                 Number.isFinite(id) && id < 1000000000000
                     ? await flowOpsApi.updateEnvironment(id, body as any)
-                    : await flowOpsApi.createEnvironment(getDefaultAppId(), body as any);
+                    : await flowOpsApi.createEnvironment(
+                          mainAppId ?? (await flowOpsApi.resolveMainApplication()).appId,
+                          body as any,
+                      );
             const normalized = normalizeEnvironment(saved);
             setEnvironments((envs) => envs.map((env) => (env.id === selectedEnv.id ? normalized : env)));
             setSelectedEnvId(normalized.id);

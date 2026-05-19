@@ -102,6 +102,8 @@ export interface RepositoryResponse {
   projectId: number;
   appId?: number;
   appTitle?: string;
+  main?: boolean;
+  primary?: boolean;
   fullName: string;
   repositoryUrl?: string;
   defaultBranch?: string;
@@ -554,6 +556,44 @@ export const flowOpsApi = {
     });
     rememberProjectId(project.id);
     return project;
+  },
+
+  resolveMainApplication: async () => {
+    const project = await flowOpsApi.ensureProject();
+    const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
+    const appIds = Array.from(
+      new Set(repositories.map((repository) => repository.appId).filter((appId): appId is number => Boolean(appId))),
+    );
+
+    const repositoryMarkedMain = repositories.find((repository) => repository.main || repository.primary);
+    if (repositoryMarkedMain?.appId) {
+      return {
+        appId: repositoryMarkedMain.appId,
+        title: repositoryMarkedMain.appTitle || repositoryMarkedMain.fullName.split('/').pop() || 'Main Application',
+      };
+    }
+
+    const appDetails = (
+      await Promise.all(appIds.map((appId) => flowOpsApi.getApp(appId).catch(() => null)))
+    ).filter(Boolean) as AppDetailResponse[];
+    const mainApp =
+      appDetails.find((app) => app.main || app.primary) ||
+      appDetails.find((app) => app.id === getDefaultAppId()) ||
+      appDetails[0];
+
+    if (mainApp) {
+      return {
+        appId: mainApp.id,
+        title: mainApp.title || mainApp.name || 'Main Application',
+      };
+    }
+
+    const fallbackAppId = getDefaultAppId();
+    const fallbackApp = await flowOpsApi.getApp(fallbackAppId);
+    return {
+      appId: fallbackApp.id,
+      title: fallbackApp.title || fallbackApp.name || 'Main Application',
+    };
   },
 
   createApp: (body: CreateAppRequest) =>
