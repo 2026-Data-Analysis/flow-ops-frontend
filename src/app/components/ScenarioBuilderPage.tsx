@@ -266,6 +266,8 @@ const buildRequestDefaults = (schema?: unknown) => {
 const RECOMMENDATION_INVENTORY_WAIT_MS = 8000;
 const RECOMMENDATION_INVENTORY_POLL_MS = 200;
 
+type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
+
 export function ScenarioBuilderPage() {
   const navigate = useNavigate();
   const [scenarios, setScenarios] = useState<ScenarioTemplate[]>([]);
@@ -275,6 +277,7 @@ export function ScenarioBuilderPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [recommendationStatus, setRecommendationStatus] = useState<RecommendationStatus>('idle');
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -415,20 +418,31 @@ export function ScenarioBuilderPage() {
 
   const handleOpenRecommendations = async () => {
     setShowAiModal(true);
-
     setIsRecommendationLoading(true);
-    const recommendationApis = isLoadingRef.current ? await waitForInventoryApis() : inventoryApisRef.current;
+    setRecommendationStatus('waiting_inventory');
+
     const selectedEnvironment =
       selectedEnvironmentId === 'all'
         ? null
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
-    const businessDomains = Array.from(
-      new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
-    );
+    try {
+      let recommendationApis = isLoadingRef.current ? await waitForInventoryApis() : inventoryApisRef.current;
 
-    flowOpsApi
-      .recommendScenarios({
+      if (recommendationApis.length === 0) {
+        const project = projectId ? { id: projectId } : await flowOpsApi.ensureProject();
+        const inventory = await flowOpsApi.listInventories(project.id, inventoryQueryParamsForEnvironment(selectedEnvironment));
+        recommendationApis = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
+        setProjectId(project.id);
+        setInventoryApis(recommendationApis);
+      }
+
+      const businessDomains = Array.from(
+        new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
+      );
+
+      setRecommendationStatus('requesting');
+      const recommendations = await flowOpsApi.recommendScenarios({
         appId: getDefaultAppId(),
         environmentId: selectedEnvironment?.id,
         goal: 'Recommend high-value multi-step API scenarios from the current inventory.',
@@ -437,24 +451,24 @@ export function ScenarioBuilderPage() {
         businessDomain: businessDomains.join(', ') || undefined,
         requestedBy: DEFAULT_REQUESTER,
         apiIds: recommendationApis.map((api) => api.id),
-      })
-      .then((recommendations) => {
-        setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario)));
-        setApiError(null);
-      })
-      .catch(async (error) => {
-        setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApis) : []);
-        setApiError(
-          error instanceof Error
-            ? allowMockData
-              ? `${error.message} Showing local recommendations.`
-              : error.message
-            : 'Failed to generate AI scenarios.',
-        );
-      })
-      .finally(() => {
-        setIsRecommendationLoading(false);
       });
+
+      setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario)));
+      setRecommendationStatus(recommendations.length > 0 ? 'idle' : 'empty');
+      setApiError(null);
+    } catch (error) {
+      setRecommendationStatus('error');
+      setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApisRef.current) : []);
+      setApiError(
+        error instanceof Error
+          ? allowMockData
+            ? `${error.message} Showing local recommendations.`
+            : error.message
+          : 'Failed to generate AI scenarios.',
+      );
+    } finally {
+      setIsRecommendationLoading(false);
+    }
   };
 
   const handleAiGenerateConfirm = () => {
@@ -693,9 +707,33 @@ export function ScenarioBuilderPage() {
               {isRecommendationLoading && (
                 <div className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#13131a] px-6 py-10 text-center">
                   <Sparkles size={32} className="mb-4 animate-pulse text-purple-400" />
-                  <h3 className="mb-2 text-white font-semibold">Analyzing connected API flows</h3>
+                  <h3 className="mb-2 text-white font-semibold">
+                    {recommendationStatus === 'waiting_inventory' ? 'Loading API inventory' : 'Analyzing connected API flows'}
+                  </h3>
                   <p className="max-w-md text-sm text-gray-500">
-                    Finding multi-step scenarios across authentication, cart, payment, and order APIs.
+                    {recommendationStatus === 'waiting_inventory'
+                      ? 'Waiting for the latest API list before requesting scenario recommendations.'
+                      : 'Requesting scenario recommendations from the backend.'}
+                  </p>
+                </div>
+              )}
+
+              {!isRecommendationLoading && recommendationStatus === 'empty' && aiScenarios.length === 0 && (
+                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#13131a] px-6 py-10 text-center">
+                  <AlertCircle size={30} className="mb-3 text-gray-500" />
+                  <h3 className="mb-2 text-white font-semibold">No recommendations returned</h3>
+                  <p className="max-w-md text-sm text-gray-500">
+                    The backend call completed, but it did not return scenario cards for the current API selection.
+                  </p>
+                </div>
+              )}
+
+              {!isRecommendationLoading && recommendationStatus === 'error' && aiScenarios.length === 0 && (
+                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-red-500/20 bg-red-500/5 px-6 py-10 text-center">
+                  <AlertTriangle size={30} className="mb-3 text-red-400" />
+                  <h3 className="mb-2 text-white font-semibold">Scenario recommendation failed</h3>
+                  <p className="max-w-md text-sm text-red-200/70">
+                    {apiError || 'The recommendation request could not be completed.'}
                   </p>
                 </div>
               )}
