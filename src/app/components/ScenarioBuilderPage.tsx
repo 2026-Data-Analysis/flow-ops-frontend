@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Play,
@@ -263,6 +263,9 @@ const buildRequestDefaults = (schema?: unknown) => {
   };
 };
 
+const RECOMMENDATION_INVENTORY_WAIT_MS = 8000;
+const RECOMMENDATION_INVENTORY_POLL_MS = 200;
+
 export function ScenarioBuilderPage() {
   const navigate = useNavigate();
   const [scenarios, setScenarios] = useState<ScenarioTemplate[]>([]);
@@ -281,8 +284,35 @@ export function ScenarioBuilderPage() {
   const [customScenarioInput, setCustomScenarioInput] = useState('');
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
+  const inventoryApisRef = useRef<ApiInventoryResponse[]>([]);
+  const isLoadingRef = useRef(false);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
+
+  useEffect(() => {
+    inventoryApisRef.current = inventoryApis;
+  }, [inventoryApis]);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  const waitForInventoryApis = () =>
+    new Promise<ApiInventoryResponse[]>((resolve) => {
+      const startedAt = Date.now();
+
+      const check = () => {
+        const items = inventoryApisRef.current;
+        if (!isLoadingRef.current || items.length > 0 || Date.now() - startedAt >= RECOMMENDATION_INVENTORY_WAIT_MS) {
+          resolve(items);
+          return;
+        }
+
+        window.setTimeout(check, RECOMMENDATION_INVENTORY_POLL_MS);
+      };
+
+      check();
+    });
 
   useEffect(() => {
     let active = true;
@@ -383,18 +413,18 @@ export function ScenarioBuilderPage() {
     setSelectedScenarioId(scenarioId);
   };
 
-  const handleOpenRecommendations = () => {
+  const handleOpenRecommendations = async () => {
     setShowAiModal(true);
-    if (inventoryApis.length === 0) return;
 
     setIsRecommendationLoading(true);
+    const recommendationApis = isLoadingRef.current ? await waitForInventoryApis() : inventoryApisRef.current;
     const selectedEnvironment =
       selectedEnvironmentId === 'all'
         ? null
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
     const businessDomains = Array.from(
-      new Set(inventoryApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
+      new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
     );
 
     flowOpsApi
@@ -406,7 +436,7 @@ export function ScenarioBuilderPage() {
         testLevel: selectedEnvironment?.defaultTestLevel,
         businessDomain: businessDomains.join(', ') || undefined,
         requestedBy: DEFAULT_REQUESTER,
-        apiIds: inventoryApis.map((api) => api.id),
+        apiIds: recommendationApis.map((api) => api.id),
       })
       .then((recommendations) => {
         setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario)));
