@@ -47,6 +47,7 @@ interface ScenarioTemplate {
   reasonType: 'critical' | 'risk' | 'coverage';
   steps: ScenarioStep[];
   isSelected?: boolean;
+  apiMappingFailed?: boolean;
   lastUpdated?: string;
 }
 
@@ -58,6 +59,7 @@ interface ScenarioStep {
   apiEndpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   requestConfig?: string;
+  extractRules?: string;
   extractedVars: ExtractedVariable[];
   validationRules?: string[];
   stopOnFail: boolean;
@@ -155,6 +157,7 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
       {
         apiId: step.apiId,
         requestConfig: step.requestConfig,
+        extractRules: step.extractRules,
         validationRules: step.validationRules ? [step.validationRules] : [],
       },
     ),
@@ -184,6 +187,7 @@ const normalizeAiScenario = (
       {
         apiId: api?.id,
         requestConfig: step.static_payload,
+        extractRules: step.chained_variables,
         extractedVars: extractRules,
         validationRules: step.expected_assertions ? [step.expected_assertions] : ['Status code validation', 'Response schema check'],
       },
@@ -210,23 +214,45 @@ const normalizeAiScenario = (
 
 const normalizeScenarioRecommendation = (
   scenario: ScenarioRecommendationResponse,
+  items: ApiInventoryResponse[] = [],
   idPrefix = 'recommend',
-): ScenarioTemplate => ({
-  id: `${idPrefix}-${crypto.randomUUID()}`,
-  title: scenario.name,
-  description: scenario.recommendationReason || 'AI-recommended scenario',
-  type:
-    scenario.type === 'EDGE_CASE'
-      ? 'edge-case'
-      : scenario.type === 'FAILURE_RECOVERY'
-      ? 'failure-recovery'
-      : 'happy-path',
-  reason: scenario.recommendationReason || 'Recommended from backend API inventory',
-  recommendationReason: scenario.recommendationReason || 'Recommended from backend API inventory',
-  reasonType: scenario.type === 'EDGE_CASE' ? 'risk' : 'coverage',
-  lastUpdated: 'Just now',
-  steps: [],
-});
+): ScenarioTemplate => {
+  const id = `${idPrefix}-${crypto.randomUUID()}`;
+  const apiById = new Map(items.map((api) => [api.id, api]));
+  const steps = (scenario.steps || []).map((step, index) =>
+    createStep(
+      `${id}-step-${index + 1}`,
+      step.stepOrder || index + 1,
+      step.label || `Step ${index + 1}`,
+      toScenarioMethod(apiById.get(Number(step.apiId))?.method || 'GET'),
+      apiById.get(Number(step.apiId))?.endpointPath || (step.apiId ? `API #${step.apiId}` : 'API mapping failed'),
+      {
+        apiId: step.apiId ?? undefined,
+        requestConfig: step.requestConfig,
+        extractRules: step.extractRules,
+        validationRules: step.validationRules ? [step.validationRules] : [],
+      },
+    ),
+  );
+
+  return {
+    id,
+    title: scenario.name,
+    description: scenario.recommendationReason || 'AI-recommended scenario',
+    type:
+      scenario.type === 'EDGE_CASE'
+        ? 'edge-case'
+        : scenario.type === 'FAILURE_RECOVERY'
+        ? 'failure-recovery'
+        : 'happy-path',
+    reason: scenario.recommendationReason || 'Recommended from backend API inventory',
+    recommendationReason: scenario.recommendationReason || 'Recommended from backend API inventory',
+    reasonType: scenario.type === 'EDGE_CASE' ? 'risk' : 'coverage',
+    lastUpdated: 'Just now',
+    apiMappingFailed: steps.some((step) => !step.apiId),
+    steps,
+  };
+};
 
 const toAiScenarioApis = (items: ApiInventoryResponse[]) =>
   items.map((api) => ({
@@ -264,6 +290,11 @@ const buildRequestDefaults = (schema?: unknown) => {
     body: sampleForSchema(value.bodySchema || value.requestBody || value),
   };
 };
+
+const toBackendScenarioType = (type: ScenarioTemplate['type']) =>
+  type === 'edge-case' ? 'EDGE_CASE' : type === 'failure-recovery' ? 'FAILURE_RECOVERY' : 'HAPPY_PATH';
+
+const stringifyStepRules = (rules?: string[]) => (rules && rules.length > 0 ? rules.join('\n') : undefined);
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
@@ -323,6 +354,7 @@ export function ScenarioBuilderPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [isSavingRecommendations, setIsSavingRecommendations] = useState(false);
   const [recommendationStatus, setRecommendationStatus] = useState<RecommendationStatus>('idle');
   const [recommendationDebug, setRecommendationDebug] = useState<RecommendationDebugInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -336,6 +368,27 @@ export function ScenarioBuilderPage() {
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
+
+  const loadSavedScenarios = async (scopedInventory = inventoryApis) => {
+    const selectedEnvironment =
+      selectedEnvironmentId === 'all'
+        ? null
+        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+    const environmentApiIds = new Set(scopedInventory.map((item) => item.id));
+    const summaries = await flowOpsApi.listScenarios(activeApplication.appId).catch(() => []);
+    const details = await Promise.all(
+      summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
+    );
+    const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
+      if (!scenario) return false;
+      if (!selectedEnvironment) return true;
+      const linkedSteps = (scenario.steps || []).filter((step) => step.apiId);
+      return linkedSteps.length > 0 && linkedSteps.every((step) => step.apiId && environmentApiIds.has(step.apiId));
+    });
+    const normalized = filteredDetails.map(normalizeScenarioDetail);
+    setScenarios(normalized);
+    return normalized;
+  };
 
   useEffect(() => {
     let active = true;
@@ -394,20 +447,8 @@ export function ScenarioBuilderPage() {
       .then(async (inventory) => {
         if (!active) return;
         const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
-        const environmentApiIds = new Set(scopedInventory.map((item) => item.id));
-        const summaries = await flowOpsApi.listScenarios(activeApplication.appId).catch(() => []);
-        const details = await Promise.all(
-          summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
-        );
-        const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
-          if (!scenario) return false;
-          if (!selectedEnvironment) return true;
-          const linkedSteps = (scenario.steps || []).filter((step) => step.apiId);
-          return linkedSteps.length > 0 && linkedSteps.every((step) => step.apiId && environmentApiIds.has(step.apiId));
-        });
-
         setInventoryApis(scopedInventory);
-        setScenarios(filteredDetails.map(normalizeScenarioDetail));
+        await loadSavedScenarios(scopedInventory);
         setAiScenarios(allowMockData ? await buildScenariosFromApis(scopedInventory) : []);
         setApiError(null);
       })
@@ -430,6 +471,10 @@ export function ScenarioBuilderPage() {
   const filteredScenarios = scenarios.filter(scenario =>
     scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     scenario.description.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const selectedAiScenarioCount = aiScenarios.filter((scenario) => scenario.isSelected).length;
+  const hasSelectedAiMappingFailure = aiScenarios.some(
+    (scenario) => scenario.isSelected && scenario.steps.some((step) => !step.apiId),
   );
 
   const toggleScenarioSelection = (scenarioId: string, event: React.MouseEvent) => {
@@ -517,7 +562,7 @@ export function ScenarioBuilderPage() {
         apiIds: recommendationApis.map((api) => api.id),
       });
 
-      setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario)));
+      setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario, recommendationApis)));
       setRecommendationStatus(recommendations.length > 0 ? 'idle' : 'empty');
       setApiError(null);
     } catch (error) {
@@ -541,29 +586,54 @@ export function ScenarioBuilderPage() {
     }
   };
 
-  const handleAiGenerateConfirm = () => {
-    if (isRecommendationLoading) return;
+  const handleAiGenerateConfirm = async () => {
+    if (isRecommendationLoading || isSavingRecommendations) return;
     const selectedAiScenarios = aiScenarios.filter(s => s.isSelected);
-    const savedScenarios = selectedAiScenarios.map((scenario, scenarioIndex) => {
-      const savedId = `saved-${scenario.id}-${Date.now()}-${scenarioIndex}`;
-      return {
-        ...scenario,
-        id: savedId,
-        isSelected: false,
-        lastUpdated: 'Just now',
-        steps: scenario.steps.map((step, stepIndex) => ({
-          ...step,
-          id: `${savedId}-step-${stepIndex + 1}`,
-          order: stepIndex + 1,
-        })),
-      };
-    });
-    setScenarios([...scenarios, ...savedScenarios]);
-    if (savedScenarios[0]) {
-      setSelectedScenarioId(savedScenarios[0].id);
+    const mappingFailed = selectedAiScenarios.some((scenario) => scenario.steps.some((step) => !step.apiId));
+    if (mappingFailed) {
+      setApiError('API 매핑 실패: apiId가 없는 추천 step이 있어 저장할 수 없습니다.');
+      setAiScenarios((items) =>
+        items.map((scenario) =>
+          scenario.isSelected && scenario.steps.some((step) => !step.apiId)
+            ? { ...scenario, apiMappingFailed: true }
+            : scenario,
+        ),
+      );
+      return;
     }
-    setShowAiModal(false);
-    setAiScenarios(aiScenarios.map(s => ({ ...s, isSelected: false })));
+
+    setIsSavingRecommendations(true);
+    setApiError(null);
+    try {
+      await Promise.all(
+        selectedAiScenarios.map((scenario) =>
+          flowOpsApi.createScenario({
+            appId: activeApplication.appId,
+            name: scenario.title,
+            description: scenario.description,
+            type: toBackendScenarioType(scenario.type),
+            steps: scenario.steps.map((step, index) => ({
+              stepOrder: index + 1,
+              apiId: step.apiId as number,
+              label: step.label,
+              requestConfig: step.requestConfig,
+              extractRules: step.extractRules,
+              validationRules: stringifyStepRules(step.validationRules),
+            })),
+          }),
+        ),
+      );
+      const savedScenarios = await loadSavedScenarios();
+      if (savedScenarios[0]) {
+        setSelectedScenarioId(savedScenarios[0].id);
+      }
+      setShowAiModal(false);
+      setAiScenarios((items) => items.filter((scenario) => !scenario.isSelected));
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Failed to save recommended scenarios.');
+    } finally {
+      setIsSavingRecommendations(false);
+    }
   };
 
   const toggleAiScenarioSelection = (scenarioId: string) => {
@@ -829,6 +899,7 @@ export function ScenarioBuilderPage() {
               {!isRecommendationLoading && aiScenarios.map((scenario) => {
                 const TypeIcon = typeColors[scenario.type].icon;
                 const ReasonIcon = reasonColors[scenario.reasonType].icon;
+                const apiMappingFailed = scenario.apiMappingFailed || scenario.steps.some((step) => !step.apiId);
                 return (
                   <div
                     key={scenario.id}
@@ -854,6 +925,11 @@ export function ScenarioBuilderPage() {
                             {typeColors[scenario.type].label}
                           </span>
                           <span className="text-xs text-gray-500">{scenario.steps.length} steps</span>
+                          {apiMappingFailed && (
+                            <span className="text-xs px-2 py-1 rounded-full border border-red-500/20 bg-red-500/10 text-red-300">
+                              API 매핑 실패
+                            </span>
+                          )}
                         </div>
 
                         <p className="text-sm text-gray-400 mb-3">{scenario.description}</p>
@@ -871,15 +947,22 @@ export function ScenarioBuilderPage() {
 
             <div className="p-6 border-t border-[#1f1f28] flex items-center justify-between">
               <div className="text-sm text-gray-400">
-                {aiScenarios.filter(s => s.isSelected).length} scenario{aiScenarios.filter(s => s.isSelected).length !== 1 ? 's' : ''} selected
+                {hasSelectedAiMappingFailure
+                  ? 'API 매핑 실패 항목은 저장할 수 없습니다'
+                  : `${selectedAiScenarioCount} scenario${selectedAiScenarioCount !== 1 ? 's' : ''} selected`}
               </div>
               <button
                 onClick={handleAiGenerateConfirm}
-                disabled={isRecommendationLoading || aiScenarios.filter(s => s.isSelected).length === 0}
+                disabled={
+                  isRecommendationLoading ||
+                  isSavingRecommendations ||
+                  selectedAiScenarioCount === 0 ||
+                  hasSelectedAiMappingFailure
+                }
                 className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus size={18} />
-                Add Selected Scenarios
+                {isSavingRecommendations ? 'Saving...' : 'Add Selected Scenarios'}
               </button>
             </div>
           </div>

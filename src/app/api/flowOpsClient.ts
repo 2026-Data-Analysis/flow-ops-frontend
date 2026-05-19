@@ -299,6 +299,14 @@ export interface ScenarioRecommendationResponse {
   name: string;
   type: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
   recommendationReason?: string;
+  steps?: Array<{
+    stepOrder?: number;
+    apiId?: number | null;
+    label?: string;
+    requestConfig?: string;
+    extractRules?: string;
+    validationRules?: string;
+  }>;
 }
 
 export interface TestGenerationResponse {
@@ -808,6 +816,27 @@ export const flowOpsApi = {
 
   listScenarios: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
+
+  createScenario: (body: {
+    appId: number;
+    name: string;
+    description?: string;
+    type?: string;
+    steps: Array<{
+      stepOrder: number;
+      apiId: number;
+      label: string;
+      requestConfig?: string;
+      extractRules?: string;
+      validationRules?: string;
+    }>;
+  }) =>
+    unwrap(
+      request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
 
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
     const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
