@@ -36,12 +36,14 @@ export const inventoryQueryParamsForEnvironment = (environment: EnvironmentRespo
 export const inventoryBelongsToEnvironment = (
   inventory: ApiInventoryResponse,
   environment: EnvironmentResponse | null,
+  repositoryId?: number | null,
 ) => {
-  if (!environment) return true;
-
-  if (environment.repositoryId && inventory.repositoryId && inventory.repositoryId !== environment.repositoryId) {
+  const scopedRepositoryId = environment?.repositoryId ?? repositoryId;
+  if (scopedRepositoryId && inventory.repositoryId && inventory.repositoryId !== scopedRepositoryId) {
     return false;
   }
+
+  if (!environment) return true;
 
   const inventoryBranch = normalize(inventory.branchName);
   const aliases = branchAliases(environment);
@@ -55,4 +57,17 @@ export const inventoryBelongsToEnvironment = (
 export const filterInventoryForEnvironment = (
   items: ApiInventoryResponse[],
   environment: EnvironmentResponse | null,
-) => items.filter((item) => inventoryBelongsToEnvironment(item, environment));
+  repositoryId?: number | null,
+) => items.filter((item) => inventoryBelongsToEnvironment(item, environment, repositoryId));
+
+export const inventoryQueryParamsForScope = (
+  environment: EnvironmentResponse | null,
+  repositoryId?: number | null,
+) => {
+  const params = inventoryQueryParamsForEnvironment(environment);
+  const scopedRepositoryId = params.repositoryId ?? repositoryId;
+  return {
+    ...params,
+    ...(scopedRepositoryId ? { repositoryId: scopedRepositoryId } : {}),
+  };
+};

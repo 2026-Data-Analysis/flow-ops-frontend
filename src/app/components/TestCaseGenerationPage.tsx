@@ -26,12 +26,13 @@ import {
   type AiTestCaseDraftResponse,
   type ApiInventoryResponse,
   type EnvironmentResponse,
+  type RepositoryResponse,
   type TestCaseResponse,
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
 import { allowMockData, isProductionBuild } from '../config/runtime';
-import { filterInventoryForEnvironment, inventoryQueryParamsForEnvironment } from '../utils/environmentScope';
+import { filterInventoryForEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
 
 interface ApiEndpoint {
   id: string;
@@ -72,6 +73,7 @@ const userRoles = ['Admin', 'User', 'Guest', 'Moderator'];
 const stateConditions = ['Logged In', 'Token Expired', 'Valid Token', 'Resource Exists', 'Rate Limited'];
 const dataVariants = ['Valid Input', 'Invalid Input', 'Boundary Value', 'Null / Empty'];
 const DEMO_TEST_GENERATION_FALLBACK_MS = 800;
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 
 const methodColors = {
@@ -131,6 +133,15 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: 
 };
 
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
+
+const readStoredRepositories = (): RepositoryResponse[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
 
 const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
   return {
@@ -250,6 +261,7 @@ export function TestCaseGenerationPage() {
   const [isProjectLoading, setIsProjectLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [activeRepositoryId, setActiveRepositoryId] = useState<number | null>(null);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
   const [selectedApiId, setSelectedApiId] = useState<string | null>(null);
@@ -283,13 +295,24 @@ export function TestCaseGenerationPage() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([
-      flowOpsApi.ensureProject(),
-      flowOpsApi.listEnvironments(getDefaultAppId()).catch(() => [] as EnvironmentResponse[]),
-    ])
-      .then(([project, items]) => {
+    flowOpsApi
+      .ensureProject()
+      .then(async (project) => {
+        const [items, repositories] = await Promise.all([
+          flowOpsApi.listEnvironments(getDefaultAppId()).catch(() => [] as EnvironmentResponse[]),
+          flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]),
+        ]);
+        return { project, items, repositories };
+      })
+      .then(({ project, items, repositories }) => {
         if (!active) return;
+        const storedRepositories = readStoredRepositories();
+        const activeRepository =
+          repositories.find((repository) => repository.appId === activeApplication.appId) ||
+          storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+
         setProjectId(project.id);
+        setActiveRepositoryId(activeRepository?.id ? Number(activeRepository.id) : null);
         setEnvironments(items);
         if (items.length > 0 && selectedEnvironmentId === 'all') {
           setSelectedEnvironmentId(String(items[0].id));
@@ -298,6 +321,7 @@ export function TestCaseGenerationPage() {
       .catch((error) => {
         if (!active) return;
         setProjectId(null);
+        setActiveRepositoryId(null);
         setEnvironments([]);
         setApiError(error instanceof Error ? error.message : 'Failed to load project settings.');
       })
@@ -336,13 +360,22 @@ export function TestCaseGenerationPage() {
     setSelectedGeneratedTestIds([]);
     setExpandedGeneratedApiIds([]);
     setSelectedDomain('all');
-    const params = inventoryQueryParamsForEnvironment(selectedEnvironment);
+    const scopedRepositoryId = selectedEnvironment?.repositoryId ?? activeRepositoryId;
+    if (!scopedRepositoryId) {
+      setApis([]);
+      setExistingTests([]);
+      setApiError('No repository is linked to the selected application.');
+      setIsLoadingApis(false);
+      return;
+    }
+
+    const params = inventoryQueryParamsForScope(selectedEnvironment, activeRepositoryId);
 
     flowOpsApi
       .listInventories(projectId, params)
       .then(async (inventory) => {
         if (!active) return;
-        const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment);
+        const scopedInventory = filterInventoryForEnvironment(inventory.items, selectedEnvironment, scopedRepositoryId);
         const normalized = scopedInventory.map(normalizeApiInventory);
         setApis(normalized);
         setApiError(null);
@@ -375,7 +408,7 @@ export function TestCaseGenerationPage() {
     return () => {
       active = false;
     };
-  }, [projectId, isProjectLoading, selectedEnvironmentId, environments, location.state]);
+  }, [projectId, activeRepositoryId, isProjectLoading, selectedEnvironmentId, environments, location.state]);
 
   const selectedApi = selectedApiId ? apis.find(a => a.id === selectedApiId) : null;
   const currentApiTests = existingTests.filter(t => t.apiId === selectedApiId);

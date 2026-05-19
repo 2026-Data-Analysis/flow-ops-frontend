@@ -29,6 +29,7 @@ import {
   type AiScenarioBuildResponse,
   type ApiInventoryResponse,
   type EnvironmentResponse,
+  type ScenarioRecommendationResponse,
   type ScenarioDetailResponse,
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
@@ -205,6 +206,26 @@ const normalizeAiScenario = (
   };
 };
 
+const normalizeScenarioRecommendation = (
+  scenario: ScenarioRecommendationResponse,
+  idPrefix = 'recommend',
+): ScenarioTemplate => ({
+  id: `${idPrefix}-${crypto.randomUUID()}`,
+  title: scenario.name,
+  description: scenario.recommendationReason || 'AI-recommended scenario',
+  type:
+    scenario.type === 'EDGE_CASE'
+      ? 'edge-case'
+      : scenario.type === 'FAILURE_RECOVERY'
+      ? 'failure-recovery'
+      : 'happy-path',
+  reason: scenario.recommendationReason || 'Recommended from backend API inventory',
+  recommendationReason: scenario.recommendationReason || 'Recommended from backend API inventory',
+  reasonType: scenario.type === 'EDGE_CASE' ? 'risk' : 'coverage',
+  lastUpdated: 'Just now',
+  steps: [],
+});
+
 const toAiScenarioApis = (items: ApiInventoryResponse[]) =>
   items.map((api) => ({
     endpoint_id: String(api.id),
@@ -372,36 +393,23 @@ export function ScenarioBuilderPage() {
         ? null
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
+    const businessDomains = Array.from(
+      new Set(inventoryApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
+    );
+
     flowOpsApi
-      .buildAiScenario({
-        agent: 'SCENARIO_BUILDER',
-        requestId: crypto.randomUUID(),
+      .recommendScenarios({
+        appId: getDefaultAppId(),
+        environmentId: selectedEnvironment?.id,
+        goal: 'Recommend high-value multi-step API scenarios from the current inventory.',
+        scenarioType: 'HAPPY_PATH',
+        testLevel: selectedEnvironment?.defaultTestLevel,
+        businessDomain: businessDomains.join(', ') || undefined,
         requestedBy: DEFAULT_REQUESTER,
-        project: { projectId: projectId || undefined, appId: getDefaultAppId() },
-        environment: selectedEnvironment
-          ? {
-              environmentId: selectedEnvironment.id,
-              name: selectedEnvironment.name,
-              baseUrl: selectedEnvironment.baseUrl,
-              defaultTestLevel: selectedEnvironment.defaultTestLevel,
-            }
-          : undefined,
-        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
-        scenarioContext: {
-          appId: getDefaultAppId(),
-          user_intent: 'Recommend high-value multi-step API scenarios from the current inventory.',
-          mode: 'RECOMMEND',
-          testLevel: selectedEnvironment?.defaultTestLevel,
-        },
-        apis: toAiScenarioApis(inventoryApis),
-        existingScenarios: scenarios.map((scenario) => ({
-          name: scenario.title,
-          description: scenario.description,
-          type: scenario.type,
-        })),
+        apiIds: inventoryApis.map((api) => api.id),
       })
-      .then((scenario) => {
-        setAiScenarios([normalizeAiScenario(scenario, inventoryApis, 'recommend')]);
+      .then((recommendations) => {
+        setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario)));
         setApiError(null);
       })
       .catch(async (error) => {
