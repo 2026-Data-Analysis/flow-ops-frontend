@@ -640,6 +640,7 @@ export function ScenarioBuilderPage() {
       const failedResults = saveResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
 
       const optimisticScenarios = savedResults
+        .map((result) => result.value)
         .filter(({ scenario }) => Boolean(scenario?.id))
         .map(({ scenario, created }) => ({
           ...scenario,
@@ -663,7 +664,7 @@ export function ScenarioBuilderPage() {
         }
       }
 
-      const savedScenarioIds = new Set(savedResults.map(({ scenario }) => scenario?.id).filter(Boolean));
+      const savedScenarioIds = new Set(savedResults.map((result) => result.value.scenario?.id).filter(Boolean));
       setAiScenarios((items) =>
         items.filter(isPresent)
           .filter((scenario) => scenario?.id && !savedScenarioIds.has(scenario.id))
