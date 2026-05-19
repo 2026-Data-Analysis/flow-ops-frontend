@@ -35,7 +35,7 @@ import {
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
 import { useTestContext } from '../contexts/TestContext';
-import { filterInventoryForEnvironment } from '../utils/environmentScope';
+import { filterEnvironmentsForBranchScope, filterInventoryForEnvironment, findDefaultBranchEnvironment } from '../utils/environmentScope';
 
 interface ScenarioTemplate {
   id: string;
@@ -133,10 +133,10 @@ const buildScenariosFromApis: (items: ApiInventoryResponse[]) => Promise<Scenari
       }
     : async () => [];
 
-const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemplate => ({
+const normalizeScenarioDetail = (scenario: ScenarioDetailResponse, lastExecutedAt?: string): ScenarioTemplate => ({
   id: String(scenario.id),
   title: scenario.name,
-  description: scenario.description || 'Saved scenario from backend',
+  description: scenario.description || '',
   type:
     scenario.type === 'EDGE_CASE'
       ? 'edge-case'
@@ -146,7 +146,7 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
   reason: 'Saved scenario',
   recommendationReason: 'Saved scenario',
   reasonType: 'coverage',
-  lastUpdated: formatRelativeTime(scenario.updatedAt || scenario.createdAt),
+  lastUpdated: formatRelativeTime(lastExecutedAt || scenario.lastExecutedAt),
   steps: (scenario.steps || []).filter(isPresent).map((step, index) =>
     createStep(
       step.id ? String(step.id) : `${scenario.id}-step-${index + 1}`,
@@ -325,7 +325,12 @@ const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 type StoredRegisteredRepository = Pick<
   RepositoryResponse,
   'id' | 'projectId' | 'appId' | 'fullName' | 'defaultBranch' | 'repositoryUrl' | 'connectionStatus'
->;
+> & {
+  title?: string;
+  appTitle?: string;
+  selectedBranches?: string[];
+  branches?: RepositoryResponse['branches'];
+};
 
 const readStoredRepositories = (): StoredRegisteredRepository[] => {
   try {
@@ -335,6 +340,13 @@ const readStoredRepositories = (): StoredRegisteredRepository[] => {
     return [];
   }
 };
+
+const mergeRepositoryScope = (repository: RepositoryResponse | undefined, stored: StoredRegisteredRepository | undefined) => ({
+  ...stored,
+  ...repository,
+  defaultBranch: repository?.defaultBranch || stored?.defaultBranch,
+  selectedBranches: stored?.selectedBranches,
+});
 
 const inventoryQueryParamsForAppRepository = (
   repository: Pick<RepositoryResponse, 'id' | 'defaultBranch'> | StoredRegisteredRepository | undefined,
@@ -371,6 +383,8 @@ export function ScenarioBuilderPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [mainApplicationId, setMainApplicationId] = useState<number | null>(null);
+  const [mainRepositoryScope, setMainRepositoryScope] = useState<StoredRegisteredRepository | RepositoryResponse | undefined>();
   const [inventoryApis, setInventoryApis] = useState<ApiInventoryResponse[]>([]);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
@@ -382,43 +396,91 @@ export function ScenarioBuilderPage() {
 
   const selectedEnvironment =
     selectedEnvironmentId === 'all'
-      ? null
+    ? null
       : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
   const loadSavedScenarios = async (scopedInventory = inventoryApis) => {
+    const appId = mainApplicationId ?? activeApplication.appId;
     const environmentApiIds = new Set(scopedInventory.filter(isPresent).filter(hasNumericId).map((item) => item.id));
     const summaries = await flowOpsApi
-      .listScenariosByEnvironment(activeApplication.appId, selectedEnvironment?.id)
+      .listScenariosByEnvironment(appId, selectedEnvironment?.id)
       .catch(() => []);
-    const details = await Promise.all(
-      summaries.filter(hasNumericId).map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
-    );
+    const [details, executions] = await Promise.all([
+      Promise.all(summaries.filter(hasNumericId).map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null))),
+      flowOpsApi
+        .listExecutions(appId, {
+          executionType: 'SCENARIO',
+          ...(selectedEnvironment?.id ? { environmentId: selectedEnvironment.id } : {}),
+        })
+        .then((page) => page.content || [])
+        .catch(() => []),
+    ]);
+    const latestExecutionByScenarioId = new Map<number, string>();
+    executions
+      .filter((execution) => execution.executionType === 'SCENARIO' && execution.targetId)
+      .forEach((execution) => {
+        const executedAt = execution.executedAt || execution.endedAt || execution.startedAt || execution.createdAt;
+        if (!execution.targetId || !executedAt) return;
+
+        const previous = latestExecutionByScenarioId.get(execution.targetId);
+        if (!previous || new Date(executedAt).getTime() > new Date(previous).getTime()) {
+          latestExecutionByScenarioId.set(execution.targetId, executedAt);
+        }
+      });
     const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
       if (!scenario) return false;
       if (!selectedEnvironment) return true;
       const linkedSteps = (scenario.steps || []).filter((step) => step.apiId);
       return linkedSteps.length > 0 && linkedSteps.every((step) => step.apiId && environmentApiIds.has(step.apiId));
     });
-    const normalized = filteredDetails.map(normalizeScenarioDetail);
+    const normalized = filteredDetails.map((scenario) =>
+      normalizeScenarioDetail(scenario, latestExecutionByScenarioId.get(scenario.id)),
+    );
     setScenarios(normalized);
     return normalized;
   };
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      flowOpsApi.ensureProject(),
-      flowOpsApi.listEnvironments(activeApplication.appId).catch(() => [] as EnvironmentResponse[]),
-    ])
-      .then(([project, items]) => {
+    flowOpsApi
+      .ensureProject()
+      .then(async (project) => {
+        const mainApplication = await flowOpsApi.resolveMainApplication();
+        const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
+        const storedRepositories = readStoredRepositories();
+        let selectedApplication = mainApplication;
+        let items = await flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]);
+        console.info('[ScenarioBuilder] environment candidates', {
+          resolvedMainApplication: mainApplication,
+          activeApplication,
+          selectedApplication,
+          environmentCount: items.length,
+          environments: items.map((environment) => ({
+            id: environment.id,
+            appId: environment.appId,
+            name: environment.name,
+            branchName: environment.branchName,
+            repositoryId: environment.repositoryId,
+          })),
+        });
+        const activeRepository =
+          mergeRepositoryScope(
+            repositories.find((repository) => repository.appId === selectedApplication.appId),
+            storedRepositories.find((repository) => repository.appId === selectedApplication.appId),
+          );
+        return { project, items, activeRepository, selectedApplication };
+      })
+      .then(({ project, items, activeRepository, selectedApplication }) => {
         if (!active) return;
         if (hasNumericId(project)) {
           setProjectId(project.id);
         }
-        const validItems = items.filter(hasNumericId);
+        setMainApplicationId(selectedApplication.appId);
+        setMainRepositoryScope(activeRepository);
+        const validItems = filterEnvironmentsForBranchScope(items.filter(hasNumericId), activeRepository);
         setEnvironments(validItems);
-        if (validItems.length > 0 && selectedEnvironmentId === 'all') {
-          setSelectedEnvironmentId(String(validItems[0].id));
+        if (validItems.length > 0) {
+          setSelectedEnvironmentId(String(findDefaultBranchEnvironment(validItems, activeRepository?.defaultBranch)?.id ?? validItems[0].id));
         }
       })
       .catch((error) => {
@@ -431,7 +493,7 @@ export function ScenarioBuilderPage() {
     return () => {
       active = false;
     };
-  }, [activeApplication.appId]);
+  }, [activeApplication.appId, activeApplication.title]);
 
   useEffect(() => {
     let active = true;
@@ -446,11 +508,12 @@ export function ScenarioBuilderPage() {
     setSelectedScenarioId(null);
     setSelectedScenarioIds([]);
     const loadInventories = async () => {
-      const repositories = await flowOpsApi.listRepositories(projectId).catch(() => [] as RepositoryResponse[]);
-      const storedRepositories = readStoredRepositories();
-      const activeRepository =
-        repositories.find((repository) => repository.appId === activeApplication.appId) ||
-        storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+        const repositories = await flowOpsApi.listRepositories(projectId).catch(() => [] as RepositoryResponse[]);
+        const storedRepositories = readStoredRepositories();
+        const activeRepository =
+          mainRepositoryScope ||
+          repositories.find((repository) => repository.appId === mainApplicationId) ||
+          storedRepositories.find((repository) => repository.appId === mainApplicationId);
       const params = inventoryQueryParamsForAppRepository(activeRepository, selectedEnvironment);
       return flowOpsApi.listInventories(projectId, params);
     };
@@ -478,7 +541,7 @@ export function ScenarioBuilderPage() {
     return () => {
       active = false;
     };
-  }, [activeApplication.appId, environments, projectId, selectedEnvironmentId]);
+  }, [activeApplication.appId, environments, mainApplicationId, mainRepositoryScope, projectId, selectedEnvironmentId]);
 
   const filteredScenarios = scenarios.filter(isPresent).filter(scenario =>
     scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -512,7 +575,7 @@ export function ScenarioBuilderPage() {
     setRecommendationDebug({
       phase: 'start',
       recommendEndpoint: '/scenarios/recommend',
-      appId: activeApplication.appId,
+      appId: mainApplicationId ?? activeApplication.appId,
       environmentId: selectedEnvironment?.id,
       apiIds: [],
     });
@@ -527,8 +590,9 @@ export function ScenarioBuilderPage() {
       const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
       const storedRepositories = readStoredRepositories();
       const activeRepository =
-        repositories.find((repository) => repository.appId === activeApplication.appId) ||
-        storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+        mainRepositoryScope ||
+        repositories.find((repository) => repository.appId === mainApplicationId) ||
+        storedRepositories.find((repository) => repository.appId === mainApplicationId);
       const inventoryParams = inventoryQueryParamsForDefaultBranch(activeRepository);
       setRecommendationDebug((prev) => ({
         ...prev,
@@ -549,7 +613,7 @@ export function ScenarioBuilderPage() {
         phase: 'inventory_loaded',
         inventoryEndpoint: `/projects/${project.id}/api-inventories`,
         recommendEndpoint: '/scenarios/recommend',
-        appId: activeApplication.appId,
+        appId: mainApplicationId ?? activeApplication.appId,
         environmentId: selectedEnvironment?.id,
         repositoryId: inventoryParams.repositoryId as number | undefined,
         branchName: inventoryParams.branchName as string | undefined,
@@ -563,7 +627,7 @@ export function ScenarioBuilderPage() {
       setRecommendationStatus('requesting');
       setRecommendationDebug((prev) => ({ ...prev, phase: 'requesting_recommendation' }));
       const recommendations = await flowOpsApi.recommendScenarios({
-        appId: activeApplication.appId,
+        appId: mainApplicationId ?? activeApplication.appId,
         environmentId: selectedEnvironment?.id,
         goal: 'Recommend high-value multi-step API scenarios from the current inventory.',
         scenarioType: 'HAPPY_PATH',
@@ -620,7 +684,7 @@ export function ScenarioBuilderPage() {
         selectedAiScenarios.filter(isPresent).map(async (scenario) => ({
           scenario,
           created: await flowOpsApi.createScenario({
-            appId: activeApplication.appId,
+            appId: mainApplicationId ?? activeApplication.appId,
             environmentId: selectedEnvironment?.id,
             name: scenario.title,
             description: scenario.description,
@@ -1056,20 +1120,6 @@ export function ScenarioBuilderPage() {
 
           {/* Top Actions */}
           <div className="responsive-filters flex items-center gap-3 mb-4">
-            <select
-              value={selectedEnvironmentId}
-              onChange={(e) => setSelectedEnvironmentId(e.target.value)}
-              className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/30"
-            >
-              <option value="all">All Environments</option>
-              {visibleEnvironments.map((environment) => (
-                <option key={environment.id} value={String(environment.id)}>
-                  {environment.name}
-                  {environment.branchName ? ` (${environment.branchName})` : ''}
-                </option>
-              ))}
-            </select>
-
             <button
               onClick={handleOpenRecommendations}
               className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"

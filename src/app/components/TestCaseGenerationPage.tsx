@@ -29,7 +29,7 @@ import {
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
-import { filterInventoryForEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
+import { filterEnvironmentsForBranchScope, filterInventoryForEnvironment, findDefaultBranchEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
 
 interface ApiEndpoint {
   id: string;
@@ -117,9 +117,21 @@ const stringifySpec = (value?: unknown) => {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const generationStillRunning = (status?: string | null) => {
+  const normalized = String(status || '').toUpperCase();
+  return ['REQUESTED', 'QUEUED', 'GENERATING', 'IN_PROGRESS', 'RUNNING', 'PENDING'].includes(normalized);
+};
+
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
 
-const readStoredRepositories = (): RepositoryResponse[] => {
+type StoredRegisteredRepository = RepositoryResponse & {
+  title?: string;
+  selectedBranches?: string[];
+};
+
+const readStoredRepositories = (): StoredRegisteredRepository[] => {
   try {
     const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
     return Array.isArray(parsed) ? parsed : [];
@@ -127,6 +139,19 @@ const readStoredRepositories = (): RepositoryResponse[] => {
     return [];
   }
 };
+
+const titleForAppId = (appId: number, repositories: RepositoryResponse[], storedRepositories: StoredRegisteredRepository[]) => {
+  const repository = repositories.find((item) => item.appId === appId);
+  const stored = storedRepositories.find((item) => item.appId === appId);
+  return repository?.appTitle || stored?.title || stored?.appTitle || repository?.fullName?.split('/').pop() || stored?.fullName?.split('/').pop() || `Application ${appId}`;
+};
+
+const mergeRepositoryScope = (repository: RepositoryResponse | undefined, stored: StoredRegisteredRepository | undefined) => ({
+  ...stored,
+  ...repository,
+  defaultBranch: repository?.defaultBranch || stored?.defaultBranch,
+  selectedBranches: stored?.selectedBranches,
+});
 
 const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
   return {
@@ -202,7 +227,7 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeApplication, setActiveApplication, setSelectedAPIs, setTestContext } = useTestContext();
+  const { activeApplication, setSelectedAPIs, setTestContext } = useTestContext();
 
   // Modal & API Selection
   const [showApiModal, setShowApiModal] = useState(false);
@@ -211,6 +236,7 @@ export function TestCaseGenerationPage() {
   const [isProjectLoading, setIsProjectLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [mainApplicationId, setMainApplicationId] = useState<number | null>(null);
   const [activeRepositoryId, setActiveRepositoryId] = useState<number | null>(null);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
@@ -249,29 +275,39 @@ export function TestCaseGenerationPage() {
       .ensureProject()
       .then(async (project) => {
         const mainApplication = await flowOpsApi.resolveMainApplication();
-        const [items, repositories] = await Promise.all([
-          flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]),
-          flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]),
-        ]);
-        return { project, mainApplication, items, repositories };
-      })
-      .then(({ project, mainApplication, items, repositories }) => {
-        if (!active) return;
+        const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
         const storedRepositories = readStoredRepositories();
+        let selectedApplication = mainApplication;
+        let items = await flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]);
+        console.info('[TestCaseGeneration] environment candidates', {
+          resolvedMainApplication: mainApplication,
+          activeApplication,
+          selectedApplication,
+          environmentCount: items.length,
+          environments: items.map((environment) => ({
+            id: environment.id,
+            appId: environment.appId,
+            name: environment.name,
+            branchName: environment.branchName,
+            repositoryId: environment.repositoryId,
+          })),
+        });
+        return { project, selectedApplication, items, repositories, storedRepositories };
+      })
+      .then(({ project, selectedApplication, items, repositories, storedRepositories }) => {
+        if (!active) return;
         const mainRepository =
-          repositories.find((repository) => repository.appId === mainApplication.appId) ||
-          storedRepositories.find((repository) => repository.appId === mainApplication.appId);
+          mergeRepositoryScope(
+            repositories.find((repository) => repository.appId === selectedApplication.appId),
+            storedRepositories.find((repository) => repository.appId === selectedApplication.appId),
+          );
 
         setProjectId(project.id);
+        setMainApplicationId(selectedApplication.appId);
         setActiveRepositoryId(mainRepository?.id ? Number(mainRepository.id) : null);
-        setEnvironments(items);
-        setSelectedEnvironmentId('all');
-        if (
-          activeApplication.appId !== mainApplication.appId ||
-          activeApplication.title !== mainApplication.title
-        ) {
-          setActiveApplication(mainApplication);
-        }
+        const scopedItems = filterEnvironmentsForBranchScope(items, mainRepository);
+        setEnvironments(scopedItems);
+        setSelectedEnvironmentId(String(findDefaultBranchEnvironment(scopedItems, mainRepository?.defaultBranch)?.id ?? 'all'));
       })
       .catch((error) => {
         if (!active) return;
@@ -430,21 +466,34 @@ export function TestCaseGenerationPage() {
       }
 
       console.info('[TestCaseGeneration] requesting backend generation', {
-        appId: activeApplication.appId,
+        appId: mainApplicationId ?? activeApplication.appId,
         environmentId,
         selectedApiIds: apiIds,
         contextSummary,
       });
       const generation = await flowOpsApi.createTestGeneration({
-        appId: activeApplication.appId,
+        appId: mainApplicationId ?? activeApplication.appId,
         environmentId,
         requestedBy: DEFAULT_REQUESTER,
         selectedApiIds: apiIds,
         contextSummary,
         currentCoverage,
       });
-      const status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
-      const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
+      setGenerationId(generation.id);
+      setGenerationStatus(generation.status || 'REQUESTED');
+      setSaveMessage('AI is generating test case drafts. This can take a little while.');
+
+      let status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
+      let drafts = await flowOpsApi.listTestGenerationDrafts(generation.id).catch(() => [] as TestGenerationDraftResponse[]);
+
+      for (let attempt = 0; attempt < 20 && drafts.length === 0 && generationStillRunning(status.status || generation.status); attempt += 1) {
+        setGenerationStatus(status.status || generation.status || 'GENERATING');
+        setSaveMessage(`Generating drafts... checked ${attempt + 1} time${attempt === 0 ? '' : 's'}.`);
+        await wait(2500);
+        status = await flowOpsApi.getTestGeneration(generation.id).catch(() => status);
+        drafts = await flowOpsApi.listTestGenerationDrafts(generation.id).catch(() => [] as TestGenerationDraftResponse[]);
+      }
+
       console.info('[TestCaseGeneration] backend generation response', {
         generation,
         status,
@@ -452,13 +501,18 @@ export function TestCaseGenerationPage() {
         drafts,
       });
 
-      setGenerationId(generation.id);
       setGenerationStatus(status.status || generation.status || null);
       const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
       setGeneratedTests(backendTests);
       setSelectedGeneratedTestIds(backendTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      setSaveMessage(backendTests.length > 0 ? null : 'Backend test generation returned no drafts.');
+      if (backendTests.length > 0) {
+        setSaveMessage(null);
+      } else if (generationStillRunning(status.status || generation.status)) {
+        setSaveMessage('Generation is still running. Try Generate again in a moment to refresh drafts.');
+      } else {
+        setSaveMessage(status.status === 'FAILED' ? 'Backend test generation failed.' : 'Backend test generation returned no drafts.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
 
@@ -566,7 +620,7 @@ export function TestCaseGenerationPage() {
         : backendDraftsToSave.map((test) => ({ ...test, status: 'existing' as const }));
       const createdDirectDrafts = await Promise.all(
         demoTestsToSave.map((test) =>
-          flowOpsApi.createTestCase(activeApplication.appId, {
+          flowOpsApi.createTestCase(mainApplicationId ?? activeApplication.appId, {
             apiId: Number(test.apiId),
             name: test.name.trim(),
             title: test.name.trim(),
@@ -759,13 +813,13 @@ export function TestCaseGenerationPage() {
               <div className="text-sm text-gray-400">
                 {pendingApiIdsForGeneration.length} API{pendingApiIdsForGeneration.length !== 1 ? 's' : ''} selected
               </div>
-              <button
-                onClick={handleConfirmApiSelection}
-                disabled={pendingApiIdsForGeneration.length === 0}
-                className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Sparkles size={18} />
-                Generate for Selected APIs
+                <button
+                  onClick={handleConfirmApiSelection}
+                  disabled={pendingApiIdsForGeneration.length === 0 || isGenerating}
+                  className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                {isGenerating ? <Clock size={18} className="animate-pulse" /> : <Sparkles size={18} />}
+                {isGenerating ? 'Generating...' : 'Generate for Selected APIs'}
               </button>
             </div>
           </div>
@@ -805,29 +859,18 @@ export function TestCaseGenerationPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <select
-                value={selectedEnvironmentId}
-                onChange={(e) => setSelectedEnvironmentId(e.target.value)}
-                className="bg-[#13131a] border border-[#1f1f28] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/30"
-              >
-                <option value="all">All Environments</option>
-                {environments.map((environment) => (
-                  <option key={environment.id} value={String(environment.id)}>
-                    {environment.name}
-                    {environment.branchName ? ` (${environment.branchName})` : ''}
-                  </option>
-                ))}
-              </select>
-
               <button
                 onClick={() => {
                   setPendingApiIdsForGeneration(selectedApiIdsForGeneration);
                   setShowApiModal(true);
                 }}
-                className="scenario-ai-action flex items-center justify-center gap-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-xl transition-colors"
+                disabled={isGenerating}
+                className="scenario-ai-action flex items-center justify-center gap-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
               >
-                <Sparkles size={20} />
-                <span className="font-semibold">{generatedTests.length > 0 ? 'Add APIs' : 'Generate Test Cases'}</span>
+                {isGenerating ? <Clock size={20} className="animate-pulse" /> : <Sparkles size={20} />}
+                <span className="font-semibold">
+                  {isGenerating ? 'Generating...' : generatedTests.length > 0 ? 'Add APIs' : 'Generate Test Cases'}
+                </span>
               </button>
 
               {selectedApiIdsForGeneration.length > 0 && generatedTests.length === 0 && (
@@ -836,7 +879,7 @@ export function TestCaseGenerationPage() {
                   disabled={isGenerating}
                   className="scenario-ai-action flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
                 >
-                  <Sparkles size={18} />
+                  {isGenerating ? <Clock size={18} className="animate-pulse" /> : <Sparkles size={18} />}
                   {isGenerating ? 'Generating...' : `Generate for Selected APIs (${selectedApiIdsForGeneration.length})`}
                 </button>
               )}
@@ -851,6 +894,31 @@ export function TestCaseGenerationPage() {
                 </button>
               )}
             </div>
+
+            {isGenerating && (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-5">
+                <div className="flex items-start gap-3">
+                  <Clock size={20} className="mt-0.5 flex-shrink-0 animate-pulse text-blue-300" />
+                  <div>
+                    <div className="text-sm font-semibold text-blue-100">Generating test case drafts</div>
+                    <div className="mt-1 text-sm text-blue-200/80">
+                      {saveMessage || 'Waiting for the backend AI generation job to finish.'}
+                    </div>
+                    {generationId && (
+                      <div className="mt-2 text-xs text-blue-200/60">
+                        Generation #{generationId}{generationStatus ? ` · ${generationStatus}` : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isGenerating && generatedTests.length === 0 && saveMessage && (
+              <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+                {saveMessage}
+              </div>
+            )}
 
             {generatedTests.length > 0 && (
               <div className="space-y-4">
@@ -1093,7 +1161,7 @@ export function TestCaseGenerationPage() {
               </div>
             )}
 
-            {generatedTests.length === 0 && (
+            {!isGenerating && generatedTests.length === 0 && (
               <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl overflow-hidden">
                 <div className="p-5 border-b border-[#1f1f28] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>

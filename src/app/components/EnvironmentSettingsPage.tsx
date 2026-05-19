@@ -29,6 +29,7 @@ import {
     Eye,
 } from 'lucide-react';
 import {
+    DEFAULT_ENVIRONMENT_BASE_URL,
     DEFAULT_REQUESTER,
     flowOpsApi,
     rememberAppId,
@@ -37,6 +38,7 @@ import {
     type RepositoryResponse,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
+import { filterEnvironmentsForBranchScope } from '../utils/environmentScope';
 
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
@@ -88,6 +90,8 @@ interface StoredRegisteredRepository {
     title?: string;
     appTitle?: string;
     fullName?: string;
+    defaultBranch?: string;
+    selectedBranches?: string[];
 }
 
 const readStoredRepositories = (): StoredRegisteredRepository[] => {
@@ -143,7 +147,7 @@ const serializeEnvironment = (env: Environment) => {
         name: env.name,
         branchName: env.branchName || env.name,
         repositoryId: env.repositoryId,
-        baseUrl: env.baseUrl,
+        baseUrl: env.baseUrl || DEFAULT_ENVIRONMENT_BASE_URL,
         authType: env.authType === 'apiKey' ? 'API_KEY' : env.authType === 'bearer' ? 'BEARER' : 'NONE',
         headers: JSON.stringify(
             Object.fromEntries(env.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
@@ -176,6 +180,67 @@ const titleForAppId = (
     );
 };
 
+const mergeRepositoryScope = (
+    repository: RepositoryResponse | undefined,
+    stored: StoredRegisteredRepository | undefined,
+) => ({
+    ...stored,
+    ...repository,
+    defaultBranch: repository?.defaultBranch || stored?.defaultBranch,
+    selectedBranches: stored?.selectedBranches,
+});
+
+const environmentNameForBranch = (branch: string) => {
+    if (branch.length <= 30) return branch;
+    const leafName = branch.split('/').filter(Boolean).pop();
+    return (leafName || branch).slice(0, 30);
+};
+
+const branchNamesForRepositoryScope = (scope: ReturnType<typeof mergeRepositoryScope>) => {
+    const explicit = scope.selectedBranches?.map((branch) => branch.trim()).filter(Boolean) || [];
+    if (explicit.length > 0) return Array.from(new Set(explicit));
+
+    const selectedFromBranches = (scope.branches || [])
+        .filter((branch) => branch.selected || branch.defaultBranch)
+        .map((branch) => (branch.name || branch.branchName || '').trim())
+        .filter(Boolean);
+    if (selectedFromBranches.length > 0) return Array.from(new Set(selectedFromBranches));
+
+    return scope.defaultBranch ? [scope.defaultBranch] : [];
+};
+
+const syncMissingBranchEnvironments = async (
+    appId: number,
+    repositoryId: number | undefined,
+    selectedBranches: string[],
+    environments: EnvironmentResponse[],
+) => {
+    if (!repositoryId || !selectedBranches || selectedBranches.length === 0) return environments;
+
+    const next = [...environments];
+    for (const branchName of selectedBranches) {
+        const exists = next.some(
+            (environment) =>
+                (environment.repositoryId === repositoryId || !environment.repositoryId) &&
+                (environment.branchName === branchName || environment.name === branchName),
+        );
+        if (exists) continue;
+
+        const created = await flowOpsApi.createEnvironment(appId, {
+            name: environmentNameForBranch(branchName),
+            branchName,
+            repositoryId,
+            baseUrl: DEFAULT_ENVIRONMENT_BASE_URL,
+            authType: 'NONE',
+            defaultTestLevel: 'SMOKE',
+            defaultTestLevelSource: 'MANUAL',
+        } as any);
+        next.push(created);
+    }
+
+    return next;
+};
+
 export function EnvironmentSettingsPage() {
     const navigate = useNavigate();
     const { activeApplication, setActiveApplication } = useTestContext();
@@ -189,6 +254,8 @@ export function EnvironmentSettingsPage() {
     const [apiError, setApiError] = useState<string | null>(null);
     const [headersJsonText, setHeadersJsonText] = useState('{}');
     const [headersJsonError, setHeadersJsonError] = useState<string | null>(null);
+    const [mainRepositoryScope, setMainRepositoryScope] =
+        useState<ReturnType<typeof mergeRepositoryScope> | null>(null);
 
     const selectedEnv = selectedEnvId ? environments.find((env) => env.id === selectedEnvId) : null;
 
@@ -204,22 +271,11 @@ export function EnvironmentSettingsPage() {
                 const storedRepositories = readStoredRepositories();
                 const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
                 const mainApplication = await flowOpsApi.resolveMainApplication();
-                const candidateAppIds = Array.from(
-                    new Set(
-                        [
-                            mainApplication.appId,
-                            activeApplication.appId,
-                            ...storedRepositories.map((repository) => Number(repository.appId)),
-                            ...repositories.map((repository) => Number(repository.appId)),
-                        ].filter((appId) => Number.isFinite(appId) && appId > 0),
-                    ),
-                );
 
                 console.info('[EnvironmentSettings] loading environments', {
                     projectId: project.id,
                     resolvedMainApplication: mainApplication,
                     activeApplication,
-                    candidateAppIds,
                     repositories: repositories.map((repository) => ({
                         id: repository.id,
                         appId: repository.appId,
@@ -242,38 +298,23 @@ export function EnvironmentSettingsPage() {
                     })),
                 });
 
-                if (items.length === 0) {
-                    for (const appId of candidateAppIds.filter((candidateAppId) => candidateAppId !== mainApplication.appId)) {
-                        const candidateItems = await flowOpsApi.listEnvironments(appId).catch((error) => {
-                            console.warn('[EnvironmentSettings] failed to load candidate environments', {
-                                appId,
-                                error: error instanceof Error ? error.message : error,
-                            });
-                            return [] as EnvironmentResponse[];
-                        });
-                        console.info('[EnvironmentSettings] candidate environments response', {
-                            appId,
-                            count: candidateItems.length,
-                        });
-
-                        if (candidateItems.length > 0) {
-                            selectedApplication = {
-                                appId,
-                                title: titleForAppId(appId, repositories, storedRepositories),
-                            };
-                            items = candidateItems;
-                            console.warn('[EnvironmentSettings] resolved main app returned no environments; using candidate app with environments', {
-                                resolvedMainAppId: mainApplication.appId,
-                                selectedAppId: appId,
-                            });
-                            break;
-                        }
-                    }
-                }
-                const normalized = items.map(normalizeEnvironment);
+                const selectedRepository =
+                    mergeRepositoryScope(
+                        repositories.find((repository) => repository.appId === selectedApplication.appId),
+                        storedRepositories.find((repository) => Number(repository.appId) === selectedApplication.appId),
+                    );
+                items = await syncMissingBranchEnvironments(
+                    selectedApplication.appId,
+                    selectedRepository?.id ? Number(selectedRepository.id) : undefined,
+                    branchNamesForRepositoryScope(selectedRepository),
+                    items,
+                );
+                const scopedItems = filterEnvironmentsForBranchScope(items, selectedRepository);
+                const normalized = scopedItems.map(normalizeEnvironment);
                 if (!active) return;
 
                 setMainAppId(selectedApplication.appId);
+                setMainRepositoryScope(selectedRepository);
                 rememberAppId(selectedApplication.appId);
                 rememberAppTitle(selectedApplication.title);
                 if (
@@ -324,11 +365,17 @@ export function EnvironmentSettingsPage() {
     };
 
     const addEnvironment = () => {
+        const branchName =
+            mainRepositoryScope?.selectedBranches?.find(Boolean) ||
+            mainRepositoryScope?.defaultBranch ||
+            environments[0]?.branchName ||
+            '';
         const newEnv: Environment = {
             id: Date.now().toString(),
             name: 'New Environment',
-            branchName: 'main',
-            baseUrl: '',
+            repositoryId: mainRepositoryScope?.id ? Number(mainRepositoryScope.id) : undefined,
+            branchName,
+            baseUrl: DEFAULT_ENVIRONMENT_BASE_URL,
             authType: 'none',
             token: '',
             headers: [],

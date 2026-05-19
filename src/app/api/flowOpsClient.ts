@@ -5,6 +5,8 @@ const API_BASE_URL =
 export const DEFAULT_APP_ID = Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
 export const DEFAULT_REQUESTER = import.meta.env.VITE_FLOW_OPS_REQUESTER || 'qa.engineer@flowops.dev';
 const DEFAULT_PROJECT_NAME = import.meta.env.VITE_FLOW_OPS_PROJECT_NAME || 'FlowOps Workspace';
+export const DEFAULT_ENVIRONMENT_BASE_URL =
+  import.meta.env.VITE_FLOW_OPS_DEFAULT_ENVIRONMENT_BASE_URL || 'http://localhost:8080';
 
 export function getDefaultAppId() {
   return Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
@@ -63,6 +65,7 @@ export interface EnvironmentResponse {
   authConfig?: unknown;
   headers?: unknown;
   defaultTestLevel: TestLevel;
+  defaultTestLevelSource?: 'MANUAL' | 'AI_RECOMMENDED';
   lastRunAt?: string;
   coverage?: number;
 }
@@ -108,13 +111,15 @@ export interface RepositoryResponse {
   repositoryUrl?: string;
   defaultBranch?: string;
   connectionStatus?: 'ACTIVE' | 'DISCONNECTED' | 'ERROR';
-  branches?: Array<{ name?: string; branchName?: string; defaultBranch?: boolean }>;
+  branches?: Array<{ name?: string; branchName?: string; defaultBranch?: boolean; selected?: boolean }>;
   scanResults?: ScanResultResponse[];
 }
 
 export interface BranchResponse {
   name: string;
+  branchName?: string;
   isDefault?: boolean;
+  defaultBranch?: boolean;
   selected?: boolean;
 }
 
@@ -197,6 +202,7 @@ export interface ExecutionDetailResponse {
   environmentId: number;
   environmentName?: string;
   executionType?: 'API' | 'API_BATCH' | 'TEST_CASE' | 'SCENARIO';
+  targetId?: number;
   testLevel?: TestLevel;
   status: 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELED';
   executedAt?: string;
@@ -213,6 +219,9 @@ export interface ExecutionDetailResponse {
   responseTimeMs?: number;
   errorMessage?: string;
   createdBy?: string;
+  startedAt?: string;
+  endedAt?: string;
+  createdAt?: string;
   timeline?: ExecutionStepLogResponse[];
 }
 
@@ -251,19 +260,23 @@ export interface TestCaseResponse {
 
 export interface ScenarioSummaryResponse {
   id: number;
+  environmentId?: number;
   name: string;
   description?: string;
   type?: string;
   steps?: number;
   updatedAt?: string;
+  lastExecutedAt?: string;
 }
 
 export interface ScenarioDetailResponse {
   id: number;
   appId: number;
+  environmentId?: number;
   name: string;
   description?: string;
   type?: string;
+  lastExecutedAt?: string;
   steps?: Array<{
     id: number;
     stepOrder: number;

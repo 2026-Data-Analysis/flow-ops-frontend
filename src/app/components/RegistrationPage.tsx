@@ -13,7 +13,13 @@ import {
   Calendar,
   Check
 } from 'lucide-react';
-import { flowOpsApi, rememberAppId, rememberAppTitle, type ScanResultResponse } from '../api/flowOpsClient';
+import {
+  DEFAULT_ENVIRONMENT_BASE_URL,
+  flowOpsApi,
+  rememberAppId,
+  rememberAppTitle,
+  type ScanResultResponse,
+} from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
 interface Repository {
@@ -25,7 +31,6 @@ interface Repository {
   lastUpdated: string;
 }
 
-const commonBranches = ['main', 'develop', 'staging', 'feature/api-v2', 'hotfix/security-patch'];
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 interface StoredRegisteredRepository {
@@ -36,6 +41,7 @@ interface StoredRegisteredRepository {
   fullName: string;
   repositoryUrl?: string;
   defaultBranch?: string;
+  selectedBranches?: string[];
   connectionStatus?: string;
 }
 
@@ -62,6 +68,59 @@ const parseRepository = (fullName: string): Repository | null => {
   };
 };
 
+const uniqueBranchNames = (branches: Array<string | undefined>) =>
+  Array.from(new Set(branches.map((branch) => branch?.trim()).filter((branch): branch is string => Boolean(branch))));
+
+const environmentNameForBranch = (branch: string) => {
+  if (branch.length <= 30) return branch;
+  const leafName = branch.split('/').filter(Boolean).pop();
+  return (leafName || branch).slice(0, 30);
+};
+
+const syncSelectedBranchEnvironments = async (
+  appId: number,
+  repositoryId: number,
+  branchNames: string[],
+) => {
+  const existingEnvironments = await flowOpsApi.listEnvironments(appId).catch(() => []);
+  const normalizedRepositoryEnvironments = existingEnvironments.filter(
+    (environment) => !environment.repositoryId || environment.repositoryId === repositoryId,
+  );
+
+  await Promise.all(
+    branchNames.map(async (branchName) => {
+      const existing = normalizedRepositoryEnvironments.find(
+        (environment) => environment.branchName === branchName || environment.name === branchName,
+      );
+
+      if (!existing) {
+        await flowOpsApi.createEnvironment(appId, {
+          name: environmentNameForBranch(branchName),
+          branchName,
+          repositoryId,
+          baseUrl: DEFAULT_ENVIRONMENT_BASE_URL,
+          authType: 'NONE',
+          defaultTestLevel: 'SMOKE',
+          defaultTestLevelSource: 'MANUAL',
+        } as any);
+        return;
+      }
+
+      if (!existing.repositoryId || existing.branchName !== branchName) {
+        await flowOpsApi.updateEnvironment(existing.id, {
+          name: existing.name || environmentNameForBranch(branchName),
+          branchName,
+          repositoryId,
+          baseUrl: existing.baseUrl || DEFAULT_ENVIRONMENT_BASE_URL,
+          authType: existing.authType || 'NONE',
+          defaultTestLevel: existing.defaultTestLevel || 'SMOKE',
+          defaultTestLevelSource: 'MANUAL',
+        } as any);
+      }
+    }),
+  );
+};
+
 export function RegistrationPage() {
   const navigate = useNavigate();
   const { setActiveApplication } = useTestContext();
@@ -74,7 +133,7 @@ export function RegistrationPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showRepoDropdown, setShowRepoDropdown] = useState(false);
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
-  const [availableBranches, setAvailableBranches] = useState<string[]>(commonBranches);
+  const [availableBranches, setAvailableBranches] = useState<string[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
@@ -109,8 +168,7 @@ export function RegistrationPage() {
   };
 
   const branchSelectionOrDefault = () => {
-    const uniqueBranches = Array.from(new Set(selectedBranches.map((branch) => branch.trim()).filter(Boolean)));
-    return uniqueBranches.length > 0 ? uniqueBranches : ['main'];
+    return uniqueBranchNames(selectedBranches);
   };
 
   const handleRepoSelect = async (repo: Repository) => {
@@ -122,8 +180,8 @@ export function RegistrationPage() {
     setApiError(null);
     resetScanState();
     setSelectedRepo(repo);
-    const initialBranches = ['main'];
-    setSelectedBranches(initialBranches);
+    setSelectedBranches([]);
+    setAvailableBranches([]);
     setShowRepoDropdown(false);
     setTimeout(() => setCurrentStep(3), 500);
     setIsLoadingBranches(true);
@@ -131,13 +189,12 @@ export function RegistrationPage() {
       const app = await flowOpsApi.createApp({
         name: repo.name,
         repoUrl: `https://github.com/${repo.fullName}`,
-        defaultBranch: initialBranches[0],
-        branches: initialBranches,
       });
       rememberAppId(app.id);
       rememberAppTitle(repo.name);
       setActiveApplication({ appId: app.id, title: repo.name });
       setRegisteredAppId(app.id);
+      await flowOpsApi.setMainApp(app.id, { title: repo.name }).catch(() => undefined);
 
       const project = await flowOpsApi.ensureProject();
       setRegisteredProjectId(project.id);
@@ -145,7 +202,6 @@ export function RegistrationPage() {
       const repository = await flowOpsApi.registerRepository(project.id, {
         fullName: repo.fullName,
         appId: app.id,
-        selectedBranches: initialBranches,
       });
       rememberRegisteredRepository({
         id: repository.id,
@@ -154,29 +210,36 @@ export function RegistrationPage() {
         title: repo.name,
         fullName: repo.fullName,
         repositoryUrl: repository.repositoryUrl || `https://github.com/${repo.fullName}`,
-        defaultBranch: repository.defaultBranch || initialBranches[0],
+        defaultBranch: repository.defaultBranch,
+        selectedBranches: [],
         connectionStatus: repository.connectionStatus || 'ACTIVE',
       });
       setRegisteredRepositoryId(repository.id);
 
       const branches = await flowOpsApi.listRepositoryBranches(project.id, repository.id);
-      const branchNames = branches.map((branch) => branch.name).filter(Boolean);
-      const initiallySelected = branches
-        .filter((branch) => branch.selected || branch.isDefault)
-        .map((branch) => branch.name)
-        .filter(Boolean);
-      setAvailableBranches(branchNames.length > 0 ? branchNames : commonBranches);
-      setSelectedBranches(
-        initiallySelected.length > 0
-          ? initiallySelected
-          : branchNames.length > 0
-            ? branchNames.slice(0, 1)
-            : initialBranches,
+      const branchNames = uniqueBranchNames(branches.map((branch) => branch.name || branch.branchName));
+      const selectedFromApi = uniqueBranchNames(
+        branches
+          .filter((branch) => branch.selected || branch.isDefault || branch.defaultBranch)
+          .map((branch) => branch.name || branch.branchName),
       );
+      setAvailableBranches(branchNames);
+      setSelectedBranches(selectedFromApi);
+      rememberRegisteredRepository({
+        id: repository.id,
+        projectId: project.id,
+        appId: app.id,
+        title: repo.name,
+        fullName: repo.fullName,
+        repositoryUrl: repository.repositoryUrl || `https://github.com/${repo.fullName}`,
+        defaultBranch: repository.defaultBranch || selectedFromApi[0] || branchNames[0],
+        selectedBranches: selectedFromApi,
+        connectionStatus: repository.connectionStatus || 'ACTIVE',
+      });
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Branch list request failed.');
-      setAvailableBranches(commonBranches);
-      setSelectedBranches((prev) => prev);
+      setAvailableBranches([]);
+      setSelectedBranches([]);
     } finally {
       setIsLoadingBranches(false);
     }
@@ -218,24 +281,45 @@ export function RegistrationPage() {
         appId = app.id;
       }
 
-      const repository = await flowOpsApi.registerRepository(projectId, {
-        fullName,
-        appId,
-        selectedBranches: branchesForRegistration,
-      });
-      rememberRegisteredRepository({
-        id: repository.id,
-        projectId,
-        appId,
-        title: selectedRepo.name,
-        fullName,
-        repositoryUrl: repository.repositoryUrl || `https://github.com/${fullName}`,
-        defaultBranch: repository.defaultBranch || branchesForRegistration[0],
-        connectionStatus: repository.connectionStatus || 'ACTIVE',
-      });
-      setRegisteredRepositoryId(repository.id);
-      repositoryId = repository.id;
+      await flowOpsApi.setMainApp(appId, { title: selectedRepo.name }).catch(() => undefined);
 
+      if (!repositoryId) {
+        const repository = await flowOpsApi.registerRepository(projectId, {
+          fullName,
+          appId,
+          selectedBranches: branchesForRegistration,
+        });
+        await flowOpsApi.setMainApp(appId, { title: selectedRepo.name }).catch((error) => {
+          console.warn('[Registration] failed to set main app after repository registration', error);
+        });
+        rememberRegisteredRepository({
+          id: repository.id,
+          projectId,
+          appId,
+          title: selectedRepo.name,
+          fullName,
+          repositoryUrl: repository.repositoryUrl || `https://github.com/${fullName}`,
+          defaultBranch: repository.defaultBranch || branchesForRegistration[0],
+          selectedBranches: branchesForRegistration,
+          connectionStatus: repository.connectionStatus || 'ACTIVE',
+        });
+        setRegisteredRepositoryId(repository.id);
+        repositoryId = repository.id;
+      } else {
+        rememberRegisteredRepository({
+          id: repositoryId,
+          projectId,
+          appId,
+          title: selectedRepo.name,
+          fullName,
+          repositoryUrl: `https://github.com/${fullName}`,
+          defaultBranch: branchesForRegistration[0],
+          selectedBranches: branchesForRegistration,
+          connectionStatus: 'ACTIVE',
+        });
+      }
+
+      await syncSelectedBranchEnvironments(appId, repositoryId, branchesForRegistration);
       const results = await flowOpsApi.scanRepository(projectId, repositoryId, branchesForRegistration);
       setScanResults(results);
       setSelectedResultBranch(results[0]?.branchName || branchesForRegistration[0] || null);
@@ -547,6 +631,11 @@ export function RegistrationPage() {
                         <span className="text-sm text-white">{branch}</span>
                       </button>
                     ))}
+                    {!isLoadingBranches && availableBranches.length === 0 && selectedBranches.length === 0 && (
+                      <div className="px-4 py-3 text-sm text-gray-500">
+                        No branches returned from the repository API.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
