@@ -294,6 +294,11 @@ const buildRequestDefaults = (schema?: unknown) => {
 const toBackendScenarioType = (type: ScenarioTemplate['type']) =>
   type === 'edge-case' ? 'EDGE_CASE' : type === 'failure-recovery' ? 'FAILURE_RECOVERY' : 'HAPPY_PATH';
 
+const toPayloadText = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+};
+
 const stringifyStepRules = (rules?: string[]) => (rules && rules.length > 0 ? rules.join('\n') : undefined);
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
@@ -591,7 +596,7 @@ export function ScenarioBuilderPage() {
     const selectedAiScenarios = aiScenarios.filter(s => s.isSelected);
     const mappingFailed = selectedAiScenarios.some((scenario) => scenario.steps.some((step) => !step.apiId));
     if (mappingFailed) {
-      setApiError('API 매핑 실패: apiId가 없는 추천 step이 있어 저장할 수 없습니다.');
+      setApiError('API mapping failed: one or more recommended steps do not have an apiId.');
       setAiScenarios((items) =>
         items.map((scenario) =>
           scenario.isSelected && scenario.steps.some((step) => !step.apiId)
@@ -605,7 +610,7 @@ export function ScenarioBuilderPage() {
     setIsSavingRecommendations(true);
     setApiError(null);
     try {
-      await Promise.all(
+      const createdScenarios = await Promise.all(
         selectedAiScenarios.map((scenario) =>
           flowOpsApi.createScenario({
             appId: activeApplication.appId,
@@ -613,19 +618,33 @@ export function ScenarioBuilderPage() {
             description: scenario.description,
             type: toBackendScenarioType(scenario.type),
             steps: scenario.steps.map((step, index) => ({
-              stepOrder: index + 1,
+              stepOrder: step.order || index + 1,
               apiId: step.apiId as number,
               label: step.label,
-              requestConfig: step.requestConfig,
-              extractRules: step.extractRules,
-              validationRules: stringifyStepRules(step.validationRules),
+              requestConfig: toPayloadText(step.requestConfig),
+              extractRules: toPayloadText(step.extractRules),
+              validationRules: toPayloadText(stringifyStepRules(step.validationRules)),
             })),
           }),
         ),
       );
+      const optimisticScenarios = selectedAiScenarios.map((scenario, index) => ({
+        ...scenario,
+        id: createdScenarios[index]?.id ? String(createdScenarios[index].id) : `saved-${scenario.id}`,
+        isSelected: false,
+        lastUpdated: 'Just now',
+      }));
+      setScenarios((items) => [...optimisticScenarios, ...items]);
+      setSelectedScenarioId(optimisticScenarios[0]?.id ?? null);
+
       const savedScenarios = await loadSavedScenarios();
-      if (savedScenarios[0]) {
-        setSelectedScenarioId(savedScenarios[0].id);
+      const savedIds = new Set(savedScenarios.map((scenario) => scenario.id));
+      const missingSavedScenarios = optimisticScenarios.filter((scenario) => !savedIds.has(scenario.id));
+      if (missingSavedScenarios.length > 0) {
+        setScenarios((items) => {
+          const existingIds = new Set(items.map((item) => item.id));
+          return [...missingSavedScenarios.filter((scenario) => !existingIds.has(scenario.id)), ...items];
+        });
       }
       setShowAiModal(false);
       setAiScenarios((items) => items.filter((scenario) => !scenario.isSelected));
@@ -844,6 +863,12 @@ export function ScenarioBuilderPage() {
 
               <div className="text-xs text-gray-500 uppercase tracking-wider pt-2">Recommended Scenarios</div>
 
+              {!isRecommendationLoading && apiError && (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {apiError}
+                </div>
+              )}
+
               {isRecommendationLoading && (
                 <div className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#13131a] px-6 py-10 text-center">
                   <Sparkles size={32} className="mb-4 animate-pulse text-purple-400" />
@@ -927,7 +952,7 @@ export function ScenarioBuilderPage() {
                           <span className="text-xs text-gray-500">{scenario.steps.length} steps</span>
                           {apiMappingFailed && (
                             <span className="text-xs px-2 py-1 rounded-full border border-red-500/20 bg-red-500/10 text-red-300">
-                              API 매핑 실패
+                              API mapping failed
                             </span>
                           )}
                         </div>
@@ -948,7 +973,7 @@ export function ScenarioBuilderPage() {
             <div className="p-6 border-t border-[#1f1f28] flex items-center justify-between">
               <div className="text-sm text-gray-400">
                 {hasSelectedAiMappingFailure
-                  ? 'API 매핑 실패 항목은 저장할 수 없습니다'
+                  ? 'API mapping failed items cannot be saved'
                   : `${selectedAiScenarioCount} scenario${selectedAiScenarioCount !== 1 ? 's' : ''} selected`}
               </div>
               <button
@@ -1385,3 +1410,4 @@ export function ScenarioBuilderPage() {
     </div>
   );
 }
+

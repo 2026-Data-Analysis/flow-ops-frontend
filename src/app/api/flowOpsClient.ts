@@ -541,7 +541,7 @@ async function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
   if (response.success === false) {
     throw new Error(response.message || response.code || 'API request failed');
   }
-  return response.data;
+  return response.data ?? (response as T);
 }
 
 export const flowOpsApi = {
@@ -817,7 +817,7 @@ export const flowOpsApi = {
   listScenarios: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
 
-  createScenario: (body: {
+  createScenario: async (body: {
     appId: number;
     name: string;
     description?: string;
@@ -830,13 +830,30 @@ export const flowOpsApi = {
       extractRules?: string;
       validationRules?: string;
     }>;
-  }) =>
-    unwrap(
-      request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+  }) => {
+    const createBody = {
+      name: body.name,
+      description: body.description,
+      type: body.type,
+      steps: body.steps,
+    };
+
+    try {
+      return await unwrap(
+        request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+      );
+    } catch (error) {
+      return unwrap(
+        request<ApiResponse<ScenarioDetailResponse>>(`/apps/${body.appId}/scenarios`, {
+          method: 'POST',
+          body: JSON.stringify(createBody),
+        }),
+      );
+    }
+  },
 
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
     const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
