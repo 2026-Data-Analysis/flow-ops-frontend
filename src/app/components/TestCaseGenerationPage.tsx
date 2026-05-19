@@ -29,7 +29,6 @@ import {
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
-import { allowMockData, isProductionBuild } from '../config/runtime';
 import { filterInventoryForEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
 
 interface ApiEndpoint {
@@ -199,23 +198,6 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
       : undefined,
   };
 };
-
-const buildMockGeneratedTests: (
-  selectedApis: ApiEndpoint[],
-  roles: string[],
-  states: string[],
-  variants: string[],
-  existingTests: TestCase[],
-) => Promise<TestCase[]> = import.meta.env.DEV ? async (
-  selectedApis: ApiEndpoint[],
-  roles: string[],
-  states: string[],
-  variants: string[],
-  existingTests: TestCase[],
-) => {
-    const mock = await import('../mock/testCaseGenerationMock');
-    return mock.buildMockGeneratedTests(selectedApis, roles, states, variants, existingTests);
-  } : async () => [];
 
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
@@ -434,9 +416,8 @@ export function TestCaseGenerationPage() {
     setGenerationStatus(null);
     setSaveMessage(null);
 
-    const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
     const contextSummary = [
-      `${selectedApis.length} selected APIs`,
+      `${apiIds.length} selected APIs`,
       `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
       `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
       `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
@@ -448,6 +429,12 @@ export function TestCaseGenerationPage() {
         throw new Error('Select an environment before generating tests.');
       }
 
+      console.info('[TestCaseGeneration] requesting backend generation', {
+        appId: activeApplication.appId,
+        environmentId,
+        selectedApiIds: apiIds,
+        contextSummary,
+      });
       const generation = await flowOpsApi.createTestGeneration({
         appId: activeApplication.appId,
         environmentId,
@@ -458,34 +445,27 @@ export function TestCaseGenerationPage() {
       });
       const status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
       const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
+      console.info('[TestCaseGeneration] backend generation response', {
+        generation,
+        status,
+        draftCount: drafts.length,
+        drafts,
+      });
 
       setGenerationId(generation.id);
       setGenerationStatus(status.status || generation.status || null);
       const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
-      const newTests = backendTests.length > 0
-        ? backendTests
-        : allowMockData
-          ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
-          : [];
-      setGeneratedTests(newTests);
-      setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+      setGeneratedTests(backendTests);
+      setSelectedGeneratedTestIds(backendTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
+      setSaveMessage(backendTests.length > 0 ? null : 'Backend test generation returned no drafts.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
 
-      if (allowMockData) {
-        const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
-        setGeneratedTests(newTests);
-        setSelectedGeneratedTestIds(newTests.map((test) => test.id));
-        setExpandedGeneratedApiIds(apiIdsForGeneration);
-        setSaveMessage(null);
-      } else {
-        setGeneratedTests([]);
-        setSelectedGeneratedTestIds([]);
-        setExpandedGeneratedApiIds([]);
-        setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
-      }
+      setGeneratedTests([]);
+      setSelectedGeneratedTestIds([]);
+      setExpandedGeneratedApiIds([]);
+      setSaveMessage(message);
     } finally {
       setIsGenerating(false);
     }

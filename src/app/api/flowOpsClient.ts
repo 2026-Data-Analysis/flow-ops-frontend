@@ -531,6 +531,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const message = payload?.message || response.statusText || 'API request failed';
+    console.error('[flowOpsApi] request failed', {
+      path,
+      status: response.status,
+      statusText: response.statusText,
+      payload,
+    });
     throw new Error(message);
   }
 

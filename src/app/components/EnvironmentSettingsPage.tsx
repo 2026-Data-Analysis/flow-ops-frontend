@@ -34,8 +34,11 @@ import {
     rememberAppId,
     rememberAppTitle,
     type EnvironmentResponse,
+    type RepositoryResponse,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
+
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 interface KeyValuePair {
     id: string;
@@ -45,7 +48,9 @@ interface KeyValuePair {
 
 interface Environment {
     id: string;
+    repositoryId?: number;
     name: string;
+    branchName?: string;
     baseUrl: string;
     authType: 'none' | 'bearer' | 'apiKey';
     token: string;
@@ -77,6 +82,23 @@ interface Environment {
     coverage?: number;
 }
 
+interface StoredRegisteredRepository {
+    id?: number;
+    appId?: number;
+    title?: string;
+    appTitle?: string;
+    fullName?: string;
+}
+
+const readStoredRepositories = (): StoredRegisteredRepository[] => {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
 const parseObject = (value: unknown): Record<string, string> => {
     if (!value) return {};
     if (typeof value === 'object') return value as Record<string, string>;
@@ -92,7 +114,9 @@ const normalizeEnvironment = (env: EnvironmentResponse): Environment => {
     const authType = env.authType === 'API_KEY' ? 'apiKey' : env.authType === 'BEARER' ? 'bearer' : 'none';
     return {
         id: String(env.id),
+        repositoryId: env.repositoryId,
         name: env.name,
+        branchName: env.branchName,
         baseUrl: env.baseUrl || '',
         authType,
         token: typeof env.authConfig === 'string' ? env.authConfig : '',
@@ -114,16 +138,43 @@ const normalizeEnvironment = (env: EnvironmentResponse): Environment => {
     };
 };
 
-const serializeEnvironment = (env: Environment) => ({
-    name: env.name,
-    branchName: env.name.toLowerCase(),
-    baseUrl: env.baseUrl,
-    authType: env.authType === 'apiKey' ? 'API_KEY' : env.authType === 'bearer' ? 'BEARER' : 'NONE',
-    authConfig: env.token,
-    headers: Object.fromEntries(env.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
-    defaultTestLevel: env.defaultTestLevel.toUpperCase(),
-    defaultTestLevelSource: 'MANUAL',
-});
+const serializeEnvironment = (env: Environment) => {
+    const body: Record<string, unknown> = {
+        name: env.name,
+        branchName: env.branchName || env.name,
+        repositoryId: env.repositoryId,
+        baseUrl: env.baseUrl,
+        authType: env.authType === 'apiKey' ? 'API_KEY' : env.authType === 'bearer' ? 'BEARER' : 'NONE',
+        headers: JSON.stringify(
+            Object.fromEntries(env.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
+        ),
+        defaultTestLevel: env.defaultTestLevel.toUpperCase(),
+        defaultTestLevelSource: 'MANUAL',
+    };
+
+    if (env.token !== '********') {
+        body.authConfig = env.token;
+    }
+
+    return body;
+};
+
+const titleForAppId = (
+    appId: number,
+    repositories: RepositoryResponse[],
+    storedRepositories: StoredRegisteredRepository[],
+) => {
+    const repository = repositories.find((item) => item.appId === appId);
+    const stored = storedRepositories.find((item) => Number(item.appId) === appId);
+    return (
+        repository?.appTitle ||
+        stored?.title ||
+        stored?.appTitle ||
+        repository?.fullName?.split('/').pop() ||
+        stored?.fullName?.split('/').pop() ||
+        `Application ${appId}`
+    );
+};
 
 export function EnvironmentSettingsPage() {
     const navigate = useNavigate();
@@ -149,19 +200,87 @@ export function EnvironmentSettingsPage() {
             setApiError(null);
 
             try {
+                const project = await flowOpsApi.ensureProject();
+                const storedRepositories = readStoredRepositories();
+                const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
                 const mainApplication = await flowOpsApi.resolveMainApplication();
-                const items = await flowOpsApi.listEnvironments(mainApplication.appId);
+                const candidateAppIds = Array.from(
+                    new Set(
+                        [
+                            mainApplication.appId,
+                            activeApplication.appId,
+                            ...storedRepositories.map((repository) => Number(repository.appId)),
+                            ...repositories.map((repository) => Number(repository.appId)),
+                        ].filter((appId) => Number.isFinite(appId) && appId > 0),
+                    ),
+                );
+
+                console.info('[EnvironmentSettings] loading environments', {
+                    projectId: project.id,
+                    resolvedMainApplication: mainApplication,
+                    activeApplication,
+                    candidateAppIds,
+                    repositories: repositories.map((repository) => ({
+                        id: repository.id,
+                        appId: repository.appId,
+                        fullName: repository.fullName,
+                        main: repository.main,
+                        primary: repository.primary,
+                    })),
+                });
+
+                let selectedApplication = mainApplication;
+                let items = await flowOpsApi.listEnvironments(mainApplication.appId);
+                console.info('[EnvironmentSettings] environments response', {
+                    appId: mainApplication.appId,
+                    count: items.length,
+                    environments: items.map((environment) => ({
+                        id: environment.id,
+                        name: environment.name,
+                        branchName: environment.branchName,
+                        repositoryId: environment.repositoryId,
+                    })),
+                });
+
+                if (items.length === 0) {
+                    for (const appId of candidateAppIds.filter((candidateAppId) => candidateAppId !== mainApplication.appId)) {
+                        const candidateItems = await flowOpsApi.listEnvironments(appId).catch((error) => {
+                            console.warn('[EnvironmentSettings] failed to load candidate environments', {
+                                appId,
+                                error: error instanceof Error ? error.message : error,
+                            });
+                            return [] as EnvironmentResponse[];
+                        });
+                        console.info('[EnvironmentSettings] candidate environments response', {
+                            appId,
+                            count: candidateItems.length,
+                        });
+
+                        if (candidateItems.length > 0) {
+                            selectedApplication = {
+                                appId,
+                                title: titleForAppId(appId, repositories, storedRepositories),
+                            };
+                            items = candidateItems;
+                            console.warn('[EnvironmentSettings] resolved main app returned no environments; using candidate app with environments', {
+                                resolvedMainAppId: mainApplication.appId,
+                                selectedAppId: appId,
+                            });
+                            break;
+                        }
+                    }
+                }
                 const normalized = items.map(normalizeEnvironment);
                 if (!active) return;
 
-                setMainAppId(mainApplication.appId);
-                rememberAppId(mainApplication.appId);
-                rememberAppTitle(mainApplication.title);
+                setMainAppId(selectedApplication.appId);
+                rememberAppId(selectedApplication.appId);
+                rememberAppTitle(selectedApplication.title);
                 if (
-                    activeApplication.appId !== mainApplication.appId ||
-                    activeApplication.title !== mainApplication.title
+                    activeApplication.appId !== selectedApplication.appId ||
+                    activeApplication.title !== selectedApplication.title
                 ) {
-                    setActiveApplication(mainApplication);
+                    setActiveApplication(selectedApplication);
                 }
                 setEnvironments(normalized.length > 0 ? normalized : []);
                 setSelectedEnvId(normalized[0]?.id ?? null);
@@ -208,6 +327,7 @@ export function EnvironmentSettingsPage() {
         const newEnv: Environment = {
             id: Date.now().toString(),
             name: 'New Environment',
+            branchName: 'main',
             baseUrl: '',
             authType: 'none',
             token: '',
@@ -303,6 +423,10 @@ export function EnvironmentSettingsPage() {
         setApiError(null);
         try {
             const body = serializeEnvironment(selectedEnv);
+            console.info('[EnvironmentSettings] saving environment', {
+                environmentId: selectedEnv.id,
+                body,
+            });
             const id = Number(selectedEnv.id);
             const saved =
                 Number.isFinite(id) && id < 1000000000000
