@@ -267,6 +267,7 @@ const buildRequestDefaults = (schema?: unknown) => {
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
+  phase?: string;
   inventoryEndpoint?: string;
   recommendEndpoint?: string;
   appId?: number;
@@ -274,6 +275,7 @@ interface RecommendationDebugInfo {
   repositoryId?: number;
   branchName?: string;
   apiIds?: number[];
+  errorMessage?: string;
 }
 
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
@@ -445,21 +447,40 @@ export function ScenarioBuilderPage() {
     setShowAiModal(true);
     setIsRecommendationLoading(true);
     setRecommendationStatus('waiting_inventory');
-    setRecommendationDebug(null);
 
     const selectedEnvironment =
       selectedEnvironmentId === 'all'
         ? null
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
+    setRecommendationDebug({
+      phase: 'start',
+      recommendEndpoint: '/scenarios/recommend',
+      appId: activeApplication.appId,
+      environmentId: selectedEnvironment?.id,
+      apiIds: [],
+    });
+
     try {
       const project = projectId ? { id: projectId } : await flowOpsApi.ensureProject();
+      setRecommendationDebug((prev) => ({
+        ...prev,
+        phase: 'project_loaded',
+        inventoryEndpoint: `/projects/${project.id}/api-inventories`,
+      }));
       const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
       const storedRepositories = readStoredRepositories();
       const activeRepository =
         repositories.find((repository) => repository.appId === activeApplication.appId) ||
         storedRepositories.find((repository) => repository.appId === activeApplication.appId);
       const inventoryParams = inventoryQueryParamsForDefaultBranch(activeRepository);
+      setRecommendationDebug((prev) => ({
+        ...prev,
+        phase: 'loading_inventory',
+        inventoryEndpoint: `/projects/${project.id}/api-inventories`,
+        repositoryId: inventoryParams.repositoryId as number | undefined,
+        branchName: inventoryParams.branchName as string | undefined,
+      }));
       const inventory = await flowOpsApi.listInventories(
         project.id,
         inventoryParams,
@@ -467,7 +488,9 @@ export function ScenarioBuilderPage() {
       const recommendationApis = inventory.items;
       setProjectId(project.id);
       setInventoryApis(recommendationApis);
-      setRecommendationDebug({
+      setRecommendationDebug((prev) => ({
+        ...prev,
+        phase: 'inventory_loaded',
         inventoryEndpoint: `/projects/${project.id}/api-inventories`,
         recommendEndpoint: '/scenarios/recommend',
         appId: activeApplication.appId,
@@ -475,13 +498,14 @@ export function ScenarioBuilderPage() {
         repositoryId: inventoryParams.repositoryId as number | undefined,
         branchName: inventoryParams.branchName as string | undefined,
         apiIds: recommendationApis.map((api) => api.id),
-      });
+      }));
 
       const businessDomains = Array.from(
         new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
       );
 
       setRecommendationStatus('requesting');
+      setRecommendationDebug((prev) => ({ ...prev, phase: 'requesting_recommendation' }));
       const recommendations = await flowOpsApi.recommendScenarios({
         appId: activeApplication.appId,
         environmentId: selectedEnvironment?.id,
@@ -497,6 +521,12 @@ export function ScenarioBuilderPage() {
       setRecommendationStatus(recommendations.length > 0 ? 'idle' : 'empty');
       setApiError(null);
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to generate AI scenarios.';
+      setRecommendationDebug((prev) => ({
+        ...prev,
+        phase: 'failed',
+        errorMessage: message,
+      }));
       setRecommendationStatus('error');
       setAiScenarios(allowMockData ? await buildScenariosFromApis(inventoryApis) : []);
       setApiError(
@@ -778,8 +808,9 @@ export function ScenarioBuilderPage() {
                   {recommendationDebug && (
                     <div className="mt-5 w-full max-w-2xl rounded-lg border border-red-500/20 bg-black/20 p-4 text-left text-xs text-red-100/80">
                       <div className="mb-2 font-semibold text-red-100">Temporary request debug</div>
-                      <div>inventory: {recommendationDebug.inventoryEndpoint}</div>
-                      <div>recommend: {recommendationDebug.recommendEndpoint}</div>
+                      <div>phase: {recommendationDebug.phase || 'unknown'}</div>
+                      <div>inventory: {recommendationDebug.inventoryEndpoint || 'not started'}</div>
+                      <div>recommend: {recommendationDebug.recommendEndpoint || '/scenarios/recommend'}</div>
                       <div>appId: {recommendationDebug.appId ?? 'none'}</div>
                       <div>environmentId: {recommendationDebug.environmentId ?? 'none'}</div>
                       <div>repositoryId: {recommendationDebug.repositoryId ?? 'none'}</div>
@@ -789,6 +820,7 @@ export function ScenarioBuilderPage() {
                         {(recommendationDebug.apiIds || []).slice(0, 30).join(', ') || 'none'}
                         {(recommendationDebug.apiIds?.length || 0) > 30 ? ' ...' : ''}
                       </div>
+                      <div>error: {recommendationDebug.errorMessage || apiError || 'none'}</div>
                     </div>
                   )}
                 </div>
