@@ -295,7 +295,7 @@ const toBackendScenarioType = (type: ScenarioTemplate['type']) =>
   type === 'edge-case' ? 'EDGE_CASE' : type === 'failure-recovery' ? 'FAILURE_RECOVERY' : 'HAPPY_PATH';
 
 const toPayloadText = (value: unknown) => {
-  if (value === undefined || value === null || value === '') return undefined;
+  if (value === undefined || value === null || value === '') return null;
   return typeof value === 'string' ? value : JSON.stringify(value);
 };
 
@@ -374,13 +374,16 @@ export function ScenarioBuilderPage() {
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
 
+  const selectedEnvironment =
+    selectedEnvironmentId === 'all'
+      ? null
+      : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+
   const loadSavedScenarios = async (scopedInventory = inventoryApis) => {
-    const selectedEnvironment =
-      selectedEnvironmentId === 'all'
-        ? null
-        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
     const environmentApiIds = new Set(scopedInventory.map((item) => item.id));
-    const summaries = await flowOpsApi.listScenarios(activeApplication.appId).catch(() => []);
+    const summaries = await flowOpsApi
+      .listScenariosByEnvironment(activeApplication.appId, selectedEnvironment?.id)
+      .catch(() => []);
     const details = await Promise.all(
       summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
     );
@@ -423,11 +426,6 @@ export function ScenarioBuilderPage() {
 
   useEffect(() => {
     let active = true;
-    const selectedEnvironment =
-      selectedEnvironmentId === 'all'
-        ? null
-        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
-
     if (!projectId) {
       setScenarios([]);
       setAiScenarios([]);
@@ -497,11 +495,6 @@ export function ScenarioBuilderPage() {
     setShowAiModal(true);
     setIsRecommendationLoading(true);
     setRecommendationStatus('waiting_inventory');
-
-    const selectedEnvironment =
-      selectedEnvironmentId === 'all'
-        ? null
-        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
     setRecommendationDebug({
       phase: 'start',
@@ -610,13 +603,17 @@ export function ScenarioBuilderPage() {
     setIsSavingRecommendations(true);
     setApiError(null);
     try {
-      const createdScenarios = await Promise.all(
-        selectedAiScenarios.map((scenario) =>
-          flowOpsApi.createScenario({
+      const saveResults = await Promise.allSettled(
+        selectedAiScenarios.map(async (scenario) => ({
+          scenario,
+          created: await flowOpsApi.createScenario({
             appId: activeApplication.appId,
+            environmentId: selectedEnvironment?.id,
             name: scenario.title,
             description: scenario.description,
             type: toBackendScenarioType(scenario.type),
+            recommendationReason: scenario.recommendationReason,
+            source: 'AI',
             steps: scenario.steps.map((step, index) => ({
               stepOrder: step.order || index + 1,
               apiId: step.apiId as number,
@@ -626,28 +623,52 @@ export function ScenarioBuilderPage() {
               validationRules: toPayloadText(stringifyStepRules(step.validationRules)),
             })),
           }),
-        ),
+        })),
       );
-      const optimisticScenarios = selectedAiScenarios.map((scenario, index) => ({
+      const savedResults = saveResults.filter(
+        (result): result is PromiseFulfilledResult<{ scenario: ScenarioTemplate; created: ScenarioDetailResponse }> =>
+          result.status === 'fulfilled',
+      );
+      const failedResults = saveResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+
+      const optimisticScenarios = savedResults.map(({ scenario, created }) => ({
         ...scenario,
-        id: createdScenarios[index]?.id ? String(createdScenarios[index].id) : `saved-${scenario.id}`,
+        id: created?.id ? String(created.id) : `saved-${scenario.id}`,
         isSelected: false,
         lastUpdated: 'Just now',
       }));
-      setScenarios((items) => [...optimisticScenarios, ...items]);
-      setSelectedScenarioId(optimisticScenarios[0]?.id ?? null);
 
-      const savedScenarios = await loadSavedScenarios();
-      const savedIds = new Set(savedScenarios.map((scenario) => scenario.id));
-      const missingSavedScenarios = optimisticScenarios.filter((scenario) => !savedIds.has(scenario.id));
-      if (missingSavedScenarios.length > 0) {
-        setScenarios((items) => {
-          const existingIds = new Set(items.map((item) => item.id));
-          return [...missingSavedScenarios.filter((scenario) => !existingIds.has(scenario.id)), ...items];
-        });
+      if (optimisticScenarios.length > 0) {
+        setScenarios((items) => [...optimisticScenarios, ...items]);
+        setSelectedScenarioId(optimisticScenarios[0].id);
+
+        const savedScenarios = await loadSavedScenarios();
+        const savedIds = new Set(savedScenarios.map((scenario) => scenario.id));
+        const missingSavedScenarios = optimisticScenarios.filter((scenario) => !savedIds.has(scenario.id));
+        if (missingSavedScenarios.length > 0) {
+          setScenarios((items) => {
+            const existingIds = new Set(items.map((item) => item.id));
+            return [...missingSavedScenarios.filter((scenario) => !existingIds.has(scenario.id)), ...items];
+          });
+        }
       }
+
+      const savedScenarioIds = new Set(savedResults.map(({ scenario }) => scenario.id));
+      setAiScenarios((items) =>
+        items.filter((scenario) => !savedScenarioIds.has(scenario.id)).map((scenario) => ({ ...scenario, isSelected: false })),
+      );
+
+      if (failedResults.length > 0) {
+        const failedMessage = failedResults
+          .map((result) => (result.reason instanceof Error ? result.reason.message : 'Unknown save error'))
+          .join(' / ');
+        setApiError(
+          `${savedResults.length} saved, ${failedResults.length} failed. ${failedMessage}`,
+        );
+        return;
+      }
+
       setShowAiModal(false);
-      setAiScenarios((items) => items.filter((scenario) => !scenario.isSelected));
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Failed to save recommended scenarios.');
     } finally {

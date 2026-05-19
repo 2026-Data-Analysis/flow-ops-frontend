@@ -817,43 +817,36 @@ export const flowOpsApi = {
   listScenarios: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
 
-  createScenario: async (body: {
+  listScenariosByEnvironment: (appId: number, environmentId?: number) =>
+    unwrap(
+      request<ApiResponse<ScenarioSummaryResponse[]>>(
+        `/apps/${appId}/scenarios${environmentId ? `?environmentId=${environmentId}` : ''}`,
+      ),
+    ),
+
+  createScenario: (body: {
     appId: number;
+    environmentId?: number;
     name: string;
     description?: string;
     type?: string;
+    recommendationReason?: string;
+    source?: 'AI' | 'MANUAL' | string;
     steps: Array<{
       stepOrder: number;
       apiId: number;
       label: string;
-      requestConfig?: string;
-      extractRules?: string;
-      validationRules?: string;
+      requestConfig?: string | null;
+      extractRules?: string | null;
+      validationRules?: string | null;
     }>;
-  }) => {
-    const createBody = {
-      name: body.name,
-      description: body.description,
-      type: body.type,
-      steps: body.steps,
-    };
-
-    try {
-      return await unwrap(
-        request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        }),
-      );
-    } catch (error) {
-      return unwrap(
-        request<ApiResponse<ScenarioDetailResponse>>(`/apps/${body.appId}/scenarios`, {
-          method: 'POST',
-          body: JSON.stringify(createBody),
-        }),
-      );
-    }
-  },
+  }) =>
+    unwrap(
+      request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
 
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
     const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
