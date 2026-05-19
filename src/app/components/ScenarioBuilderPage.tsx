@@ -269,6 +269,16 @@ const RECOMMENDATION_INVENTORY_WAIT_MS = 8000;
 const RECOMMENDATION_INVENTORY_POLL_MS = 200;
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
+interface RecommendationDebugInfo {
+  inventoryEndpoint?: string;
+  recommendEndpoint?: string;
+  appId?: number;
+  environmentId?: number;
+  repositoryId?: number;
+  branchName?: string;
+  apiIds?: number[];
+}
+
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 type StoredRegisteredRepository = Pick<
@@ -308,6 +318,7 @@ export function ScenarioBuilderPage() {
   const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [recommendationStatus, setRecommendationStatus] = useState<RecommendationStatus>('idle');
+  const [recommendationDebug, setRecommendationDebug] = useState<RecommendationDebugInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -457,6 +468,7 @@ export function ScenarioBuilderPage() {
     setShowAiModal(true);
     setIsRecommendationLoading(true);
     setRecommendationStatus('waiting_inventory');
+    setRecommendationDebug(null);
 
     const selectedEnvironment =
       selectedEnvironmentId === 'all'
@@ -464,6 +476,7 @@ export function ScenarioBuilderPage() {
         : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
     try {
+<<<<<<< Updated upstream
       let recommendationApis = isLoadingRef.current ? await waitForInventoryApis() : inventoryApisRef.current;
 
       if (recommendationApis.length === 0) {
@@ -479,6 +492,31 @@ export function ScenarioBuilderPage() {
         setProjectId(project.id);
         setInventoryApis(recommendationApis);
       }
+=======
+      const project = projectId ? { id: projectId } : await flowOpsApi.ensureProject();
+      const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
+      const storedRepositories = readStoredRepositories();
+      const activeRepository =
+        repositories.find((repository) => repository.appId === activeApplication.appId) ||
+        storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+      const inventoryParams = inventoryQueryParamsForDefaultBranch(activeRepository);
+      const inventory = await flowOpsApi.listInventories(
+        project.id,
+        inventoryParams,
+      );
+      const recommendationApis = inventory.items;
+      setProjectId(project.id);
+      setInventoryApis(recommendationApis);
+      setRecommendationDebug({
+        inventoryEndpoint: `/projects/${project.id}/api-inventories`,
+        recommendEndpoint: '/scenarios/recommend',
+        appId: activeApplication.appId,
+        environmentId: selectedEnvironment?.id,
+        repositoryId: inventoryParams.repositoryId as number | undefined,
+        branchName: inventoryParams.branchName as string | undefined,
+        apiIds: recommendationApis.map((api) => api.id),
+      });
+>>>>>>> Stashed changes
 
       const businessDomains = Array.from(
         new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
@@ -778,6 +816,22 @@ export function ScenarioBuilderPage() {
                   <p className="max-w-md text-sm text-red-200/70">
                     {apiError || 'The recommendation request could not be completed.'}
                   </p>
+                  {recommendationDebug && (
+                    <div className="mt-5 w-full max-w-2xl rounded-lg border border-red-500/20 bg-black/20 p-4 text-left text-xs text-red-100/80">
+                      <div className="mb-2 font-semibold text-red-100">Temporary request debug</div>
+                      <div>inventory: {recommendationDebug.inventoryEndpoint}</div>
+                      <div>recommend: {recommendationDebug.recommendEndpoint}</div>
+                      <div>appId: {recommendationDebug.appId ?? 'none'}</div>
+                      <div>environmentId: {recommendationDebug.environmentId ?? 'none'}</div>
+                      <div>repositoryId: {recommendationDebug.repositoryId ?? 'none'}</div>
+                      <div>branchName: {recommendationDebug.branchName || 'none'}</div>
+                      <div>
+                        apiIds ({recommendationDebug.apiIds?.length ?? 0}):{' '}
+                        {(recommendationDebug.apiIds || []).slice(0, 30).join(', ') || 'none'}
+                        {(recommendationDebug.apiIds?.length || 0) > 30 ? ' ...' : ''}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
