@@ -301,6 +301,9 @@ const toPayloadText = (value: unknown) => {
 
 const stringifyStepRules = (rules?: string[]) => (rules && rules.length > 0 ? rules.join('\n') : undefined);
 
+const hasNumericId = <T extends { id?: unknown }>(item: T | null | undefined): item is T & { id: number } =>
+  typeof item?.id === 'number';
+
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
   phase?: string;
@@ -385,7 +388,7 @@ export function ScenarioBuilderPage() {
       .listScenariosByEnvironment(activeApplication.appId, selectedEnvironment?.id)
       .catch(() => []);
     const details = await Promise.all(
-      summaries.map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
+      summaries.filter(hasNumericId).map((summary) => flowOpsApi.getScenario(summary.id).catch(() => null)),
     );
     const filteredDetails = details.filter((scenario): scenario is ScenarioDetailResponse => {
       if (!scenario) return false;
@@ -406,10 +409,13 @@ export function ScenarioBuilderPage() {
     ])
       .then(([project, items]) => {
         if (!active) return;
-        setProjectId(project.id);
-        setEnvironments(items);
-        if (items.length > 0 && selectedEnvironmentId === 'all') {
-          setSelectedEnvironmentId(String(items[0].id));
+        if (hasNumericId(project)) {
+          setProjectId(project.id);
+        }
+        const validItems = items.filter(hasNumericId);
+        setEnvironments(validItems);
+        if (validItems.length > 0 && selectedEnvironmentId === 'all') {
+          setSelectedEnvironmentId(String(validItems[0].id));
         }
       })
       .catch((error) => {
@@ -631,31 +637,35 @@ export function ScenarioBuilderPage() {
       );
       const failedResults = saveResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
 
-      const optimisticScenarios = savedResults.map(({ scenario, created }) => ({
-        ...scenario,
-        id: created?.id ? String(created.id) : `saved-${scenario.id}`,
-        isSelected: false,
-        lastUpdated: 'Just now',
-      }));
+      const optimisticScenarios = savedResults
+        .filter(({ scenario }) => Boolean(scenario?.id))
+        .map(({ scenario, created }) => ({
+          ...scenario,
+          id: hasNumericId(created) ? String(created.id) : `saved-${scenario.id}`,
+          isSelected: false,
+          lastUpdated: 'Just now',
+        }));
 
       if (optimisticScenarios.length > 0) {
         setScenarios((items) => [...optimisticScenarios, ...items]);
         setSelectedScenarioId(optimisticScenarios[0].id);
 
         const savedScenarios = await loadSavedScenarios();
-        const savedIds = new Set(savedScenarios.map((scenario) => scenario.id));
+        const savedIds = new Set(savedScenarios.filter((scenario) => Boolean(scenario?.id)).map((scenario) => scenario.id));
         const missingSavedScenarios = optimisticScenarios.filter((scenario) => !savedIds.has(scenario.id));
         if (missingSavedScenarios.length > 0) {
           setScenarios((items) => {
-            const existingIds = new Set(items.map((item) => item.id));
+            const existingIds = new Set(items.filter((item) => Boolean(item?.id)).map((item) => item.id));
             return [...missingSavedScenarios.filter((scenario) => !existingIds.has(scenario.id)), ...items];
           });
         }
       }
 
-      const savedScenarioIds = new Set(savedResults.map(({ scenario }) => scenario.id));
+      const savedScenarioIds = new Set(savedResults.map(({ scenario }) => scenario?.id).filter(Boolean));
       setAiScenarios((items) =>
-        items.filter((scenario) => !savedScenarioIds.has(scenario.id)).map((scenario) => ({ ...scenario, isSelected: false })),
+        items
+          .filter((scenario) => scenario?.id && !savedScenarioIds.has(scenario.id))
+          .map((scenario) => ({ ...scenario, isSelected: false })),
       );
 
       if (failedResults.length > 0) {
