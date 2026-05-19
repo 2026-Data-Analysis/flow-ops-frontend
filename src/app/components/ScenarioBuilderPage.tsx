@@ -169,8 +169,9 @@ const normalizeAiScenario = (
   items: ApiInventoryResponse[],
   idPrefix = 'ai',
 ): ScenarioTemplate => {
-  const apiByEndpointId = new Map(items.map((api) => [String(api.id), api]));
-  const apiByPath = new Map(items.map((api) => [api.endpointPath, api]));
+  const validItems = items.filter(isPresent).filter(hasNumericId);
+  const apiByEndpointId = new Map(validItems.map((api) => [String(api.id), api]));
+  const apiByPath = new Map(validItems.map((api) => [api.endpointPath, api]));
 
   const steps = (scenario.steps || []).filter(isPresent).map((step, index) => {
     const api = apiByEndpointId.get(String(step.endpoint_id)) || apiByPath.get(step.endpoint_id);
@@ -218,7 +219,7 @@ const normalizeScenarioRecommendation = (
   idPrefix = 'recommend',
 ): ScenarioTemplate => {
   const id = `${idPrefix}-${crypto.randomUUID()}`;
-  const apiById = new Map(items.map((api) => [api.id, api]));
+  const apiById = new Map(items.filter(isPresent).filter(hasNumericId).map((api) => [api.id, api]));
   const steps = (scenario.steps || []).filter(isPresent).map((step, index) =>
     createStep(
       `${id}-step-${index + 1}`,
@@ -255,7 +256,7 @@ const normalizeScenarioRecommendation = (
 };
 
 const toAiScenarioApis = (items: ApiInventoryResponse[]) =>
-  items.map((api) => ({
+  items.filter(isPresent).filter(hasNumericId).map((api) => ({
     endpoint_id: String(api.id),
     method: api.method,
     path: api.endpointPath,
@@ -385,7 +386,7 @@ export function ScenarioBuilderPage() {
       : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
 
   const loadSavedScenarios = async (scopedInventory = inventoryApis) => {
-    const environmentApiIds = new Set(scopedInventory.map((item) => item.id));
+    const environmentApiIds = new Set(scopedInventory.filter(isPresent).filter(hasNumericId).map((item) => item.id));
     const summaries = await flowOpsApi
       .listScenariosByEnvironment(activeApplication.appId, selectedEnvironment?.id)
       .catch(() => []);
@@ -479,12 +480,16 @@ export function ScenarioBuilderPage() {
     };
   }, [activeApplication.appId, environments, projectId, selectedEnvironmentId]);
 
-  const filteredScenarios = scenarios.filter(scenario =>
+  const filteredScenarios = scenarios.filter(isPresent).filter(scenario =>
     scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     scenario.description.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const selectedAiScenarioCount = aiScenarios.filter((scenario) => scenario.isSelected).length;
-  const hasSelectedAiMappingFailure = aiScenarios.some(
+  const visibleAiScenarios = aiScenarios.filter(isPresent);
+  const visibleEnvironments = environments.filter(isPresent).filter((environment) => environment.id !== undefined);
+  const visibleFilteredScenarios = filteredScenarios.filter(isPresent);
+  const selectedScenarioSteps = (selectedScenario?.steps || []).filter(isPresent);
+  const selectedAiScenarioCount = visibleAiScenarios.filter((scenario) => scenario.isSelected).length;
+  const hasSelectedAiMappingFailure = visibleAiScenarios.some(
     (scenario) => scenario.isSelected && scenario.steps.some((step) => !step.apiId),
   );
 
@@ -536,7 +541,7 @@ export function ScenarioBuilderPage() {
         project.id,
         inventoryParams,
       );
-      const recommendationApis = inventory.items;
+      const recommendationApis = (inventory.items || []).filter(isPresent);
       setProjectId(project.id);
       setInventoryApis(recommendationApis);
       setRecommendationDebug((prev) => ({
@@ -548,7 +553,7 @@ export function ScenarioBuilderPage() {
         environmentId: selectedEnvironment?.id,
         repositoryId: inventoryParams.repositoryId as number | undefined,
         branchName: inventoryParams.branchName as string | undefined,
-        apiIds: recommendationApis.map((api) => api.id),
+        apiIds: recommendationApis.filter(hasNumericId).map((api) => api.id),
       }));
 
       const businessDomains = Array.from(
@@ -565,7 +570,7 @@ export function ScenarioBuilderPage() {
         testLevel: selectedEnvironment?.defaultTestLevel,
         businessDomain: businessDomains.join(', ') || undefined,
         requestedBy: DEFAULT_REQUESTER,
-        apiIds: recommendationApis.map((api) => api.id),
+        apiIds: recommendationApis.filter(hasNumericId).map((api) => api.id),
       });
 
       setAiScenarios(recommendations.filter(isPresent).map((scenario) => normalizeScenarioRecommendation(scenario, recommendationApis)));
@@ -594,7 +599,7 @@ export function ScenarioBuilderPage() {
 
   const handleAiGenerateConfirm = async () => {
     if (isRecommendationLoading || isSavingRecommendations) return;
-    const selectedAiScenarios = aiScenarios.filter(s => s.isSelected);
+    const selectedAiScenarios = visibleAiScenarios.filter(s => s.isSelected);
     const mappingFailed = selectedAiScenarios.some((scenario) => scenario.steps.some((step) => !step.apiId));
     if (mappingFailed) {
       setApiError('API mapping failed: one or more recommended steps do not have an apiId.');
@@ -691,7 +696,7 @@ export function ScenarioBuilderPage() {
 
   const toggleAiScenarioSelection = (scenarioId: string) => {
     setAiScenarios(prev =>
-      prev.map(s => s.id === scenarioId ? { ...s, isSelected: !s.isSelected } : s)
+      prev.filter(isPresent).map(s => s.id === scenarioId ? { ...s, isSelected: !s.isSelected } : s)
     );
   };
 
@@ -784,7 +789,7 @@ export function ScenarioBuilderPage() {
   const updateScenario = (updates: Partial<ScenarioTemplate>) => {
     if (!selectedScenarioId) return;
     setScenarios(prev =>
-      prev.map(s => s.id === selectedScenarioId ? { ...s, ...updates } : s)
+      prev.filter(isPresent).map(s => s.id === selectedScenarioId ? { ...s, ...updates } : s)
     );
   };
 
@@ -818,7 +823,7 @@ export function ScenarioBuilderPage() {
   const updateStep = (stepId: string, updates: Partial<ScenarioStep>) => {
     if (!selectedScenario) return;
     updateScenario({
-      steps: selectedScenario.steps.map(s => s.id === stepId ? { ...s, ...updates } : s)
+      steps: selectedScenario.steps.filter(isPresent).map(s => s.id === stepId ? { ...s, ...updates } : s)
     });
   };
 
@@ -955,7 +960,7 @@ export function ScenarioBuilderPage() {
                 </div>
               )}
 
-              {!isRecommendationLoading && aiScenarios.map((scenario) => {
+              {!isRecommendationLoading && visibleAiScenarios.map((scenario) => {
                 const TypeIcon = typeColors[scenario.type].icon;
                 const ReasonIcon = reasonColors[scenario.reasonType].icon;
                 const apiMappingFailed = scenario.apiMappingFailed || scenario.steps.some((step) => !step.apiId);
@@ -1057,7 +1062,7 @@ export function ScenarioBuilderPage() {
               className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/30"
             >
               <option value="all">All Environments</option>
-              {environments.map((environment) => (
+              {visibleEnvironments.map((environment) => (
                 <option key={environment.id} value={String(environment.id)}>
                   {environment.name}
                   {environment.branchName ? ` (${environment.branchName})` : ''}
@@ -1098,7 +1103,7 @@ export function ScenarioBuilderPage() {
         {/* Scenario List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
-            {filteredScenarios.length === 0 && (
+            {visibleFilteredScenarios.length === 0 && (
               <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
                 <Sparkles size={32} className="mb-3 text-purple-400" />
                 <h3 className="mb-2 text-white font-semibold">No saved scenarios yet</h3>
@@ -1115,7 +1120,7 @@ export function ScenarioBuilderPage() {
                 </button>
               </div>
             )}
-            {filteredScenarios.map((scenario) => {
+            {visibleFilteredScenarios.map((scenario) => {
               const TypeIcon = typeColors[scenario.type].icon;
               const ReasonIcon = reasonColors[scenario.reasonType].icon;
               return (
@@ -1233,7 +1238,7 @@ export function ScenarioBuilderPage() {
 
               <div className="text-sm text-gray-500 flex items-center gap-1">
                 <Zap size={14} />
-                {selectedScenario.steps.length} steps
+                {selectedScenarioSteps.length} steps
               </div>
 
               <div className="flex items-center gap-1.5 text-xs text-green-400 ml-auto">
@@ -1251,7 +1256,7 @@ export function ScenarioBuilderPage() {
             </div>
 
             <div className="space-y-3 relative">
-              {selectedScenario.steps.map((step, index) => (
+              {selectedScenarioSteps.map((step, index) => (
                 <div key={step.id}>
                   <div
                     draggable
