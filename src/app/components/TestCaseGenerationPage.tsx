@@ -220,7 +220,7 @@ const buildMockGeneratedTests: (
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeApplication, setSelectedAPIs, setTestContext } = useTestContext();
+  const { activeApplication, setActiveApplication, setSelectedAPIs, setTestContext } = useTestContext();
 
   // Modal & API Selection
   const [showApiModal, setShowApiModal] = useState(false);
@@ -266,24 +266,29 @@ export function TestCaseGenerationPage() {
     flowOpsApi
       .ensureProject()
       .then(async (project) => {
+        const mainApplication = await flowOpsApi.resolveMainApplication();
         const [items, repositories] = await Promise.all([
-          flowOpsApi.listEnvironments(activeApplication.appId).catch(() => [] as EnvironmentResponse[]),
+          flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]),
           flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]),
         ]);
-        return { project, items, repositories };
+        return { project, mainApplication, items, repositories };
       })
-      .then(({ project, items, repositories }) => {
+      .then(({ project, mainApplication, items, repositories }) => {
         if (!active) return;
         const storedRepositories = readStoredRepositories();
-        const activeRepository =
-          repositories.find((repository) => repository.appId === activeApplication.appId) ||
-          storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+        const mainRepository =
+          repositories.find((repository) => repository.appId === mainApplication.appId) ||
+          storedRepositories.find((repository) => repository.appId === mainApplication.appId);
 
         setProjectId(project.id);
-        setActiveRepositoryId(activeRepository?.id ? Number(activeRepository.id) : null);
+        setActiveRepositoryId(mainRepository?.id ? Number(mainRepository.id) : null);
         setEnvironments(items);
-        if (items.length > 0 && selectedEnvironmentId === 'all') {
-          setSelectedEnvironmentId(String(items[0].id));
+        setSelectedEnvironmentId('all');
+        if (
+          activeApplication.appId !== mainApplication.appId ||
+          activeApplication.title !== mainApplication.title
+        ) {
+          setActiveApplication(mainApplication);
         }
       })
       .catch((error) => {
@@ -300,7 +305,7 @@ export function TestCaseGenerationPage() {
     return () => {
       active = false;
     };
-  }, [activeApplication.appId]);
+  }, [activeApplication.appId, activeApplication.title]);
 
   useEffect(() => {
     let active = true;

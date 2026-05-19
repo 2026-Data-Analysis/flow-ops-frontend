@@ -127,7 +127,7 @@ const serializeEnvironment = (env: Environment) => ({
 
 export function EnvironmentSettingsPage() {
     const navigate = useNavigate();
-    const { activeApplication } = useTestContext();
+    const { activeApplication, setActiveApplication } = useTestContext();
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [mainAppId, setMainAppId] = useState<number | null>(null);
     const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
@@ -149,13 +149,20 @@ export function EnvironmentSettingsPage() {
             setApiError(null);
 
             try {
-                const items = await flowOpsApi.listEnvironments(activeApplication.appId);
+                const mainApplication = await flowOpsApi.resolveMainApplication();
+                const items = await flowOpsApi.listEnvironments(mainApplication.appId);
                 const normalized = items.map(normalizeEnvironment);
                 if (!active) return;
 
-                setMainAppId(activeApplication.appId);
-                rememberAppId(activeApplication.appId);
-                rememberAppTitle(activeApplication.title);
+                setMainAppId(mainApplication.appId);
+                rememberAppId(mainApplication.appId);
+                rememberAppTitle(mainApplication.title);
+                if (
+                    activeApplication.appId !== mainApplication.appId ||
+                    activeApplication.title !== mainApplication.title
+                ) {
+                    setActiveApplication(mainApplication);
+                }
                 setEnvironments(normalized.length > 0 ? normalized : []);
                 setSelectedEnvId(normalized[0]?.id ?? null);
                 setApiError(null);
@@ -175,7 +182,7 @@ export function EnvironmentSettingsPage() {
         return () => {
             active = false;
         };
-    }, [activeApplication.appId, activeApplication.title]);
+    }, [activeApplication.appId, activeApplication.title, setActiveApplication]);
 
     useEffect(() => {
         if (!selectedEnv) {
