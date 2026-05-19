@@ -820,7 +820,7 @@ export const flowOpsApi = {
   listScenariosByEnvironment: (appId: number, environmentId?: number) =>
     unwrap(
       request<ApiResponse<ScenarioSummaryResponse[]>>(
-        `/apps/${appId}/scenarios${environmentId ? `?environmentId=${environmentId}` : ''}`,
+        `/apps/${appId}/scenarios${environmentId !== undefined ? `?environmentId=${environmentId}` : ''}`,
       ),
     ),
 

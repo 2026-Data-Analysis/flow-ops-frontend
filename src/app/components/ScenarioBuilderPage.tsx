@@ -147,13 +147,13 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
   recommendationReason: 'Saved scenario',
   reasonType: 'coverage',
   lastUpdated: formatRelativeTime(scenario.updatedAt || scenario.createdAt),
-  steps: (scenario.steps || []).map((step, index) =>
+  steps: (scenario.steps || []).filter(isPresent).map((step, index) =>
     createStep(
-      String(step.id),
+      step.id ? String(step.id) : `${scenario.id}-step-${index + 1}`,
       step.stepOrder || index + 1,
       step.label || step.endpoint?.path || `Step ${index + 1}`,
       toScenarioMethod(step.endpoint?.method || 'GET'),
-      step.endpoint?.path || 'Unlinked API',
+      step.endpoint?.path || (step.apiId ? `API #${step.apiId}` : 'Unlinked API'),
       {
         apiId: step.apiId,
         requestConfig: step.requestConfig,
@@ -172,7 +172,7 @@ const normalizeAiScenario = (
   const apiByEndpointId = new Map(items.map((api) => [String(api.id), api]));
   const apiByPath = new Map(items.map((api) => [api.endpointPath, api]));
 
-  const steps = scenario.steps.map((step, index) => {
+  const steps = (scenario.steps || []).filter(isPresent).map((step, index) => {
     const api = apiByEndpointId.get(String(step.endpoint_id)) || apiByPath.get(step.endpoint_id);
     const extractRules = step.chained_variables
       ? [{ id: `${idPrefix}-extract-${index + 1}`, name: 'chainedVariables', jsonPath: step.chained_variables }]
@@ -219,7 +219,7 @@ const normalizeScenarioRecommendation = (
 ): ScenarioTemplate => {
   const id = `${idPrefix}-${crypto.randomUUID()}`;
   const apiById = new Map(items.map((api) => [api.id, api]));
-  const steps = (scenario.steps || []).map((step, index) =>
+  const steps = (scenario.steps || []).filter(isPresent).map((step, index) =>
     createStep(
       `${id}-step-${index + 1}`,
       step.stepOrder || index + 1,
@@ -303,6 +303,8 @@ const stringifyStepRules = (rules?: string[]) => (rules && rules.length > 0 ? ru
 
 const hasNumericId = <T extends { id?: unknown }>(item: T | null | undefined): item is T & { id: number } =>
   typeof item?.id === 'number';
+
+const isPresent = <T,>(item: T | null | undefined): item is T => item !== null && item !== undefined;
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
@@ -566,7 +568,7 @@ export function ScenarioBuilderPage() {
         apiIds: recommendationApis.map((api) => api.id),
       });
 
-      setAiScenarios(recommendations.map((scenario) => normalizeScenarioRecommendation(scenario, recommendationApis)));
+      setAiScenarios(recommendations.filter(isPresent).map((scenario) => normalizeScenarioRecommendation(scenario, recommendationApis)));
       setRecommendationStatus(recommendations.length > 0 ? 'idle' : 'empty');
       setApiError(null);
     } catch (error) {
@@ -610,7 +612,7 @@ export function ScenarioBuilderPage() {
     setApiError(null);
     try {
       const saveResults = await Promise.allSettled(
-        selectedAiScenarios.map(async (scenario) => ({
+        selectedAiScenarios.filter(isPresent).map(async (scenario) => ({
           scenario,
           created: await flowOpsApi.createScenario({
             appId: activeApplication.appId,
@@ -620,7 +622,7 @@ export function ScenarioBuilderPage() {
             type: toBackendScenarioType(scenario.type),
             recommendationReason: scenario.recommendationReason,
             source: 'AI',
-            steps: scenario.steps.map((step, index) => ({
+            steps: scenario.steps.filter(isPresent).map((step, index) => ({
               stepOrder: step.order || index + 1,
               apiId: step.apiId as number,
               label: step.label,
@@ -663,7 +665,7 @@ export function ScenarioBuilderPage() {
 
       const savedScenarioIds = new Set(savedResults.map(({ scenario }) => scenario?.id).filter(Boolean));
       setAiScenarios((items) =>
-        items
+        items.filter(isPresent)
           .filter((scenario) => scenario?.id && !savedScenarioIds.has(scenario.id))
           .map((scenario) => ({ ...scenario, isSelected: false })),
       );
