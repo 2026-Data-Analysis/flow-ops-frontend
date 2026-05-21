@@ -354,6 +354,7 @@ export interface TestGenerationDraftResponse {
   requestSpec?: string;
   requestPreview?: unknown;
   expectedResult?: string;
+  expectedSpec?: string;
   assertionSpec?: string;
   validationRules?: string[] | unknown;
   duplicate?: boolean;
@@ -361,7 +362,7 @@ export interface TestGenerationDraftResponse {
 
 export interface CreateTestGenerationRequest {
   appId: number;
-  environmentId: number;
+  environmentId?: number;
   requestedBy: string;
   selectedApiIds: number[];
   contextSummary?: string;
@@ -369,6 +370,7 @@ export interface CreateTestGenerationRequest {
 }
 
 export interface SaveTestGenerationDraftRequest {
+  appId?: number;
   testCases: Array<{
     draftId: number;
     name: string;
@@ -543,8 +545,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     payload = { message: text };
   }
 
+  if (typeof text === 'string' && /<\/?[a-z][\s\S]*>/i.test(text) && payload?.message === text) {
+    throw new Error(`API request failed (${response.status} ${response.statusText || 'Error'}). The server returned an HTML page instead of JSON.`);
+  }
+
   if (!response.ok) {
-    const message = payload?.message || response.statusText || 'API request failed';
+    const rawMessage = payload?.message || response.statusText || 'API request failed';
+    const message = typeof rawMessage === 'string' && /<\/?[a-z][\s\S]*>/i.test(rawMessage)
+      ? `API request failed (${response.status} ${response.statusText || 'Error'}). The server returned an HTML page instead of JSON.`
+      : rawMessage;
     console.error('[flowOpsApi] request failed', {
       path,
       status: response.status,
@@ -573,7 +582,14 @@ export const flowOpsApi = {
 
   ensureProject: async () => {
     const projects = await flowOpsApi.listProjects();
-    const activeProject = projects.find((project) => project.status !== 'ARCHIVED') || projects[0];
+    const normalizedDefaultName = DEFAULT_PROJECT_NAME.trim().toLowerCase();
+    const activeProjects = projects.filter((project) => project.status !== 'ARCHIVED');
+    const activeProject =
+      activeProjects.find((project) => project.name?.trim().toLowerCase() === normalizedDefaultName) ||
+      activeProjects.find((project) => project.slug === 'flowops-workspace') ||
+      activeProjects.find((project) => project.name?.trim().toLowerCase().includes('flowops')) ||
+      activeProjects[0] ||
+      projects[0];
     if (activeProject) {
       rememberProjectId(activeProject.id);
       return activeProject;
@@ -775,12 +791,27 @@ export const flowOpsApi = {
       ),
     ),
 
-  listTestCases: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
-    unwrap(
-      request<ApiResponse<PageResponse<TestCaseResponse>>>(
-        `/apps/${appId}/test-cases${toQuery({ page: 0, size: 100, ...params })}`,
-      ),
-    ),
+  listTestCases: async (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) => {
+    const apis = await flowOpsApi.listApis(appId, params);
+    const testCases = (
+      await Promise.all(
+        apis.content
+          .map((api) => api.id)
+          .filter((apiId) => Number.isFinite(apiId) && apiId > 0)
+          .map((apiId) => flowOpsApi.listTestCasesByApi(apiId).catch(() => [] as TestCaseResponse[])),
+      )
+    ).flat();
+
+    return {
+      content: testCases,
+      page: 0,
+      size: testCases.length,
+      totalElements: testCases.length,
+      totalPages: testCases.length > 0 ? 1 : 0,
+      first: true,
+      last: true,
+    } satisfies PageResponse<TestCaseResponse>;
+  },
 
   listTestCasesByApi: (apiId: number) =>
     unwrap(request<ApiResponse<TestCaseResponse[]>>(`/apis/${apiId}/test-cases`)),
@@ -809,7 +840,13 @@ export const flowOpsApi = {
 
   saveTestGenerationDrafts: (generationId: number, body: SaveTestGenerationDraftRequest) =>
     unwrap(
-      request<ApiResponse<TestCaseResponse[] | { testCases?: TestCaseResponse[]; saved?: TestCaseResponse[] }>>(
+      request<ApiResponse<TestCaseResponse[] | {
+        testCases?: TestCaseResponse[];
+        saved?: TestCaseResponse[];
+        savedCount?: number;
+        savedTestCaseIds?: number[];
+        apiIds?: number[];
+      }>>(
         `/test-generations/${generationId}/save`,
         {
           method: 'POST',
