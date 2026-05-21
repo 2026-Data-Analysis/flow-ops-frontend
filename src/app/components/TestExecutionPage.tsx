@@ -81,7 +81,10 @@ const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLo
 
 const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
   if (execution.timeline?.length) {
-    return execution.timeline.map(normalizeLog);
+    return execution.timeline.map((log, index) => {
+      const normalized = normalizeLog(log, index);
+      return { ...normalized, testCase: `${normalized.testCase} #step ${index + 1}` };
+    });
   }
 
   return [
