@@ -74,6 +74,8 @@ const userRoles = ['Admin', 'User', 'Guest', 'Moderator'];
 const stateConditions = ['Logged In', 'Token Expired', 'Valid Token', 'Resource Exists', 'Rate Limited'];
 const dataVariants = ['Valid Input', 'Invalid Input', 'Boundary Value', 'Null / Empty'];
 const DEMO_TEST_GENERATION_FALLBACK_MS = 800;
+const GENERATION_POLL_INTERVAL_MS = 3000;
+const GENERATION_POLL_TIMEOUT_MS = 120_000;
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 
 
@@ -550,24 +552,24 @@ export function TestCaseGenerationPage() {
           `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
           `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
         ].join(' | ');
-        const { generation, status, drafts } = await withTimeout(
-          (async () => {
-            const environmentId = selectedEnvironment?.id ?? environments[0]?.id ?? 3;
-            const generation = await flowOpsApi.createTestGeneration({
-              appId: getDefaultAppId(),
-              environmentId,
-              requestedBy: DEFAULT_REQUESTER,
-              selectedApiIds: apiIds,
-              contextSummary,
-              currentCoverage,
-            });
-            const status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
-            const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
-            return { generation, status, drafts };
-          })(),
-          DEMO_TEST_GENERATION_FALLBACK_MS,
-          'Backend test generation timed out.',
-        );
+        const environmentId = selectedEnvironment?.id ?? environments[0]?.id ?? 3;
+        const generation = await flowOpsApi.createTestGeneration({
+          appId: getDefaultAppId(),
+          environmentId,
+          requestedBy: DEFAULT_REQUESTER,
+          selectedApiIds: apiIds,
+          contextSummary,
+          currentCoverage,
+        });
+
+        const deadline = Date.now() + GENERATION_POLL_TIMEOUT_MS;
+        let status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
+        while (status.status !== 'COMPLETED' && status.status !== 'FAILED' && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+          status = await flowOpsApi.getTestGeneration(generation.id).catch(() => status);
+        }
+
+        const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
         setGenerationId(generation.id);
         setGenerationStatus(status.status || generation.status || null);
         const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
