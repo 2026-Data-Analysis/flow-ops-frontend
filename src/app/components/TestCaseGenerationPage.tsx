@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import {
   Search,
@@ -16,7 +15,9 @@ import {
   BarChart3,
   FileText,
   Clock,
-  Save
+  Save,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
 import {
@@ -264,6 +265,10 @@ export function TestCaseGenerationPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
+  const [selectedExistingTestIds, setSelectedExistingTestIds] = useState<string[]>([]);
+  const [isDeletingTests, setIsDeletingTests] = useState(false);
+  const [isLoadingExistingTests, setIsLoadingExistingTests] = useState(false);
+  const [editingExistingTestId, setEditingExistingTestId] = useState<string | null>(null);
 
   // Panel State
   const [rightPanelMode, setRightPanelMode] = useState<'existing' | 'comparison' | 'generated' | 'hidden'>('hidden');
@@ -553,6 +558,56 @@ export function TestCaseGenerationPage() {
 
   const toggleTestEdit = (testId: string) => {
     setExpandedTestId(expandedTestId === testId ? null : testId);
+    if (expandedTestId === testId) setEditingExistingTestId(null);
+  };
+
+  const toggleExistingTestSelection = (testId: string) => {
+    setSelectedExistingTestIds(prev =>
+      prev.includes(testId) ? prev.filter(id => id !== testId) : [...prev, testId]
+    );
+  };
+
+  const handleDeleteSelectedExisting = async () => {
+    if (selectedExistingTestIds.length === 0) return;
+    if (!window.confirm(`선택한 ${selectedExistingTestIds.length}개 테스트케이스를 삭제하시겠습니까?`)) return;
+    setIsDeletingTests(true);
+    await Promise.all(
+      selectedExistingTestIds.map(id => flowOpsApi.deleteTestCase(Number(id)).catch(() => null))
+    );
+    setExistingTests(prev => prev.filter(t => !selectedExistingTestIds.includes(t.id)));
+    setSelectedExistingTestIds([]);
+    setIsDeletingTests(false);
+  };
+
+  const handleRunSelectedExisting = () => {
+    const selected = existingTests.filter(t => selectedExistingTestIds.includes(t.id));
+    const apiData = selected.map(t => {
+      const api = apis.find(a => a.id === t.apiId);
+      return { id: t.id, name: t.name, endpoint: api?.path || '', method: (api?.method || 'GET') as any };
+    });
+    setSelectedAPIs(apiData);
+    navigate('/execution/run', { state: { selectedTestCaseIds: selectedExistingTestIds.map(Number) } });
+  };
+
+  const handleSaveExistingTestEdit = async (test: TestCase) => {
+    try {
+      await flowOpsApi.updateTestCase(Number(test.id), {
+        name: test.name,
+        description: test.description,
+        expectedResult: test.expectedResult,
+        type: test.backendType || test.type,
+        testLevel: test.testLevel,
+        userRole: test.role,
+        stateCondition: test.stateCondition,
+        dataVariant: test.dataVariant,
+        requestSpec: test.requestSpec || test.requestPreview,
+        assertionSpec: test.assertionSpec,
+      });
+      setEditingExistingTestId(null);
+      setExistingTests(prev => prev.map(t => t.id === test.id ? { ...t, isEdited: false } : t));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '저장에 실패했습니다.');
+    }
   };
 
   const updateTestCase = (testId: string, updates: Partial<TestCase>) => {
@@ -1170,10 +1225,61 @@ export function TestCaseGenerationPage() {
                       Previously saved test cases for {selectedEnvironment?.name || 'all environments'}
                     </p>
                   </div>
-                  <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {existingTests.length > 0 && (
+                      <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-gray-400 hover:text-white">
+                        <input
+                          type="checkbox"
+                          className="accent-blue-500"
+                          checked={selectedExistingTestIds.length === existingTests.length && existingTests.length > 0}
+                          onChange={e =>
+                            setSelectedExistingTestIds(e.target.checked ? existingTests.map(t => t.id) : [])
+                          }
+                        />
+                        전체 선택
+                      </label>
+                    )}
+                    <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                  </div>
                 </div>
 
-                {existingTests.length === 0 ? (
+                {/* Bulk action bar */}
+                {selectedExistingTestIds.length > 0 && (
+                  <div className="flex items-center gap-3 px-5 py-3 bg-blue-500/5 border-b border-blue-500/20">
+                    <span className="text-xs text-blue-400 flex-1">{selectedExistingTestIds.length}개 선택됨</span>
+                    <button
+                      type="button"
+                      onClick={handleRunSelectedExisting}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors"
+                    >
+                      <Play size={13} />
+                      테스트 실행
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteSelectedExisting}
+                      disabled={isDeletingTests}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-400 text-xs rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {isDeletingTests ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      삭제
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExistingTestIds([])}
+                      className="text-gray-500 hover:text-white text-xs transition-colors"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+
+                {isLoadingApis ? (
+                  <div className="flex items-center justify-center py-16 gap-3 text-gray-500">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                    <span className="text-sm">테스트케이스 불러오는 중...</span>
+                  </div>
+                ) : existingTests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
                     <FileText size={32} className="text-gray-600 mb-3" />
                     <p className="text-gray-500 text-sm">No saved test cases yet</p>
@@ -1184,14 +1290,26 @@ export function TestCaseGenerationPage() {
                     {existingTests.map((test) => {
                       const api = apis.find((item) => item.id === test.apiId);
                       const isExpanded = expandedTestId === test.id;
+                      const isEditing = editingExistingTestId === test.id;
+                      const isSelected = selectedExistingTestIds.includes(test.id);
                       return (
-                        <div key={test.id} className="bg-[#0a0a0f] overflow-hidden">
-                          <button
-                            type="button"
-                            onClick={() => toggleTestEdit(test.id)}
-                            className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors text-left"
-                          >
-                            <div className="min-w-0 flex-1">
+                        <div key={test.id} className={`bg-[#0a0a0f] overflow-hidden transition-colors ${isSelected ? 'bg-blue-500/5' : ''}`}>
+                          <div className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors">
+                            {/* Checkbox */}
+                            <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                className="accent-blue-500 w-4 h-4 cursor-pointer"
+                                checked={isSelected}
+                                onChange={() => toggleExistingTestSelection(test.id)}
+                              />
+                            </div>
+                            {/* Main info — clickable for expand */}
+                            <button
+                              type="button"
+                              onClick={() => toggleTestEdit(test.id)}
+                              className="min-w-0 flex-1 text-left"
+                            >
                               <div className="mb-2 flex flex-wrap items-center gap-2">
                                 <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
                                   {typeColors[test.type].label}
@@ -1204,53 +1322,102 @@ export function TestCaseGenerationPage() {
                               </div>
                               <div className="text-white text-sm font-medium">{test.name}</div>
                               <div className="mt-1 text-xs text-gray-500 font-mono">{api?.path || 'Unlinked API'}</div>
-                            </div>
+                            </button>
                             <div className="flex items-center gap-3 flex-shrink-0">
                               <span className="text-xs text-gray-500">
                                 {[test.role, test.stateCondition, test.dataVariant].filter(Boolean).join(' / ') || 'No context'}
                               </span>
-                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              <button type="button" onClick={() => toggleTestEdit(test.id)}>
+                                {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              </button>
                             </div>
-                          </button>
+                          </div>
                           {isExpanded && (
                             <div className="border-t border-[#1f1f28] p-4 bg-[#0d0d12] space-y-4">
-                              {test.description && (
-                                <div>
-                                  <div className="text-xs text-gray-500 mb-1">Description</div>
-                                  <div className="text-sm text-gray-300">{test.description}</div>
-                                </div>
-                              )}
-                              {test.expectedResult && (
-                                <div>
-                                  <div className="text-xs text-gray-500 mb-1">Expected Result</div>
-                                  <div className="text-sm text-gray-300">{test.expectedResult}</div>
-                                </div>
-                              )}
+                              {/* Name */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Name</div>
+                                {isEditing ? (
+                                  <input
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none"
+                                    value={test.name}
+                                    onChange={e => updateTestCase(test.id, { name: e.target.value })}
+                                  />
+                                ) : (
+                                  <div className="text-sm text-gray-300">{test.name}</div>
+                                )}
+                              </div>
+                              {/* Description */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Description</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
+                                    rows={2}
+                                    value={test.description || ''}
+                                    onChange={e => updateTestCase(test.id, { description: e.target.value })}
+                                  />
+                                ) : (
+                                  test.description && <div className="text-sm text-gray-300">{test.description}</div>
+                                )}
+                              </div>
+                              {/* Expected Result */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Expected Result</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
+                                    rows={2}
+                                    value={test.expectedResult || ''}
+                                    onChange={e => updateTestCase(test.id, { expectedResult: e.target.value })}
+                                  />
+                                ) : (
+                                  test.expectedResult && <div className="text-sm text-gray-300">{test.expectedResult}</div>
+                                )}
+                              </div>
                               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                                {test.testLevel && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">Test Level</div>
-                                    <div className="text-xs text-white font-mono">{test.testLevel}</div>
-                                  </div>
-                                )}
-                                {test.role && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">User Role</div>
-                                    <div className="text-xs text-white">{test.role}</div>
-                                  </div>
-                                )}
-                                {test.stateCondition && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">State Condition</div>
-                                    <div className="text-xs text-white">{test.stateCondition}</div>
-                                  </div>
-                                )}
-                                {test.dataVariant && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">Data Variant</div>
-                                    <div className="text-xs text-white">{test.dataVariant}</div>
-                                  </div>
-                                )}
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Test Level</div>
+                                  {isEditing ? (
+                                    <select
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
+                                      value={test.testLevel || ''}
+                                      onChange={e => updateTestCase(test.id, { testLevel: e.target.value as any })}
+                                    >
+                                      <option value="">-</option>
+                                      <option value="SMOKE">SMOKE</option>
+                                      <option value="SANITY">SANITY</option>
+                                      <option value="REGRESSION">REGRESSION</option>
+                                      <option value="FULL">FULL</option>
+                                    </select>
+                                  ) : (
+                                    <div className="text-xs text-white font-mono">{test.testLevel || '-'}</div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">User Role</div>
+                                  {isEditing ? (
+                                    <input
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
+                                      value={test.role || ''}
+                                      onChange={e => updateTestCase(test.id, { role: e.target.value })}
+                                    />
+                                  ) : (
+                                    <div className="text-xs text-white">{test.role || '-'}</div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">State Condition</div>
+                                  {isEditing ? (
+                                    <input
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
+                                      value={test.stateCondition || ''}
+                                      onChange={e => updateTestCase(test.id, { stateCondition: e.target.value })}
+                                    />
+                                  ) : (
+                                    <div className="text-xs text-white">{test.stateCondition || '-'}</div>
+                                  )}
+                                </div>
                               </div>
                               {test.requestPreview && (
                                 <div>
@@ -1262,8 +1429,37 @@ export function TestCaseGenerationPage() {
                                 <div>
                                   <div className="text-xs text-gray-500 mb-1">Assertion Spec</div>
                                   <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.assertionSpec}</pre>
-                                </div>
-                              )}
+                                </div>)}
+                              {/* Edit/Save buttons */}
+                              <div className="flex items-center gap-2 pt-1 border-t border-[#1f1f28]">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveExistingTestEdit(test)}
+                                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors"
+                                    >
+                                      <Save size={13} />
+                                      저장
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setEditingExistingTestId(null); setExistingTests(prev => prev.map(t => t.id === test.id ? { ...t, isEdited: false } : t)); }}
+                                      className="px-4 py-2 bg-[#1f1f28] hover:bg-[#2a2a38] text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
+                                    >
+                                      취소
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingExistingTestId(test.id)}
+                                    className="flex items-center gap-1.5 px-4 py-2 bg-[#1f1f28] hover:bg-[#2a2a38] text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
+                                  >
+                                    수정
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
