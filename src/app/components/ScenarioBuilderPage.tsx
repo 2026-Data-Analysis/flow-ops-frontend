@@ -389,6 +389,7 @@ export function ScenarioBuilderPage() {
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
   const [customScenarioInput, setCustomScenarioInput] = useState('');
+  const [showCustomPromptModal, setShowCustomPromptModal] = useState(false);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
@@ -819,7 +820,7 @@ export function ScenarioBuilderPage() {
         setApiError(error instanceof Error ? error.message : 'Failed to generate custom scenario.');
       }
     } finally {
-      setShowAiModal(false);
+      setShowCustomPromptModal(false);
       setCustomScenarioInput('');
       setIsRecommendationLoading(false);
     }
@@ -919,6 +920,57 @@ export function ScenarioBuilderPage() {
 
   return (
     <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
+      {/* Custom Prompt Modal */}
+      {showCustomPromptModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl w-full max-w-lg flex flex-col">
+            <div className="p-6 border-b border-[#1f1f28] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Sparkles size={24} className="text-purple-400" />
+                <h2 className="text-white text-xl font-semibold">Custom Prompt</h2>
+              </div>
+              <button
+                onClick={() => setShowCustomPromptModal(false)}
+                className="p-2 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <label className="block text-sm text-gray-400">
+                Describe your scenario in natural language
+              </label>
+              <textarea
+                value={customScenarioInput}
+                onChange={(e) => setCustomScenarioInput(e.target.value)}
+                placeholder="E.g., Test user registration flow with email verification and profile setup..."
+                className="w-full bg-[#0a0a0f] border border-[#1f1f28] rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none"
+                rows={5}
+              />
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowCustomPromptModal(false)}
+                  className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCustomPromptModal(false);
+                    void handleAiCustomScenarioCreate();
+                  }}
+                  disabled={!customScenarioInput.trim()}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                >
+                  <Sparkles size={16} />
+                  Generate Custom Scenario
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI Generate Modal */}
       {showAiModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -937,33 +989,6 @@ export function ScenarioBuilderPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
-              <div className="bg-[#13131a] border border-[#1f1f28] rounded-xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles size={18} className="text-purple-400" />
-                  <h3 className="text-white font-semibold">Generate From Custom Prompt</h3>
-                </div>
-                <label className="block text-sm text-gray-400 mb-3">
-                  Describe your scenario in natural language
-                </label>
-                <textarea
-                  value={customScenarioInput}
-                  onChange={(e) => setCustomScenarioInput(e.target.value)}
-                  placeholder="E.g., Test user registration flow with email verification and profile setup..."
-                  className="w-full bg-[#0a0a0f] border border-[#1f1f28] rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none"
-                  rows={4}
-                />
-                <div className="mt-4 flex justify-end">
-                  <button
-                    onClick={handleAiCustomScenarioCreate}
-                    disabled={!customScenarioInput.trim()}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                  >
-                    <Sparkles size={16} />
-                    Generate Custom Scenario
-                  </button>
-                </div>
-              </div>
-
               <div className="text-xs text-gray-500 uppercase tracking-wider pt-2">Recommended Scenarios</div>
 
               {!isRecommendationLoading && apiError && (
@@ -1121,11 +1146,19 @@ export function ScenarioBuilderPage() {
           {/* Top Actions */}
           <div className="responsive-filters flex items-center gap-3 mb-4">
             <button
+              onClick={() => setShowCustomPromptModal(true)}
+              className="flex items-center gap-2 bg-[#13131a] border border-purple-500/30 hover:bg-purple-500/5 text-purple-300 px-6 py-3 rounded-lg transition-all font-semibold"
+            >
+              <Sparkles size={20} className="text-purple-400" />
+              Custom Prompt
+            </button>
+
+            <button
               onClick={handleOpenRecommendations}
               className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
             >
               <Sparkles size={20} />
-              Generate Scenarios (AI)
+              Recommend Scenario
             </button>
 
             <button
@@ -1499,4 +1532,3 @@ export function ScenarioBuilderPage() {
     </div>
   );
 }
-

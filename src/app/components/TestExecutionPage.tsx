@@ -53,9 +53,9 @@ const methodColors = {
 };
 
 const toTime = (value?: string) => {
-  if (!value) return new Date().toLocaleTimeString();
+  if (!value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
 
 const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['status'] => {
@@ -67,7 +67,7 @@ const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['stat
 const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLog => ({
   id: String(log.id ?? index + 1),
   timestamp: toTime(log.executedAt || log.startedAt),
-  testCase: log.caseName || log.step || `Execution step ${index + 1}`,
+  testCase: log.step || log.caseName || `Execution step ${index + 1}`,
   endpoint: log.endpoint || '-',
   method: (log.method || 'GET') as HttpMethod,
   status: normalizeStatus(log.status, log.success),
@@ -92,7 +92,7 @@ const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] 
       endpoint: execution.endpoint || '-',
       method: 'GET',
       status: normalizeStatus(execution.status, execution.status === 'SUCCESS'),
-      duration: execution.responseTimeMs ?? execution.durationMs ?? execution.avgDurationMs ?? 0,
+      duration: execution.avgDurationMs ?? execution.responseTimeMs ?? execution.durationMs ?? 0,
       responseCode: execution.statusCode ?? (execution.status === 'SUCCESS' ? 200 : 500),
       source: 'auto',
       requestBody: execution.body ? JSON.stringify(execution.body, null, 2) : undefined,
