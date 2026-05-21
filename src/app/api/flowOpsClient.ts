@@ -807,7 +807,7 @@ export const flowOpsApi = {
 
   runTestCases: (body: {
     appId: number;
-    environmentId: number;
+    environmentId?: number;
     testCaseIds?: number[];
     testLevel?: TestLevel;
     createdBy: string;
@@ -819,9 +819,12 @@ export const flowOpsApi = {
       }),
     ),
 
+  deleteScenario: (scenarioId: number) =>
+    unwrap(request<ApiResponse<void>>(`/scenarios/${scenarioId}`, { method: 'DELETE' })),
+
   runScenario: (body: {
     appId: number;
-    environmentId: number;
+    environmentId?: number;
     scenarioId?: number;
     scenarioIds?: number[];
     testLevel?: TestLevel;

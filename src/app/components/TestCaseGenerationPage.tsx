@@ -16,7 +16,8 @@ import {
   BarChart3,
   FileText,
   Clock,
-  Save
+  Save,
+  Loader2
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
 import {
@@ -287,6 +288,8 @@ export function TestCaseGenerationPage() {
   const [isSavingTests, setIsSavingTests] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  const [runTestError, setRunTestError] = useState<string | null>(null);
   const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
 
   // Panel State
@@ -628,6 +631,28 @@ export function TestCaseGenerationPage() {
       dataConstraints: selectedDataVariants,
     });
     navigate('/execution/run');
+  };
+
+  const handleRunSavedTests = async () => {
+    if (existingTests.length === 0) return;
+    setIsRunningTests(true);
+    setRunTestError(null);
+    try {
+      const testCaseIds = existingTests
+        .map((t) => Number(t.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      await flowOpsApi.runTestCases({
+        appId: getDefaultAppId(),
+        environmentId: selectedEnvironment?.id,
+        testCaseIds: testCaseIds.length > 0 ? testCaseIds : undefined,
+        createdBy: DEFAULT_REQUESTER,
+      });
+      navigate('/monitoring/history');
+    } catch (error) {
+      setRunTestError(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+    } finally {
+      setIsRunningTests(false);
+    }
   };
 
   const toggleTestEdit = (testId: string) => {
@@ -1235,10 +1260,29 @@ export function TestCaseGenerationPage() {
                       Previously saved test cases for {selectedEnvironment?.name || 'all environments'}
                     </p>
                   </div>
-                  <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                  <div className="flex items-center gap-3">
+                    {runTestError && <span className="text-xs text-red-400 max-w-xs truncate">{runTestError}</span>}
+                    {existingTests.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleRunSavedTests}
+                        disabled={isRunningTests}
+                        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isRunningTests ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                        {isRunningTests ? '실행 중...' : 'Run Tests'}
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                  </div>
                 </div>
 
-                {existingTests.length === 0 ? (
+                {(isLoadingApis || isProjectLoading) ? (
+                  <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                    <Loader2 size={32} className="text-blue-400 mb-3 animate-spin" />
+                    <p className="text-gray-500 text-sm">테스트 케이스 목록을 불러오는 중...</p>
+                  </div>
+                ) : existingTests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
                     <FileText size={32} className="text-gray-600 mb-3" />
                     <p className="text-gray-500 text-sm">No saved test cases yet</p>
