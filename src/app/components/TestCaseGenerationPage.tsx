@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import {
   Search,
@@ -71,6 +72,12 @@ const userRoles = ['Admin', 'User', 'Guest', 'Moderator'];
 const stateConditions = ['Logged In', 'Token Expired', 'Valid Token', 'Resource Exists', 'Rate Limited'];
 const dataVariants = ['Valid Input', 'Invalid Input', 'Boundary Value', 'Null / Empty'];
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+const EXPECTED_SPEC_PLACEHOLDER = `{
+  "status": 201,
+  "body": {
+    "status": "created"
+  }
+}`;
 
 
 const methodColors = {
@@ -586,7 +593,12 @@ export function TestCaseGenerationPage() {
       return { id: t.id, name: t.name, endpoint: api?.path || '', method: (api?.method || 'GET') as any };
     });
     setSelectedAPIs(apiData);
-    navigate('/execution/run', { state: { selectedTestCaseIds: selectedExistingTestIds.map(Number) } });
+    navigate('/execution/run', {
+      state: {
+        selectedTestCaseIds: selectedExistingTestIds.map(Number),
+        selectedTestCases: selected.map((test) => ({ id: Number(test.id), name: test.name })),
+      },
+    });
   };
 
   const handleSaveExistingTestEdit = async (test: TestCase) => {
@@ -595,6 +607,7 @@ export function TestCaseGenerationPage() {
         name: test.name,
         description: test.description,
         expectedResult: test.expectedResult,
+        expectedSpec: test.expectedResult,
         type: test.backendType || test.type,
         testLevel: test.testLevel,
         userRole: test.role,
@@ -664,6 +677,7 @@ export function TestCaseGenerationPage() {
               dataVariant: test.dataVariant,
               requestSpec: test.requestSpec || test.requestPreview,
               expectedResult: test.expectedResult?.trim() || '',
+              expectedSpec: test.expectedResult?.trim() || '',
               assertionSpec: test.assertionSpec,
             })),
           })
@@ -687,6 +701,7 @@ export function TestCaseGenerationPage() {
             dataVariant: test.dataVariant,
             requestSpec: test.requestSpec || test.requestPreview,
             expectedResult: test.expectedResult?.trim() || '',
+            expectedSpec: test.expectedResult?.trim() || '',
             assertionSpec: test.assertionSpec,
           }).catch(() => null),
         ),
@@ -739,6 +754,7 @@ export function TestCaseGenerationPage() {
   const existingCount = existingTests.filter(t => selectedApiIdsForGeneration.includes(t.apiId)).length;
   const newCount = generatedTests.filter(t => t.status === 'new').length;
   const duplicateCount = generatedTests.filter(t => t.status === 'duplicate').length;
+  const allExistingTestsSelected = existingTests.length > 0 && selectedExistingTestIds.length === existingTests.length;
   const currentCoverage = selectedApiIdsForGeneration.length > 0
     ? Math.round(apis.filter(a => selectedApiIdsForGeneration.includes(a.id)).reduce((sum, a) => sum + a.coverage, 0) / selectedApiIdsForGeneration.length)
     : 0;
@@ -893,23 +909,27 @@ export function TestCaseGenerationPage() {
                 <p className="text-gray-500 text-sm">Generate, browse, and manage test cases</p>
               </div>
 
-              {false && generatedTests.length > 0 && (
-                <button
-                  onClick={() => setRightPanelMode(prev => prev === 'comparison' ? 'generated' : 'comparison')}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white rounded-lg transition-all text-sm"
-                >
-                  {rightPanelMode === 'comparison' ? (
-                    <>
-                      <FileText size={16} />
-                      View Test Cases
-                    </>
-                  ) : (
-                    <>
-                      <BarChart3 size={16} />
-                      Compare Results
-                    </>
-                  )}
-                </button>
+              {selectedExistingTestIds.length > 0 && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="text-sm text-blue-300">{selectedExistingTestIds.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={handleRunSelectedExisting}
+                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                  >
+                    <Play size={16} />
+                    Run
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelectedExisting}
+                    disabled={isDeletingTests}
+                    className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-[#13131a] px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDeletingTests ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                    Delete
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1190,8 +1210,8 @@ export function TestCaseGenerationPage() {
                                       </div>
                                     </div>
                                     <div>
-                                      <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                                      <textarea value={test.expectedResult || ''} onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })} rows={3} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none" />
+                                      <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                                      <textarea value={test.expectedResult || ''} onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })} rows={5} placeholder={EXPECTED_SPEC_PLACEHOLDER} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none" />
                                     </div>
                                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                                       <div>
@@ -1227,57 +1247,47 @@ export function TestCaseGenerationPage() {
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     {existingTests.length > 0 && (
-                      <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-gray-400 hover:text-white">
-                        <input
-                          type="checkbox"
-                          className="accent-blue-500"
-                          checked={selectedExistingTestIds.length === existingTests.length && existingTests.length > 0}
-                          onChange={e =>
-                            setSelectedExistingTestIds(e.target.checked ? existingTests.map(t => t.id) : [])
-                          }
-                        />
-                        전체 선택
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedExistingTestIds(allExistingTestsSelected ? [] : existingTests.map(t => t.id))}
+                        className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
+                      >
+                        <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          allExistingTestsSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
+                        }`}>
+                          {allExistingTestsSelected && <Check size={14} className="text-white" />}
+                        </span>
+                        Select all
+                      </button>
                     )}
                     <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
                   </div>
                 </div>
 
-                {/* Bulk action bar */}
-                {selectedExistingTestIds.length > 0 && (
-                  <div className="flex items-center gap-3 px-5 py-3 bg-blue-500/5 border-b border-blue-500/20">
-                    <span className="text-xs text-blue-400 flex-1">{selectedExistingTestIds.length}개 선택됨</span>
-                    <button
-                      type="button"
-                      onClick={handleRunSelectedExisting}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors"
-                    >
-                      <Play size={13} />
-                      테스트 실행
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelectedExisting}
-                      disabled={isDeletingTests}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-400 text-xs rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      {isDeletingTests ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                      삭제
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedExistingTestIds([])}
-                      className="text-gray-500 hover:text-white text-xs transition-colors"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                )}
-
                 {isLoadingApis ? (
-                  <div className="flex items-center justify-center py-16 gap-3 text-gray-500">
-                    <Loader2 size={20} className="animate-spin text-blue-400" />
-                    <span className="text-sm">테스트케이스 불러오는 중...</span>
+                  <div className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center">
+                    <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                      <Loader2 size={24} className="animate-spin text-blue-400" />
+                    </div>
+                    <h3 className="mb-2 text-white font-semibold">Loading test cases</h3>
+                    <p className="max-w-md text-sm text-gray-500">
+                      Fetching saved test cases and matching them with the selected environment.
+                    </p>
+
+                    <div className="mt-8 grid w-full max-w-3xl gap-3">
+                      {[0, 1, 2].map((item) => (
+                        <div key={item} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
+                          <div className="mb-4 flex items-center gap-3">
+                            <div className="h-4 w-4 rounded border border-[#2f2f38] bg-[#1f1f28]" />
+                            <div className="h-5 w-20 rounded bg-[#1f1f28]" />
+                            <div className="h-5 w-16 rounded bg-[#1f1f28]" />
+                            <div className="h-4 w-44 rounded bg-[#1f1f28]" />
+                          </div>
+                          <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
+                          <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : existingTests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -1296,14 +1306,19 @@ export function TestCaseGenerationPage() {
                         <div key={test.id} className={`bg-[#0a0a0f] overflow-hidden transition-colors ${isSelected ? 'bg-blue-500/5' : ''}`}>
                           <div className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors">
                             {/* Checkbox */}
-                            <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                className="accent-blue-500 w-4 h-4 cursor-pointer"
-                                checked={isSelected}
-                                onChange={() => toggleExistingTestSelection(test.id)}
-                              />
-                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExistingTestSelection(test.id);
+                              }}
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                                isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
+                              }`}
+                              aria-label={isSelected ? 'Deselect test case' : 'Select test case'}
+                            >
+                              {isSelected && <Check size={14} className="text-white" />}
+                            </button>
                             {/* Main info — clickable for expand */}
                             <button
                               type="button"
@@ -1363,11 +1378,12 @@ export function TestCaseGenerationPage() {
                               </div>
                               {/* Expected Result */}
                               <div>
-                                <div className="text-xs text-gray-500 mb-1">Expected Result</div>
+                                <div className="text-xs text-gray-500 mb-1">Expected Spec</div>
                                 {isEditing ? (
                                   <textarea
-                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
-                                    rows={2}
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none placeholder-gray-600"
+                                    rows={5}
+                                    placeholder={EXPECTED_SPEC_PLACEHOLDER}
                                     value={test.expectedResult || ''}
                                     onChange={e => updateTestCase(test.id, { expectedResult: e.target.value })}
                                   />
@@ -1796,12 +1812,13 @@ export function TestCaseGenerationPage() {
                             </div>
 
                             <div>
-                              <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                              <input
-                                type="text"
+                              <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                              <textarea
                                 value={test.expectedResult}
                                 onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })}
-                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                                rows={5}
+                                placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                               />
                             </div>
 
@@ -1959,12 +1976,13 @@ export function TestCaseGenerationPage() {
                         </div>
 
                         <div>
-                          <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                          <input
-                            type="text"
+                          <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                          <textarea
                             value={test.expectedResult}
                             onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                            rows={5}
+                            placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                           />
                         </div>
 

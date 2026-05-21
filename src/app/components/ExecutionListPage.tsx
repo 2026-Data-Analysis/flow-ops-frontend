@@ -15,6 +15,7 @@ import {
   Code
 } from 'lucide-react';
 import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
+import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
 
 interface ExecutionLog {
   id: string;
@@ -35,7 +36,7 @@ interface ExecutionLog {
   errorMessage?: string;
   expectedResult?: string;
   actualResult?: string;
-  assertions?: { name: string; passed: boolean; message?: string }[];
+  assertions: NormalizedAssertionResult[];
   scenarioSteps?: { step: number; name: string; method: string; path: string; status: 'success' | 'failed'; duration: number }[];
 }
 
@@ -75,7 +76,10 @@ const normalizeStepLog = (step: ExecutionStepLogResponse, execution: ExecutionDe
   environment: execution.environmentName || String(execution.environmentId),
   testLevel: (execution.testLevel?.toLowerCase() as ExecutionLog['testLevel']) || 'smoke',
   responseCode: step.responseCode,
-  errorMessage: execution.errorMessage,
+  requestBody: step.requestBody ? JSON.stringify(step.requestBody, null, 2) : undefined,
+  responseBody: step.responseBody ? JSON.stringify(step.responseBody, null, 2) : undefined,
+  errorMessage: step.errorMessage || execution.errorMessage,
+  assertions: normalizeAssertionResults(step.validationResults, step.assertionResults),
 });
 
 const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
@@ -96,6 +100,7 @@ const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] 
     responseCode: execution.statusCode,
     responseBody: execution.response ? JSON.stringify(execution.response, null, 2) : undefined,
     errorMessage: execution.errorMessage,
+    assertions: [],
   }];
 };
 
@@ -279,6 +284,9 @@ export function ExecutionListPage() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-sm text-white font-medium">{log.execution}</div>
+                    {log.errorMessage && (
+                      <div className="mt-1 max-w-sm truncate text-xs text-red-300">{log.errorMessage}</div>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     {log.step ? (
@@ -466,7 +474,7 @@ export function ExecutionListPage() {
             </div>
 
             {/* D. Validation / Error */}
-            {(selectedLog.errorMessage || selectedLog.assertions) && (
+            {(selectedLog.errorMessage || selectedLog.assertions.length > 0) && (
               <div>
                 <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Validation</div>
                 <div className="bg-[#13131a] border border-[#1f1f28] rounded-lg p-4 space-y-3">
@@ -497,24 +505,36 @@ export function ExecutionListPage() {
                     </div>
                   )}
 
-                  {selectedLog.assertions && (
+                  {selectedLog.assertions.length > 0 && (
                     <div>
                       <div className="text-xs text-gray-500 mb-2">Assertions</div>
                       <div className="space-y-2">
                         {selectedLog.assertions.map((assertion, idx) => (
-                          <div key={idx} className="flex items-start gap-2">
-                            {assertion.passed ? (
-                              <CheckCircle2 size={14} className="text-green-400 flex-shrink-0 mt-0.5" />
-                            ) : (
-                              <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
-                            )}
-                            <div className="flex-1">
-                              <div className={`text-xs ${assertion.passed ? 'text-gray-300' : 'text-red-300'}`}>
-                                {assertion.name}
-                              </div>
-                              {assertion.message && (
-                                <div className="text-xs text-gray-500 mt-0.5">{assertion.message}</div>
+                          <div key={`${assertion.id}-${idx}`} className="rounded-lg border border-[#1f1f28] bg-[#0a0a0f] p-3">
+                            <div className="mb-2 flex items-start gap-2">
+                              {assertion.passed ? (
+                                <CheckCircle2 size={14} className="text-green-400 flex-shrink-0 mt-0.5" />
+                              ) : (
+                                <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
                               )}
+                              <div className="flex-1">
+                                <div className={`text-xs ${assertion.passed ? 'text-gray-300' : 'text-red-300'}`}>
+                                  {assertion.name}
+                                </div>
+                                <div className="mt-2 grid gap-2 text-xs">
+                                  <div>
+                                    <span className="text-gray-500">Expected </span>
+                                    <span className="font-mono text-gray-300">{assertion.expected}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500">Actual </span>
+                                    <span className="font-mono text-gray-300">{assertion.actual}</span>
+                                  </div>
+                                </div>
+                                {assertion.message && (
+                                  <div className="text-xs text-gray-500 mt-2">{assertion.message}</div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -602,4 +622,3 @@ export function ExecutionListPage() {
     </div>
   );
 }
-

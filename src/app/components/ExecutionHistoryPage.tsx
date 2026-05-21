@@ -31,6 +31,7 @@ import {
   type ExecutionDetailResponse,
   type ExecutionStepLogResponse,
 } from '../api/flowOpsClient';
+import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
 
 interface ExecutionRecord {
   id: string;
@@ -70,14 +71,7 @@ interface ExecutionStep {
   errorMessage?: string;
 }
 
-interface AssertionResult {
-  id: string;
-  type: string;
-  fieldPath: string;
-  expected: string;
-  actual: string;
-  passed: boolean;
-}
+type AssertionResult = NormalizedAssertionResult;
 
 const methodColors = {
   GET: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
@@ -110,16 +104,7 @@ const normalizeExecutionStep = (step: ExecutionStepLogResponse, index: number, e
     body: step.responseBody ? JSON.stringify(step.responseBody, null, 2) : execution.response ? JSON.stringify(execution.response, null, 2) : '',
     duration: step.durationMs || 0,
   },
-  assertions: Array.isArray(step.assertionResults)
-    ? step.assertionResults.map((assertion: any, assertionIndex) => ({
-        id: String(assertion.id ?? assertionIndex + 1),
-        type: String(assertion.type ?? assertion.name ?? 'assertion'),
-        fieldPath: String(assertion.fieldPath ?? assertion.path ?? ''),
-        expected: String(assertion.expected ?? ''),
-        actual: String(assertion.actual ?? ''),
-        passed: Boolean(assertion.passed ?? assertion.success),
-      }))
-    : [],
+  assertions: normalizeAssertionResults(step.validationResults, step.assertionResults),
   errorMessage: step.errorMessage || execution.errorMessage,
 });
 
@@ -850,27 +835,24 @@ export function ExecutionHistoryPage() {
                                         )}
                                         <div className="flex-1">
                                           <div className="text-sm text-white mb-2">
-                                            <span className="font-medium">{assertion.type}</span>
-                                            {' '}
-                                            <code className="text-xs bg-[#13131a] px-2 py-0.5 rounded font-mono">
-                                              {assertion.fieldPath}
-                                            </code>
+                                            <span className="font-medium">{assertion.name}</span>
                                           </div>
-                                          {!assertion.passed && (
-                                            <div className="grid grid-cols-2 gap-3 text-xs">
-                                              <div>
-                                                <div className="text-gray-500 mb-1">Expected</div>
-                                                <code className="text-green-400 bg-[#13131a] px-2 py-1 rounded block font-mono">
-                                                  {assertion.expected}
-                                                </code>
-                                              </div>
-                                              <div>
-                                                <div className="text-gray-500 mb-1">Actual</div>
-                                                <code className="text-red-400 bg-[#13131a] px-2 py-1 rounded block font-mono">
-                                                  {assertion.actual}
-                                                </code>
-                                              </div>
+                                          <div className="grid grid-cols-2 gap-3 text-xs">
+                                            <div>
+                                              <div className="text-gray-500 mb-1">Expected</div>
+                                              <code className="text-green-400 bg-[#13131a] px-2 py-1 rounded block font-mono">
+                                                {assertion.expected}
+                                              </code>
                                             </div>
+                                            <div>
+                                              <div className="text-gray-500 mb-1">Actual</div>
+                                              <code className="text-red-400 bg-[#13131a] px-2 py-1 rounded block font-mono">
+                                                {assertion.actual}
+                                              </code>
+                                            </div>
+                                          </div>
+                                          {assertion.message && (
+                                            <div className="mt-2 text-xs text-gray-400">{assertion.message}</div>
                                           )}
                                         </div>
                                       </div>

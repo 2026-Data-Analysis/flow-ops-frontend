@@ -20,7 +20,8 @@ import {
   Edit3,
   Save,
   Clock,
-  Zap
+  Zap,
+  Loader2
 } from 'lucide-react';
 import {
   DEFAULT_REQUESTER,
@@ -378,6 +379,7 @@ export function ScenarioBuilderPage() {
   const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [isSavingRecommendations, setIsSavingRecommendations] = useState(false);
+  const [isDeletingScenarios, setIsDeletingScenarios] = useState(false);
   const [recommendationStatus, setRecommendationStatus] = useState<RecommendationStatus>('idle');
   const [recommendationDebug, setRecommendationDebug] = useState<RecommendationDebugInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -443,6 +445,13 @@ export function ScenarioBuilderPage() {
 
   useEffect(() => {
     let active = true;
+    setIsLoading(true);
+    setProjectId(null);
+    setScenarios([]);
+    setAiScenarios([]);
+    setSelectedScenarioId(null);
+    setSelectedScenarioIds([]);
+
     flowOpsApi
       .ensureProject()
       .then(async (project) => {
@@ -489,6 +498,7 @@ export function ScenarioBuilderPage() {
         setProjectId(null);
         setEnvironments([]);
         setApiError(error instanceof Error ? error.message : 'Failed to load environments.');
+        setIsLoading(false);
       });
 
     return () => {
@@ -499,9 +509,6 @@ export function ScenarioBuilderPage() {
   useEffect(() => {
     let active = true;
     if (!projectId) {
-      setScenarios([]);
-      setAiScenarios([]);
-      setIsLoading(false);
       return;
     }
 
@@ -851,6 +858,58 @@ export function ScenarioBuilderPage() {
     }
   };
 
+  const handleDeleteSelected = async () => {
+    if (selectedScenarioIds.length === 0 || isDeletingScenarios) return;
+    if (!window.confirm(`Delete ${selectedScenarioIds.length} selected scenario${selectedScenarioIds.length !== 1 ? 's' : ''}?`)) {
+      return;
+    }
+
+    setIsDeletingScenarios(true);
+    setApiError(null);
+
+    const backendIds = selectedScenarioIds
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    try {
+      const results = await Promise.allSettled(backendIds.map((id) => flowOpsApi.deleteScenario(id)));
+      const failedBackendIds = new Set(
+        results
+          .map((result, index) => (result.status === 'rejected' ? backendIds[index] : null))
+          .filter((id): id is number => id !== null),
+      );
+      const failedResults = results.filter((result) => result.status === 'rejected');
+      const deletedIds = new Set(
+        selectedScenarioIds.filter((id) => {
+          const numericId = Number(id);
+          return !Number.isFinite(numericId) || numericId <= 0 || !failedBackendIds.has(numericId);
+        }),
+      );
+
+      if (deletedIds.size > 0) {
+        setScenarios((items) => items.filter((scenario) => !deletedIds.has(scenario.id)));
+        if (selectedScenarioId && deletedIds.has(selectedScenarioId)) {
+          setSelectedScenarioId(null);
+        }
+      }
+
+      if (failedResults.length > 0) {
+        const message = failedResults
+          .map((result) => (result.status === 'rejected' && result.reason instanceof Error ? result.reason.message : 'Unknown delete error'))
+          .join(' / ');
+        setSelectedScenarioIds((items) => items.filter((id) => !deletedIds.has(id)));
+        setApiError(`Failed to delete ${failedResults.length} scenario${failedResults.length !== 1 ? 's' : ''}. ${message}`);
+        return;
+      }
+
+      setSelectedScenarioIds([]);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Failed to delete selected scenarios.');
+    } finally {
+      setIsDeletingScenarios(false);
+    }
+  };
+
   const updateScenario = (updates: Partial<ScenarioTemplate>) => {
     if (!selectedScenarioId) return;
     setScenarios(prev =>
@@ -1133,13 +1192,24 @@ export function ScenarioBuilderPage() {
             </div>
 
             {selectedScenarioIds.length > 0 && (
-              <button
-                onClick={handleRunSelected}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors"
-              >
-                <Play size={18} />
-                Run Selected ({selectedScenarioIds.length})
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="text-sm text-blue-300">{selectedScenarioIds.length} selected</span>
+                <button
+                  onClick={handleRunSelected}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                >
+                  <Play size={16} />
+                  Run
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={isDeletingScenarios}
+                  className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-[#13131a] px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isDeletingScenarios ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                  Delete
+                </button>
+              </div>
             )}
           </div>
 
@@ -1186,7 +1256,33 @@ export function ScenarioBuilderPage() {
         {/* Scenario List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
-            {visibleFilteredScenarios.length === 0 && (
+            {isLoading && (
+              <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                  <Loader2 size={24} className="animate-spin text-blue-400" />
+                </div>
+                <h3 className="mb-2 text-white font-semibold">Loading scenarios</h3>
+                <p className="max-w-md text-sm text-gray-500">
+                  Fetching saved scenario flows and matching them with the selected environment.
+                </p>
+
+                <div className="mt-8 grid w-full max-w-3xl gap-3">
+                  {[0, 1, 2].map((item) => (
+                    <div key={item} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="h-5 w-5 rounded border border-[#2f2f38] bg-[#1f1f28]" />
+                        <div className="h-4 w-40 rounded bg-[#1f1f28]" />
+                        <div className="h-5 w-20 rounded-full bg-[#1f1f28]" />
+                      </div>
+                      <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
+                      <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!isLoading && visibleFilteredScenarios.length === 0 && (
               <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
                 <Sparkles size={32} className="mb-3 text-purple-400" />
                 <h3 className="mb-2 text-white font-semibold">No saved scenarios yet</h3>
@@ -1203,7 +1299,7 @@ export function ScenarioBuilderPage() {
                 </button>
               </div>
             )}
-            {visibleFilteredScenarios.map((scenario) => {
+            {!isLoading && visibleFilteredScenarios.map((scenario) => {
               const TypeIcon = typeColors[scenario.type].icon;
               const ReasonIcon = reasonColors[scenario.reasonType].icon;
               return (
@@ -1474,8 +1570,11 @@ export function ScenarioBuilderPage() {
                               onChange={(e) => updateStep(step.id, { validationRules: e.target.value.split('\n').filter(Boolean) })}
                               className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
                               rows={3}
-                              placeholder='{"status": 200}'
+                              placeholder='{"status": 201, "body": {"status": "created"}}'
                             />
+                            <div className="mt-1 text-xs text-gray-500">
+                              Body rules are matched as contained JSON fields, not full-response equality.
+                            </div>
                           </div>
                         )}
                       </div>

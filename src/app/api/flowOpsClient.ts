@@ -373,6 +373,7 @@ export interface SaveTestGenerationDraftRequest {
     draftId: number;
     name: string;
     expectedResult: string;
+    expectedSpec?: string;
     description?: string;
     type?: string;
     testLevel?: TestLevel;
@@ -744,6 +745,21 @@ export const flowOpsApi = {
       }),
     ),
 
+  runBatchTests: (body: {
+    appId: number;
+    environmentId: number;
+    apiIds?: number[];
+    testCaseIds?: number[];
+    testLevel?: TestLevel;
+    createdBy: string;
+  }) =>
+    unwrap(
+      request<ApiResponse<ExecutionDetailResponse>>('/executions/batch-tests', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
   createExecution: (body: Record<string, unknown>) =>
     unwrap(
       request<ApiResponse<ExecutionDetailResponse>>('/executions', {
@@ -881,6 +897,9 @@ export const flowOpsApi = {
 
   getScenario: (scenarioId: number) =>
     unwrap(request<ApiResponse<ScenarioDetailResponse>>(`/scenarios/${scenarioId}`)),
+
+  deleteScenario: (scenarioId: number) =>
+    unwrap(request<ApiResponse<void>>(`/scenarios/${scenarioId}`, { method: 'DELETE' })),
 
   getTestCase: (testCaseId: number) =>
     unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`)),
