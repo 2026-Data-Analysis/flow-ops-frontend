@@ -55,6 +55,7 @@ interface ScenarioStep {
   id: string;
   order: number;
   apiId?: number;
+  domain?: string;
   label: string;
   apiEndpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -155,6 +156,7 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse): ScenarioTemp
       step.endpoint?.path || 'Unlinked API',
       {
         apiId: step.apiId,
+        domain: step.endpoint?.domainTag,
         requestConfig: step.requestConfig,
         validationRules: step.validationRules ? [step.validationRules] : [],
       },
@@ -310,6 +312,8 @@ export function ScenarioBuilderPage() {
   const [selectedScenarioIds, setSelectedScenarioIds] = useState<string[]>([]);
   const [showAiModal, setShowAiModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDomain, setSelectedDomain] = useState('all');
+  const [methodFilter, setMethodFilter] = useState('all');
   const [aiScenarios, setAiScenarios] = useState<ScenarioTemplate[]>([]);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [recommendationStatus, setRecommendationStatus] = useState<RecommendationStatus>('idle');
@@ -417,10 +421,28 @@ export function ScenarioBuilderPage() {
     };
   }, [activeApplication.appId, environments, projectId, selectedEnvironmentId]);
 
-  const filteredScenarios = scenarios.filter(scenario =>
-    scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    scenario.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const allSteps = scenarios.flatMap(s => s.steps);
+  const hasEmptyDomain = allSteps.some(step => !step.domain);
+  const scenarioDomains = [
+    'all',
+    ...Array.from(new Set(allSteps.map(step => step.domain).filter((d): d is string => Boolean(d)))),
+    ...(hasEmptyDomain ? ['__empty__'] : []),
+  ];
+
+  const filteredScenarios = scenarios.filter(scenario => {
+    const matchesSearch =
+      scenario.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      scenario.description.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!matchesSearch) return false;
+    if (selectedDomain === 'all' && methodFilter === 'all') return true;
+    return scenario.steps.some(step => {
+      const domainMatch =
+        selectedDomain === 'all' ||
+        (selectedDomain === '__empty__' ? !step.domain : step.domain === selectedDomain);
+      const methodMatch = methodFilter === 'all' || step.method === methodFilter;
+      return domainMatch && methodMatch;
+    });
+  });
 
   const toggleScenarioSelection = (scenarioId: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -936,6 +958,40 @@ export function ScenarioBuilderPage() {
               className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/30"
             />
           </div>
+
+          {/* Domain & Method filters */}
+          {scenarioDomains.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <select
+                value={methodFilter}
+                onChange={(e) => setMethodFilter(e.target.value)}
+                className="px-3 py-1.5 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+              >
+                <option value="all">All Methods</option>
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+                <option value="PATCH">PATCH</option>
+              </select>
+              {scenarioDomains.map((domain) => (
+                <button
+                  key={domain}
+                  type="button"
+                  onClick={() => setSelectedDomain(domain)}
+                  className={`max-w-full px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                    selectedDomain === domain
+                      ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                      : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
+                  }`}
+                >
+                  <span className="block max-w-[10rem] truncate">
+                    {domain === 'all' ? 'All Domains' : domain === '__empty__' ? 'Unassigned' : domain}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Scenario List */}

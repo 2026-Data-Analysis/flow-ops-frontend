@@ -418,6 +418,16 @@ export function TestCaseGenerationPage() {
   const selectedApi = selectedApiId ? apis.find(a => a.id === selectedApiId) : null;
   const currentApiTests = existingTests.filter(t => t.apiId === selectedApiId);
 
+  const filteredExistingTests = existingTests.filter(test => {
+    const api = apis.find(item => item.id === test.apiId);
+    if (!api) return selectedDomain === 'all' && methodFilter === 'all';
+    const domainMatch =
+      selectedDomain === 'all' ||
+      (selectedDomain === '__empty__' ? !api.domain : api.domain === selectedDomain);
+    const methodMatch = methodFilter === 'all' || api.method === methodFilter;
+    return domainMatch && methodMatch;
+  });
+
   const hasEmptyDomain = apis.some((api) => !api.domain);
   const domains = [
     'all',
@@ -1275,7 +1285,11 @@ export function TestCaseGenerationPage() {
                         {isRunningTests ? '실행 중...' : 'Run Tests'}
                       </button>
                     )}
-                    <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                    <span className="text-xs text-gray-500">
+                      {filteredExistingTests.length !== existingTests.length
+                        ? `${filteredExistingTests.length} / ${existingTests.length} test cases`
+                        : `${existingTests.length} test cases`}
+                    </span>
                   </div>
                 </div>
 
@@ -1284,15 +1298,21 @@ export function TestCaseGenerationPage() {
                     <Loader2 size={32} className="text-blue-400 mb-3 animate-spin" />
                     <p className="text-gray-500 text-sm">테스트 케이스 목록을 불러오는 중...</p>
                   </div>
-                ) : existingTests.length === 0 ? (
+                ) : filteredExistingTests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
                     <FileText size={32} className="text-gray-600 mb-3" />
-                    <p className="text-gray-500 text-sm">No saved test cases yet</p>
-                    <p className="text-gray-600 text-xs mt-1">Use Generate Test Cases to create and save new tests.</p>
+                    {existingTests.length === 0 ? (
+                      <>
+                        <p className="text-gray-500 text-sm">No saved test cases yet</p>
+                        <p className="text-gray-600 text-xs mt-1">Use Generate Test Cases to create and save new tests.</p>
+                      </>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No test cases match the selected filter.</p>
+                    )}
                   </div>
                 ) : (
                   <div className="divide-y divide-[#1f1f28]">
-                    {existingTests.map((test) => {
+                    {filteredExistingTests.map((test) => {
                       const api = apis.find((item) => item.id === test.apiId);
                       const isExpanded = expandedTestId === test.id;
                       return (
