@@ -489,6 +489,192 @@ export interface AiTestStrategyClassifyResponse {
   }>;
 }
 
+// ─── Orchestrator Agent types ─────────────────────────────────────────────────
+
+export interface OrchestratorContext {
+  service_name: string;
+  occurred_at: string;
+  raw_log: string;
+}
+
+export interface OrchestratorRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorContext;
+}
+
+export type RootCauseSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface RootCause {
+  summary: string;
+  evidence: string[];
+  severity: RootCauseSeverity;
+  suggested_fix: string;
+}
+
+export interface IncidentAgentData {
+  root_causes: RootCause[];
+  internal_report: string;
+  external_notice: string;
+}
+
+export interface OrchestratorTestEndpoint {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  auth?: { type: string };
+  request_body_schema?: object;
+  response_schema?: object;
+}
+
+export interface OrchestratorTestApiInventory {
+  project_id: string;
+  endpoints: OrchestratorTestEndpoint[];
+}
+
+export interface OrchestratorTestContext {
+  base_url: string;
+  env_name: string;
+  api_inventory: OrchestratorTestApiInventory;
+}
+
+export interface OrchestratorTestRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorTestContext;
+}
+
+export interface OrchestratorTestCaseDraft {
+  apiId: string;
+  title: string;
+  description: string;
+  type: string;
+  test_case_type: string;
+  userRole: string | null;
+  stateCondition: string | null;
+  dataVariant: string | null;
+  requestSpec: {
+    method: string;
+    pathParams: Record<string, unknown>;
+    queryParams: Record<string, unknown>;
+    body: unknown;
+  };
+  expectedSpec: {
+    statusCode: number;
+    body: unknown;
+    errorMessage: string | null;
+  };
+  assertionSpec: {
+    statusCode: number;
+    bodyContains: string[];
+    headerContains: Record<string, string>;
+  };
+  duplicate: boolean;
+}
+
+export interface OrchestratorTestCaseData {
+  requestId: string;
+  generationId: string;
+  drafts: OrchestratorTestCaseDraft[];
+}
+
+export interface OrchestratorScenarioEndpoint {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  auth?: { type: string };
+  request_body_schema?: object;
+  response_schema?: object;
+  parameters?: Array<{
+    name: string;
+    location: string;
+    type: string;
+    required: boolean;
+  }>;
+}
+
+export interface OrchestratorScenarioApiInventory {
+  project_id: string;
+  endpoints: OrchestratorScenarioEndpoint[];
+}
+
+export interface OrchestratorScenarioContext {
+  api_inventory: OrchestratorScenarioApiInventory;
+}
+
+export interface OrchestratorScenarioRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorScenarioContext;
+}
+
+export interface OrchestratorChainedVariable {
+  name: string;
+  source: string;
+  source_step_ref: string;
+  source_json_path: string;
+  literal_value: string | null;
+  target_location: string;
+  target_field: string;
+  target_template: string | null;
+}
+
+export interface OrchestratorScenarioStep {
+  step_id: string;
+  ref: string;
+  order: number;
+  endpoint_id: string;
+  name: string;
+  description: string | null;
+  static_payload: Record<string, unknown> | null;
+  static_params: Record<string, unknown>;
+  chained_variables: OrchestratorChainedVariable[];
+  expected_status_code: number;
+  expected_assertions: string[];
+}
+
+export interface OrchestratorScenarioMeta {
+  rationale: string;
+  coverage_gap: string | null;
+  estimated_risk: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+
+export interface OrchestratorScenario {
+  scenario_id: string;
+  name: string;
+  description: string | null;
+  steps: OrchestratorScenarioStep[];
+  meta: OrchestratorScenarioMeta;
+}
+
+export interface OrchestratorScenarioData {
+  scenarios: OrchestratorScenario[];
+  used_endpoint_ids: string[];
+}
+
+export interface OrchestratorAgentResult {
+  agent_type: string;
+  success: boolean;
+  data: IncidentAgentData | OrchestratorTestCaseData | OrchestratorScenarioData | null;
+  error_message: string | null;
+}
+
+export interface OrchestratorApiResponse {
+  success: boolean;
+  data: {
+    dispatched_agents: string[];
+    agent_results: OrchestratorAgentResult[];
+    summary: string;
+  };
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string;
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
 function toQuery(params: Record<string, unknown>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -547,7 +733,6 @@ export const flowOpsApi = {
       rememberProjectId(activeProject.id);
       return activeProject;
     }
-
     const project = await flowOpsApi.createProject({
       name: DEFAULT_PROJECT_NAME,
       description: 'API QA automation workspace',
@@ -562,20 +747,10 @@ export const flowOpsApi = {
   getApp: (appId = DEFAULT_APP_ID) => unwrap(request<ApiResponse<AppDetailResponse>>(`/apps/${appId}`)),
 
   updateApp: (appId: number, body: Partial<CreateAppRequest> & { title?: string; main?: boolean }) =>
-    unwrap(
-      request<ApiResponse<AppDetailResponse>>(`/apps/${appId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<AppDetailResponse>>(`/apps/${appId}`, { method: 'PATCH', body: JSON.stringify(body) })),
 
   setMainApp: (appId: number, body: { title?: string } = {}) =>
-    unwrap(
-      request<ApiResponse<AppDetailResponse>>(`/apps/${appId}/main`, {
-        method: 'PUT',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<AppDetailResponse>>(`/apps/${appId}/main`, { method: 'PUT', body: JSON.stringify(body) })),
 
   listApis: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
     unwrap(
@@ -587,11 +762,7 @@ export const flowOpsApi = {
   getApiDetail: (apiId: number) => unwrap(request<ApiResponse<ApiEndpointDetailResponse>>(`/apis/${apiId}`)),
 
   listInventories: (projectId: number, params: Record<string, unknown> = {}) =>
-    unwrap(
-      request<ApiResponse<ApiInventoryListResponse>>(
-        `/projects/${projectId}/api-inventories${toQuery(params)}`,
-      ),
-    ),
+    unwrap(request<ApiResponse<ApiInventoryListResponse>>(`/projects/${projectId}/api-inventories${toQuery(params)}`)),
 
   getInventoryDetail: (projectId: number, inventoryId: number) =>
     unwrap(request<ApiResponse<ApiInventoryResponse>>(`/projects/${projectId}/api-inventories/${inventoryId}`)),
@@ -600,31 +771,16 @@ export const flowOpsApi = {
     unwrap(request<ApiResponse<EnvironmentResponse[]>>(`/apps/${appId}/environments`)),
 
   createEnvironment: (appId: number, body: Partial<EnvironmentResponse>) =>
-    unwrap(
-      request<ApiResponse<EnvironmentResponse>>(`/apps/${appId}/environments`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<EnvironmentResponse>>(`/apps/${appId}/environments`, { method: 'POST', body: JSON.stringify(body) })),
 
   updateEnvironment: (environmentId: number, body: Partial<EnvironmentResponse>) =>
-    unwrap(
-      request<ApiResponse<EnvironmentResponse>>(`/environments/${environmentId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<EnvironmentResponse>>(`/environments/${environmentId}`, { method: 'PATCH', body: JSON.stringify(body) })),
 
   testConnection: (environmentId: number) =>
     unwrap(request<ApiResponse<unknown>>(`/environments/${environmentId}/test-connection`, { method: 'POST' })),
 
   registerRepository: (projectId: number, body: { fullName: string; appId?: number; selectedBranches?: string[] }) =>
-    unwrap(
-      request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories`, { method: 'POST', body: JSON.stringify(body) })),
 
   listRepositories: (projectId: number) =>
     unwrap(request<ApiResponse<RepositoryResponse[]>>(`/projects/${projectId}/repositories`)),
@@ -634,24 +790,13 @@ export const flowOpsApi = {
     repositoryId: number,
     body: Partial<Pick<RepositoryResponse, 'appId' | 'appTitle' | 'fullName' | 'defaultBranch' | 'connectionStatus'>>,
   ) =>
-    unwrap(
-      request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories/${repositoryId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories/${repositoryId}`, { method: 'PATCH', body: JSON.stringify(body) })),
 
   deleteRepository: (projectId: number, repositoryId: number) =>
-    unwrap(
-      request<ApiResponse<void>>(`/projects/${projectId}/repositories/${repositoryId}`, {
-        method: 'DELETE',
-      }),
-    ),
+    unwrap(request<ApiResponse<void>>(`/projects/${projectId}/repositories/${repositoryId}`, { method: 'DELETE' })),
 
   listRepositoryBranches: (projectId: number, repositoryId: number) =>
-    unwrap(
-      request<ApiResponse<BranchResponse[]>>(`/projects/${projectId}/repositories/${repositoryId}/branches`),
-    ),
+    unwrap(request<ApiResponse<BranchResponse[]>>(`/projects/${projectId}/repositories/${repositoryId}/branches`)),
 
   scanRepository: (projectId: number, repositoryId: number, branchNames: string[]) =>
     unwrap(
@@ -669,20 +814,10 @@ export const flowOpsApi = {
     testLevel?: TestLevel;
     createdBy: string;
   }) =>
-    unwrap(
-      request<ApiResponse<ExecutionDetailResponse>>('/executions/run-apis', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions/run-apis', { method: 'POST', body: JSON.stringify(body) })),
 
   createExecution: (body: Record<string, unknown>) =>
-    unwrap(
-      request<ApiResponse<ExecutionDetailResponse>>('/executions', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions', { method: 'POST', body: JSON.stringify(body) })),
 
   listExecutions: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
     unwrap(
@@ -702,20 +837,10 @@ export const flowOpsApi = {
     unwrap(request<ApiResponse<TestCaseResponse[]>>(`/apis/${apiId}/test-cases`)),
 
   createTestCase: (appId: number, body: Partial<TestCaseResponse> & Record<string, unknown>) =>
-    unwrap(
-      request<ApiResponse<TestCaseResponse>>(`/apps/${appId}/test-cases`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<TestCaseResponse>>(`/apps/${appId}/test-cases`, { method: 'POST', body: JSON.stringify(body) })),
 
   createTestGeneration: (body: CreateTestGenerationRequest) =>
-    unwrap(
-      request<ApiResponse<TestGenerationResponse>>('/test-generations', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<TestGenerationResponse>>('/test-generations', { method: 'POST', body: JSON.stringify(body) })),
 
   getTestGeneration: (generationId: number) =>
     unwrap(request<ApiResponse<TestGenerationResponse>>(`/test-generations/${generationId}`)),
@@ -727,44 +852,33 @@ export const flowOpsApi = {
     unwrap(
       request<ApiResponse<TestCaseResponse[] | { testCases?: TestCaseResponse[]; saved?: TestCaseResponse[] }>>(
         `/test-generations/${generationId}/save`,
-        {
-          method: 'POST',
-          body: JSON.stringify(body),
-        },
+        { method: 'POST', body: JSON.stringify(body) },
       ),
     ),
 
   generateAiTestCases: (body: AiTestCaseGenerationRequest) =>
-    request<AiTestCaseGenerationResponse>('/ai/agents/test-cases/generate', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+    request<AiTestCaseGenerationResponse>('/ai/agents/test-cases/generate', { method: 'POST', body: JSON.stringify(body) }),
 
   buildAiScenario: (body: AiScenarioBuildRequest) =>
-    request<AiScenarioBuildResponse>('/ai/agents/scenarios/build', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+    request<AiScenarioBuildResponse>('/ai/agents/scenarios/build', { method: 'POST', body: JSON.stringify(body) }),
 
   analyzeAiLogs: (body: Record<string, unknown>) =>
-    request<AiLogAnalysisResponse>('/ai/agents/logs/analyze', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+    request<AiLogAnalysisResponse>('/ai/agents/logs/analyze', { method: 'POST', body: JSON.stringify(body) }),
 
   classifyAiTestStrategy: (body: AiTestStrategyClassifyRequest) =>
-    request<AiTestStrategyClassifyResponse>('/ai/agents/test-strategy/classify', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+    request<AiTestStrategyClassifyResponse>('/ai/agents/test-strategy/classify', { method: 'POST', body: JSON.stringify(body) }),
+
+  dispatchOrchestrator: (body: OrchestratorRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
+
+  dispatchOrchestratorTest: (body: OrchestratorTestRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
+
+  dispatchOrchestratorScenario: (body: OrchestratorScenarioRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
 
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
-    unwrap(
-      request<ApiResponse<ExecutionDetailResponse>>(`/environments/${environmentId}/quick-test`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/environments/${environmentId}/quick-test`, { method: 'POST', body: JSON.stringify(body) })),
 
   listScenarios: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
@@ -772,10 +886,7 @@ export const flowOpsApi = {
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
     const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
       '/scenarios/recommend',
-      {
-        method: 'POST',
-        body: JSON.stringify(body),
-      },
+      { method: 'POST', body: JSON.stringify(body) },
     );
     return Array.isArray(response) ? response : response.data;
   },
@@ -787,23 +898,13 @@ export const flowOpsApi = {
     unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`)),
 
   updateTestCase: (testCaseId: number, body: Partial<TestCaseResponse> & Record<string, unknown>) =>
-    unwrap(
-      request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, { method: 'PATCH', body: JSON.stringify(body) })),
 
   deleteTestCase: (testCaseId: number) =>
     unwrap(request<ApiResponse<void>>(`/test-cases/${testCaseId}`, { method: 'DELETE' })),
 
   setTestCaseActive: (testCaseId: number, active: boolean) =>
-    unwrap(
-      request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ active }),
-      }),
-    ),
+    unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`, { method: 'PATCH', body: JSON.stringify({ active }) })),
 
   runTestCases: (body: {
     appId: number;
@@ -812,12 +913,7 @@ export const flowOpsApi = {
     testLevel?: TestLevel;
     createdBy: string;
   }) =>
-    unwrap(
-      request<ApiResponse<ExecutionDetailResponse>>('/executions/run-test-cases', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions/run-test-cases', { method: 'POST', body: JSON.stringify(body) })),
 
   deleteScenario: (scenarioId: number) =>
     unwrap(request<ApiResponse<void>>(`/scenarios/${scenarioId}`, { method: 'DELETE' })),
@@ -830,12 +926,7 @@ export const flowOpsApi = {
     testLevel?: TestLevel;
     createdBy: string;
   }) =>
-    unwrap(
-      request<ApiResponse<ExecutionDetailResponse>>('/executions/run-scenario', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    ),
+    unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions/run-scenario', { method: 'POST', body: JSON.stringify(body) })),
 
   rerunExecution: (executionId: number) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}/rerun`, { method: 'POST' })),
