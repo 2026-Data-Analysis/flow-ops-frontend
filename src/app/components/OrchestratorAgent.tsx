@@ -12,6 +12,9 @@ import {
   AlertCircle,
   ChevronUp,
   ChevronDown,
+  GitBranch,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   flowOpsApi,
@@ -19,6 +22,9 @@ import {
   type RootCause,
   type OrchestratorTestCaseData,
   type OrchestratorTestCaseDraft,
+  type OrchestratorScenarioData,
+  type OrchestratorScenario,
+  type OrchestratorScenarioStep,
 } from '../api/flowOpsClient';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,10 +32,11 @@ import {
 type AgentStatus = 'running' | 'done' | 'error';
 
 interface AgentTask {
-  type: 'log-analysis' | 'test-generation';
+  type: 'log-analysis' | 'test-generation' | 'scenario-generation';
   status: AgentStatus;
   incidentData?: IncidentAgentData;
   testData?: OrchestratorTestCaseData;
+  scenarioData?: OrchestratorScenarioData;
   summary?: string;
   errorMessage?: string;
 }
@@ -39,7 +46,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   tasks?: AgentTask[];
-  formType?: 'log-analysis' | 'test-generation' | 'both';
+  formType?: 'log-analysis' | 'test-generation' | 'scenario' | 'both';
 }
 
 interface LogFormData {
@@ -63,6 +70,19 @@ interface TestFormData {
   response_schema: string;
 }
 
+interface ScenarioEndpointRow {
+  method: string;
+  path: string;
+  summary: string;
+  auth_type: string;
+}
+
+interface ScenarioFormData {
+  project_id: string;
+  user_prompt: string;
+  endpoints: ScenarioEndpointRow[];
+}
+
 interface BothFormData {
   project_id: string;
   log_user_prompt: string;
@@ -77,7 +97,7 @@ interface BothFormData {
   summary: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function localNow() {
   const now = new Date();
@@ -97,16 +117,9 @@ function parseJsonSafe(s: string): object | undefined {
 // ─── FormField ────────────────────────────────────────────────────────────────
 
 function FormField({
-  label,
-  type,
-  placeholder,
-  value,
-  onChange,
+  label, type, placeholder, value, onChange,
 }: {
-  label: string;
-  type: string;
-  placeholder?: string;
-  value: string;
+  label: string; type: string; placeholder?: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   return (
@@ -126,76 +139,37 @@ function FormField({
 // ─── Log Analysis Form ────────────────────────────────────────────────────────
 
 function LogAnalysisFormCard({
-  formMsgId,
-  onSubmit,
-  onCancel,
+  formMsgId, onSubmit, onCancel,
 }: {
   formMsgId: string;
   onSubmit: (data: LogFormData, msgId: string) => void;
   onCancel: (msgId: string) => void;
 }) {
   const [form, setForm] = useState<LogFormData>({
-    project_id: '',
-    user_prompt: '',
-    service_name: '',
-    occurred_at: localNow(),
-    raw_log: '',
+    project_id: '', user_prompt: '', service_name: '', occurred_at: localNow(), raw_log: '',
   });
-
-  const set =
-    (key: keyof LogFormData) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      setForm((prev) => ({ ...prev, [key]: e.target.value }));
-
-  const canSubmit = form.user_prompt.trim() && form.service_name.trim() && form.raw_log.trim();
-
+  const set = (key: keyof LogFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((p) => ({ ...p, [key]: e.target.value }));
+  const ok = form.user_prompt.trim() && form.service_name.trim() && form.raw_log.trim();
   return (
     <div className="mt-2 bg-[#13131a] border border-violet-500/20 rounded-xl p-3.5 space-y-2.5">
       <p className="text-xs font-semibold text-violet-300 uppercase tracking-wider">로그 분석 정보 입력</p>
-      <FormField
-        label="서비스 이름 *"
-        type="text"
-        placeholder="예: auth-service"
-        value={form.service_name}
-        onChange={set('service_name')}
-      />
-      <FormField
-        label="분석 요청 *"
-        type="text"
-        placeholder="예: 로그인 실패 원인을 분석해줘"
-        value={form.user_prompt}
-        onChange={set('user_prompt')}
-      />
+      <FormField label="서비스 이름 *" type="text" placeholder="예: auth-service" value={form.service_name} onChange={set('service_name')} />
+      <FormField label="분석 요청 *" type="text" placeholder="예: 로그인 실패 원인을 분석해줘" value={form.user_prompt} onChange={set('user_prompt')} />
       <FormField label="발생 시각" type="datetime-local" value={form.occurred_at} onChange={set('occurred_at')} />
       <div>
         <label className="block text-xs text-gray-400 mb-1">로그 원문 *</label>
-        <textarea
-          value={form.raw_log}
-          onChange={set('raw_log')}
-          placeholder="ERROR: Connection timeout at line 42..."
-          rows={4}
-          className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/50 resize-none font-mono"
-        />
+        <textarea value={form.raw_log} onChange={set('raw_log')} placeholder="ERROR: Connection timeout at line 42..." rows={4}
+          className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/50 resize-none font-mono" />
       </div>
-      <FormField
-        label="프로젝트 ID (선택)"
-        type="text"
-        placeholder="예: my-project"
-        value={form.project_id}
-        onChange={set('project_id')}
-      />
+      <FormField label="프로젝트 ID (선택)" type="text" placeholder="예: my-project" value={form.project_id} onChange={set('project_id')} />
       <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => canSubmit && onSubmit(form, formMsgId)}
-          disabled={!canSubmit}
-          className="flex-1 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors"
-        >
+        <button onClick={() => ok && onSubmit(form, formMsgId)} disabled={!ok}
+          className="flex-1 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors">
           분석 시작
         </button>
-        <button
-          onClick={() => onCancel(formMsgId)}
-          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors"
-        >
+        <button onClick={() => onCancel(formMsgId)}
+          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors">
           취소
         </button>
       </div>
@@ -206,136 +180,169 @@ function LogAnalysisFormCard({
 // ─── Test Case Form ───────────────────────────────────────────────────────────
 
 function TestCaseFormCard({
-  formMsgId,
-  onSubmit,
-  onCancel,
+  formMsgId, onSubmit, onCancel,
 }: {
   formMsgId: string;
   onSubmit: (data: TestFormData, msgId: string) => void;
   onCancel: (msgId: string) => void;
 }) {
   const [form, setForm] = useState<TestFormData>({
-    project_id: '',
-    user_prompt: '',
-    base_url: 'https://',
-    env_name: 'staging',
-    method: 'POST',
-    path: '',
-    summary: '',
-    auth_type: 'bearer',
-    request_body_schema: '',
-    response_schema: '',
+    project_id: '', user_prompt: '', base_url: 'https://', env_name: 'staging',
+    method: 'POST', path: '', summary: '', auth_type: 'bearer',
+    request_body_schema: '', response_schema: '',
   });
-
-  const set =
-    (key: keyof TestFormData) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      setForm((prev) => ({ ...prev, [key]: e.target.value }));
-
-  const canSubmit = form.user_prompt.trim() && form.base_url.trim() && form.env_name.trim() && form.path.trim();
-
+  const set = (key: keyof TestFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setForm((p) => ({ ...p, [key]: e.target.value }));
+  const ok = form.user_prompt.trim() && form.base_url.trim() && form.env_name.trim() && form.path.trim();
   return (
     <div className="mt-2 bg-[#13131a] border border-indigo-500/20 rounded-xl p-3.5 space-y-2.5">
       <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wider">테스트 케이스 생성 정보 입력</p>
-      <FormField
-        label="생성 요청 *"
-        type="text"
-        placeholder="예: 주문 API에 대한 테스트 케이스 만들어줘"
-        value={form.user_prompt}
-        onChange={set('user_prompt')}
-      />
-      <FormField
-        label="Base URL *"
-        type="text"
-        placeholder="https://api.example.com"
-        value={form.base_url}
-        onChange={set('base_url')}
-      />
-      <FormField
-        label="환경 이름 *"
-        type="text"
-        placeholder="예: staging"
-        value={form.env_name}
-        onChange={set('env_name')}
-      />
+      <FormField label="생성 요청 *" type="text" placeholder="예: 주문 API에 대한 테스트 케이스 만들어줘" value={form.user_prompt} onChange={set('user_prompt')} />
+      <FormField label="Base URL *" type="text" placeholder="https://api.example.com" value={form.base_url} onChange={set('base_url')} />
+      <FormField label="환경 이름 *" type="text" placeholder="예: staging" value={form.env_name} onChange={set('env_name')} />
       <div className="border border-[#2a2a35] rounded-lg p-2.5 space-y-2">
         <p className="text-xs text-gray-400 font-medium">엔드포인트</p>
         <div className="flex gap-2">
           <div className="w-24 shrink-0">
             <label className="block text-xs text-gray-400 mb-1">메서드</label>
-            <select
-              value={form.method}
-              onChange={set('method')}
-              className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
-            >
-              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
-                <option key={m}>{m}</option>
-              ))}
+            <select value={form.method} onChange={set('method')}
+              className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => <option key={m}>{m}</option>)}
             </select>
           </div>
           <div className="flex-1">
             <FormField label="경로 *" type="text" placeholder="/api/v1/orders" value={form.path} onChange={set('path')} />
           </div>
         </div>
-        <FormField
-          label="요약 (선택)"
-          type="text"
-          placeholder="예: 주문 생성"
-          value={form.summary}
-          onChange={set('summary')}
-        />
+        <FormField label="요약 (선택)" type="text" placeholder="예: 주문 생성" value={form.summary} onChange={set('summary')} />
         <div>
           <label className="block text-xs text-gray-400 mb-1">인증 타입</label>
-          <select
-            value={form.auth_type}
-            onChange={set('auth_type')}
-            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
-          >
-            {['bearer', 'basic', 'api_key', 'none'].map((t) => (
-              <option key={t}>{t}</option>
-            ))}
+          <select value={form.auth_type} onChange={set('auth_type')}
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50">
+            {['bearer', 'basic', 'api_key', 'none'].map((t) => <option key={t}>{t}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs text-gray-400 mb-1">요청 바디 스키마 (선택, JSON)</label>
-          <textarea
-            value={form.request_body_schema}
-            onChange={set('request_body_schema')}
-            placeholder='{"type":"object","properties":{...}}'
-            rows={3}
-            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 resize-none font-mono"
-          />
+          <textarea value={form.request_body_schema} onChange={set('request_body_schema')}
+            placeholder='{"type":"object","properties":{...}}' rows={3}
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 resize-none font-mono" />
         </div>
         <div>
           <label className="block text-xs text-gray-400 mb-1">응답 스키마 (선택, JSON)</label>
-          <textarea
-            value={form.response_schema}
-            onChange={set('response_schema')}
-            placeholder='{"type":"object","properties":{...}}'
-            rows={2}
-            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 resize-none font-mono"
-          />
+          <textarea value={form.response_schema} onChange={set('response_schema')}
+            placeholder='{"type":"object","properties":{...}}' rows={2}
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 resize-none font-mono" />
         </div>
       </div>
-      <FormField
-        label="프로젝트 ID (선택)"
-        type="text"
-        placeholder="예: my-project"
-        value={form.project_id}
-        onChange={set('project_id')}
-      />
+      <FormField label="프로젝트 ID (선택)" type="text" placeholder="예: my-project" value={form.project_id} onChange={set('project_id')} />
       <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => canSubmit && onSubmit(form, formMsgId)}
-          disabled={!canSubmit}
-          className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors"
-        >
+        <button onClick={() => ok && onSubmit(form, formMsgId)} disabled={!ok}
+          className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors">
           생성 시작
         </button>
+        <button onClick={() => onCancel(formMsgId)}
+          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors">
+          취소
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Scenario Form ───────────────────────────────────────────────────────────────
+
+function ScenarioFormCard({
+  formMsgId, onSubmit, onCancel,
+}: {
+  formMsgId: string;
+  onSubmit: (data: ScenarioFormData, msgId: string) => void;
+  onCancel: (msgId: string) => void;
+}) {
+  const [projectId, setProjectId] = useState('');
+  const [userPrompt, setUserPrompt] = useState('');
+  const [endpoints, setEndpoints] = useState<ScenarioEndpointRow[]>([
+    { method: 'POST', path: '', summary: '', auth_type: 'bearer' },
+  ]);
+
+  const addEndpoint = () => {
+    if (endpoints.length < 8)
+      setEndpoints((p) => [...p, { method: 'GET', path: '', summary: '', auth_type: 'bearer' }]);
+  };
+  const removeEndpoint = (i: number) => setEndpoints((p) => p.filter((_, idx) => idx !== i));
+  const updateEndpoint = (i: number, key: keyof ScenarioEndpointRow, val: string) =>
+    setEndpoints((p) => p.map((e, idx) => (idx === i ? { ...e, [key]: val } : e)));
+
+  const ok = userPrompt.trim() && endpoints.some((e) => e.path.trim());
+
+  return (
+    <div className="mt-2 bg-[#13131a] border border-teal-500/20 rounded-xl p-3.5 space-y-2.5">
+      <p className="text-xs font-semibold text-teal-300 uppercase tracking-wider">시나리오 생성 정보 입력</p>
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">생성 요청 *</label>
+        <input type="text" value={userPrompt} onChange={(e) => setUserPrompt(e.target.value)}
+          placeholder="예: 회원가입 후 로그인하고 상품 주문까지 흐름을 시나리오로 만들어줘"
+          className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-teal-500/50" />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-400 font-medium">엔드포인트 리스트</p>
+          {endpoints.length < 8 && (
+            <button onClick={addEndpoint}
+              className="flex items-center gap-1 text-[10px] text-teal-400 hover:text-teal-300 transition-colors">
+              <Plus size={11} /> 엔드포인트 추가
+            </button>
+          )}
+        </div>
+        {endpoints.map((ep, i) => (
+          <div key={i} className="border border-[#2a2a35] rounded-lg p-2 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-gray-500 font-mono w-4 shrink-0">{i + 1}</span>
+              <div className="w-20 shrink-0">
+                <select value={ep.method} onChange={(e) => updateEndpoint(i, 'method', e.target.value)}
+                  className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded px-1.5 py-1.5 text-xs text-white focus:outline-none">
+                  {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <input type="text" value={ep.path} onChange={(e) => updateEndpoint(i, 'path', e.target.value)}
+                placeholder="/api/v1/..."
+                className="flex-1 bg-[#0d0d12] border border-[#2a2a35] rounded px-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-teal-500/50 font-mono" />
+              {endpoints.length > 1 && (
+                <button onClick={() => removeEndpoint(i)} className="text-gray-600 hover:text-red-400 transition-colors shrink-0">
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5 ml-5">
+              <input type="text" value={ep.summary} onChange={(e) => updateEndpoint(i, 'summary', e.target.value)}
+                placeholder="요약 (선택)"
+                className="flex-1 bg-[#0d0d12] border border-[#2a2a35] rounded px-2 py-1 text-xs text-white placeholder-gray-500 focus:outline-none" />
+              <select value={ep.auth_type} onChange={(e) => updateEndpoint(i, 'auth_type', e.target.value)}
+                className="w-20 bg-[#0d0d12] border border-[#2a2a35] rounded px-1.5 py-1 text-xs text-white focus:outline-none">
+                {['bearer', 'basic', 'api_key', 'none'].map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">프로젝트 ID (선택)</label>
+        <input type="text" value={projectId} onChange={(e) => setProjectId(e.target.value)}
+          placeholder="예: my-project"
+          className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-teal-500/50" />
+      </div>
+
+      <div className="flex gap-2 pt-1">
         <button
-          onClick={() => onCancel(formMsgId)}
-          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors"
-        >
+          onClick={() => ok && onSubmit({ project_id: projectId, user_prompt: userPrompt, endpoints }, formMsgId)}
+          disabled={!ok}
+          className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors">
+          시나리오 생성 시작
+        </button>
+        <button onClick={() => onCancel(formMsgId)}
+          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors">
           취소
         </button>
       </div>
@@ -346,152 +353,96 @@ function TestCaseFormCard({
 // ─── Combined Form (동시 실행) ─────────────────────────────────────────────────
 
 function BothFormCard({
-  formMsgId,
-  onSubmit,
-  onCancel,
+  formMsgId, onSubmit, onCancel,
 }: {
   formMsgId: string;
   onSubmit: (data: BothFormData, msgId: string) => void;
   onCancel: (msgId: string) => void;
 }) {
   const [form, setForm] = useState<BothFormData>({
-    project_id: '',
-    log_user_prompt: '',
-    service_name: '',
-    occurred_at: localNow(),
-    raw_log: '',
-    test_user_prompt: '',
-    base_url: 'https://',
-    env_name: 'staging',
-    method: 'POST',
-    path: '',
-    summary: '',
+    project_id: '', log_user_prompt: '', service_name: '', occurred_at: localNow(), raw_log: '',
+    test_user_prompt: '', base_url: 'https://', env_name: 'staging', method: 'POST', path: '', summary: '',
   });
-
-  const set =
-    (key: keyof BothFormData) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      setForm((prev) => ({ ...prev, [key]: e.target.value }));
-
-  const canSubmit =
-    form.log_user_prompt.trim() &&
-    form.service_name.trim() &&
-    form.raw_log.trim() &&
-    form.test_user_prompt.trim() &&
-    form.base_url.trim() &&
-    form.path.trim();
-
+  const set = (key: keyof BothFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setForm((p) => ({ ...p, [key]: e.target.value }));
+  const ok = form.log_user_prompt.trim() && form.service_name.trim() && form.raw_log.trim()
+    && form.test_user_prompt.trim() && form.base_url.trim() && form.path.trim();
   return (
     <div className="mt-2 bg-[#13131a] border border-amber-500/20 rounded-xl p-3.5 space-y-3">
       <p className="text-xs font-semibold text-amber-300 uppercase tracking-wider">동시 실행 정보 입력</p>
-      <FormField
-        label="프로젝트 ID (선택)"
-        type="text"
-        placeholder="예: my-project"
-        value={form.project_id}
-        onChange={set('project_id')}
-      />
-
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">프로젝트 ID (선택)</label>
+        <input type="text" value={form.project_id} onChange={set('project_id')} placeholder="예: my-project"
+          className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+      </div>
       <div className="border border-violet-500/20 rounded-lg p-2.5 space-y-2">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-violet-600 rounded flex items-center justify-center shrink-0">
-            <FileSearch size={9} className="text-white" />
-          </div>
-          <p className="text-xs font-medium text-violet-300">로그 분석 정보</p>
+          <div className="w-4 h-4 bg-violet-600 rounded flex items-center justify-center shrink-0"><FileSearch size={9} className="text-white" /></div>
+          <p className="text-xs font-medium text-violet-300">로그 분석</p>
         </div>
-        <FormField
-          label="서비스 이름 *"
-          type="text"
-          placeholder="예: auth-service"
-          value={form.service_name}
-          onChange={set('service_name')}
-        />
-        <FormField
-          label="분석 요청 *"
-          type="text"
-          placeholder="예: 로그인 실패 원인을 분석해줘"
-          value={form.log_user_prompt}
-          onChange={set('log_user_prompt')}
-        />
-        <FormField label="발생 시각" type="datetime-local" value={form.occurred_at} onChange={set('occurred_at')} />
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">서비스 이름 *</label>
+          <input type="text" value={form.service_name} onChange={set('service_name')} placeholder="예: auth-service"
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">분석 요청 *</label>
+          <input type="text" value={form.log_user_prompt} onChange={set('log_user_prompt')} placeholder="예: 로그인 실패 원인 분석"
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">발생 시각</label>
+          <input type="datetime-local" value={form.occurred_at} onChange={set('occurred_at')}
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white focus:outline-none" />
+        </div>
         <div>
           <label className="block text-xs text-gray-400 mb-1">로그 원문 *</label>
-          <textarea
-            value={form.raw_log}
-            onChange={set('raw_log')}
-            placeholder="ERROR: Connection timeout..."
-            rows={3}
-            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/50 resize-none font-mono"
-          />
+          <textarea value={form.raw_log} onChange={set('raw_log')} placeholder="ERROR: Connection timeout..." rows={3}
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none resize-none font-mono" />
         </div>
       </div>
-
       <div className="border border-indigo-500/20 rounded-lg p-2.5 space-y-2">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-indigo-600 rounded flex items-center justify-center shrink-0">
-            <TestTube2 size={9} className="text-white" />
-          </div>
-          <p className="text-xs font-medium text-indigo-300">테스트 케이스 생성 정보</p>
+          <div className="w-4 h-4 bg-indigo-600 rounded flex items-center justify-center shrink-0"><TestTube2 size={9} className="text-white" /></div>
+          <p className="text-xs font-medium text-indigo-300">테스트 케이스 생성</p>
         </div>
-        <FormField
-          label="생성 요청 *"
-          type="text"
-          placeholder="예: 주문 API 테스트 케이스 만들어줘"
-          value={form.test_user_prompt}
-          onChange={set('test_user_prompt')}
-        />
-        <FormField
-          label="Base URL *"
-          type="text"
-          placeholder="https://api.example.com"
-          value={form.base_url}
-          onChange={set('base_url')}
-        />
-        <FormField
-          label="환경 이름 *"
-          type="text"
-          placeholder="예: staging"
-          value={form.env_name}
-          onChange={set('env_name')}
-        />
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">생성 요청 *</label>
+          <input type="text" value={form.test_user_prompt} onChange={set('test_user_prompt')} placeholder="예: 주문 API 테스트 케이스"
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Base URL *</label>
+          <input type="text" value={form.base_url} onChange={set('base_url')} placeholder="https://api.example.com"
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">환경 이름 *</label>
+          <input type="text" value={form.env_name} onChange={set('env_name')} placeholder="예: staging"
+            className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none" />
+        </div>
         <div className="flex gap-2">
           <div className="w-24 shrink-0">
             <label className="block text-xs text-gray-400 mb-1">메서드</label>
-            <select
-              value={form.method}
-              onChange={set('method')}
-              className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
-            >
-              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
-                <option key={m}>{m}</option>
-              ))}
+            <select value={form.method} onChange={set('method')}
+              className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-2 py-2 text-xs text-white focus:outline-none">
+              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => <option key={m}>{m}</option>)}
             </select>
           </div>
           <div className="flex-1">
-            <FormField label="경로 *" type="text" placeholder="/api/v1/orders" value={form.path} onChange={set('path')} />
+            <label className="block text-xs text-gray-400 mb-1">경로 *</label>
+            <input type="text" value={form.path} onChange={set('path')} placeholder="/api/v1/orders"
+              className="w-full bg-[#0d0d12] border border-[#2a2a35] rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none font-mono" />
           </div>
         </div>
-        <FormField
-          label="요약 (선택)"
-          type="text"
-          placeholder="엔드포인트 설명"
-          value={form.summary}
-          onChange={set('summary')}
-        />
       </div>
-
       <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => canSubmit && onSubmit(form, formMsgId)}
-          disabled={!canSubmit}
-          className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-all"
-        >
+        <button onClick={() => ok && onSubmit(form, formMsgId)} disabled={!ok}
+          className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-all">
           동시 실행 시작
         </button>
-        <button
-          onClick={() => onCancel(formMsgId)}
-          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors"
-        >
+        <button onClick={() => onCancel(formMsgId)}
+          className="px-4 bg-[#1f1f28] hover:bg-[#2a2a35] text-gray-300 rounded-lg py-2 text-xs transition-colors">
           취소
         </button>
       </div>
@@ -501,51 +452,21 @@ function BothFormCard({
 
 // ─── Incident Result View ─────────────────────────────────────────────────────
 
-function TabBtn({
-  active,
-  onClick,
-  activeClass,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  activeClass: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${
-        active ? activeClass : 'text-gray-400 hover:text-gray-200'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function RootCauseCard({ cause }: { cause: RootCause }) {
   const [expanded, setExpanded] = useState(false);
-
-  const severityStyle =
-    cause.severity === 'HIGH'
-      ? 'bg-red-500/20 text-red-400 border-red-500/30'
-      : cause.severity === 'MEDIUM'
-        ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-        : 'bg-green-500/20 text-green-400 border-green-500/30';
-
+  const sev = cause.severity === 'HIGH'
+    ? 'bg-red-500/20 text-red-400 border-red-500/30'
+    : cause.severity === 'MEDIUM'
+      ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+      : 'bg-green-500/20 text-green-400 border-green-500/30';
   return (
     <div className="bg-[#0d0d12] border border-[#2a2a35] rounded-lg p-3">
       <div className="flex items-start gap-2 mb-2">
-        <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${severityStyle}`}>
-          {cause.severity}
-        </span>
+        <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${sev}`}>{cause.severity}</span>
         <p className="text-xs text-gray-200 leading-relaxed">{cause.summary}</p>
       </div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
-      >
+      <button onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors">
         {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
         {expanded ? '접기' : `증거 ${cause.evidence.length}건 · 권장 조치 보기`}
       </button>
@@ -574,38 +495,24 @@ function RootCauseCard({ cause }: { cause: RootCause }) {
 
 function IncidentResultView({ data }: { data: IncidentAgentData }) {
   const [tab, setTab] = useState<'causes' | 'internal' | 'external'>('causes');
-
+  const tabs = [
+    { key: 'causes' as const, label: `원인 분석 (${data.root_causes.length})`, cls: 'bg-violet-600/80 text-white' },
+    { key: 'internal' as const, label: '내부 보고서', cls: 'bg-blue-600/80 text-white' },
+    { key: 'external' as const, label: '외부 공지', cls: 'bg-emerald-600/80 text-white' },
+  ];
   return (
     <div className="mt-2 space-y-2">
       <div className="flex gap-1 bg-[#0d0d12] rounded-lg p-1">
-        <TabBtn
-          active={tab === 'causes'}
-          onClick={() => setTab('causes')}
-          activeClass="bg-violet-600/80 text-white"
-        >
-          원인 분석 ({data.root_causes.length})
-        </TabBtn>
-        <TabBtn
-          active={tab === 'internal'}
-          onClick={() => setTab('internal')}
-          activeClass="bg-blue-600/80 text-white"
-        >
-          내부 보고서
-        </TabBtn>
-        <TabBtn
-          active={tab === 'external'}
-          onClick={() => setTab('external')}
-          activeClass="bg-emerald-600/80 text-white"
-        >
-          외부 공지
-        </TabBtn>
+        {tabs.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === t.key ? t.cls : 'text-gray-400 hover:text-gray-200'}`}>
+            {t.label}
+          </button>
+        ))}
       </div>
-
       {tab === 'causes' && (
         <div className="space-y-2">
-          {data.root_causes.map((cause, i) => (
-            <RootCauseCard key={i} cause={cause} />
-          ))}
+          {data.root_causes.map((c, i) => <RootCauseCard key={i} cause={c} />)}
         </div>
       )}
       {tab === 'internal' && (
@@ -632,7 +539,6 @@ const DRAFT_TYPE_STYLE: Record<string, string> = {
   PERFORMANCE: 'bg-cyan-500/20 text-cyan-400',
   FAILURE_HANDLING: 'bg-red-500/20 text-red-400',
 };
-
 const CASE_TYPE_STYLE: Record<string, string> = {
   NORMAL: 'bg-green-500/10 text-green-500',
   EXCEPTION: 'bg-red-500/10 text-red-400',
@@ -643,28 +549,17 @@ function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft;
   const [expanded, setExpanded] = useState(false);
   const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
   const caseStyle = CASE_TYPE_STYLE[draft.test_case_type] ?? 'bg-gray-500/10 text-gray-500';
-
   return (
-    <div
-      className={`bg-[#0d0d12] border rounded-lg p-2.5 ${
-        draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'
-      }`}
-    >
+    <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
-        <span className="text-[10px] text-gray-600 shrink-0 mt-0.5 font-mono">
-          TC-{String(index + 1).padStart(3, '0')}
-        </span>
+        <span className="text-[10px] text-gray-600 shrink-0 mt-0.5 font-mono">TC-{String(index + 1).padStart(3, '0')}</span>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-200 leading-snug">{draft.title}</p>
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${typeStyle}`}>{draft.type}</span>
             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${caseStyle}`}>{draft.test_case_type}</span>
-            <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded">
-              {draft.expectedSpec.statusCode}
-            </span>
-            {draft.duplicate && (
-              <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">중복</span>
-            )}
+            <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded">{draft.expectedSpec.statusCode}</span>
+            {draft.duplicate && <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">중복</span>}
           </div>
         </div>
         <button onClick={() => setExpanded(!expanded)} className="shrink-0 text-gray-500 hover:text-gray-300">
@@ -683,9 +578,7 @@ function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft;
             </div>
           )}
           {draft.assertionSpec.bodyContains.length > 0 && (
-            <p className="text-[10px] text-gray-500">
-              검증: {draft.assertionSpec.bodyContains.join(', ')}
-            </p>
+            <p className="text-[10px] text-gray-500">검증: {draft.assertionSpec.bodyContains.join(', ')}</p>
           )}
         </div>
       )}
@@ -695,7 +588,6 @@ function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft;
 
 function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
   const unique = data.drafts.filter((d) => !d.duplicate).length;
-
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -705,9 +597,120 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
         )}
       </div>
       <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
-        {data.drafts.map((draft, i) => (
-          <TestCaseDraftCard key={i} draft={draft} index={i} />
-        ))}
+        {data.drafts.map((d, i) => <TestCaseDraftCard key={i} draft={d} index={i} />)}
+      </div>
+    </div>
+  );
+}
+
+// ─── Scenario Result View ────────────────────────────────────────────────────
+
+const METHOD_COLOR: Record<string, string> = {
+  GET: 'bg-green-500/20 text-green-400',
+  POST: 'bg-blue-500/20 text-blue-400',
+  PUT: 'bg-amber-500/20 text-amber-400',
+  PATCH: 'bg-yellow-500/20 text-yellow-400',
+  DELETE: 'bg-red-500/20 text-red-400',
+};
+
+function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const colonIdx = step.endpoint_id.indexOf(':');
+  const method = colonIdx > -1 ? step.endpoint_id.slice(0, colonIdx) : step.endpoint_id;
+  const path = colonIdx > -1 ? step.endpoint_id.slice(colonIdx + 1) : '';
+  const methodColor = METHOD_COLOR[method] ?? 'bg-gray-500/20 text-gray-400';
+  return (
+    <div className="bg-[#060609] rounded-lg px-2 py-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-gray-600 font-mono w-4 text-center shrink-0">{step.order}</span>
+        <span className={`text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ${methodColor}`}>{method}</span>
+        <span className="text-[10px] text-gray-400 font-mono truncate flex-1">{path}</span>
+        <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded shrink-0">{step.expected_status_code}</span>
+        {step.chained_variables.length > 0 && (
+          <span className="text-teal-500 text-[10px] shrink-0" title={`${step.chained_variables.length}개 쬀이닝`}>⇒</span>
+        )}
+        <button onClick={() => setShowDetail(!showDetail)} className="text-gray-600 hover:text-gray-400 shrink-0">
+          {showDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+        </button>
+      </div>
+      <p className="text-[10px] text-gray-400 ml-6 mt-0.5 truncate">{step.name}</p>
+      {showDetail && (
+        <div className="ml-6 mt-1.5 space-y-1.5">
+          {step.expected_assertions.length > 0 && (
+            <div>
+              <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">검증</p>
+              {step.expected_assertions.map((a, i) => (
+                <p key={i} className="text-[10px] text-gray-400 flex gap-1">
+                  <span className="text-gray-600 shrink-0">•</span>{a}
+                </p>
+              ))}
+            </div>
+          )}
+          {step.chained_variables.length > 0 && (
+            <div>
+              <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">쬀이닝</p>
+              {step.chained_variables.map((v, i) => (
+                <p key={i} className="text-[10px] text-teal-400/70 flex gap-1 flex-wrap font-mono">
+                  <span>{v.source_step_ref}</span>
+                  <span className="text-gray-600">→</span>
+                  <span>{v.source_json_path}</span>
+                  <span className="text-gray-600">→</span>
+                  <span>{v.target_field}</span>
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
+  const [expanded, setExpanded] = useState(false);
+  const riskStyle = scenario.meta.estimated_risk === 'HIGH'
+    ? 'bg-red-500/20 text-red-400'
+    : scenario.meta.estimated_risk === 'MEDIUM'
+      ? 'bg-amber-500/20 text-amber-400'
+      : 'bg-green-500/20 text-green-400';
+  return (
+    <div className="bg-[#0d0d12] border border-[#2a2a35] rounded-lg">
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full p-2.5 flex items-start gap-2 text-left">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-gray-200 font-medium leading-snug">{scenario.name}</p>
+          <p className="text-[10px] text-gray-500 mt-0.5">{scenario.steps.length}개 스텝</p>
+        </div>
+        <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${riskStyle}`}>
+          {scenario.meta.estimated_risk}
+        </span>
+        {expanded ? <ChevronUp size={12} className="text-gray-500 shrink-0 mt-0.5" /> : <ChevronDown size={12} className="text-gray-500 shrink-0 mt-0.5" />}
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2.5 border-t border-[#2a2a35] pt-2 space-y-2">
+          {scenario.meta.rationale && (
+            <p className="text-[10px] text-gray-400 leading-relaxed">{scenario.meta.rationale}</p>
+          )}
+          <div className="space-y-1">
+            {scenario.steps.map((step) => <ScenarioStepRow key={step.step_id} step={step} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScenarioResultView({ data }: { data: OrchestratorScenarioData }) {
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="text-xs text-gray-400">
+        {data.scenarios.length}개 시나리오
+        {data.used_endpoint_ids.length > 0 && (
+          <span className="text-gray-500"> · API {data.used_endpoint_ids.length}개 사용</span>
+        )}
+      </div>
+      <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
+        {data.scenarios.map((s) => <ScenarioCard key={s.scenario_id} scenario={s} />)}
       </div>
     </div>
   );
@@ -717,59 +720,52 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
 
 function TaskCard({ task }: { task: AgentTask }) {
   const isLog = task.type === 'log-analysis';
+  const isScenario = task.type === 'scenario-generation';
   const isRunning = task.status === 'running';
   const isDone = task.status === 'done';
   const isError = task.status === 'error';
 
+  const accent = isLog ? 'violet' : isScenario ? 'teal' : 'indigo';
   const borderCls = isError
     ? 'border-red-500/30 bg-red-500/5'
-    : isDone && isLog
-      ? 'border-violet-500/30 bg-violet-500/5'
-      : isDone
-        ? 'border-indigo-500/30 bg-indigo-500/5'
-        : isLog
-          ? 'border-violet-500/20 bg-violet-500/5'
-          : 'border-indigo-500/20 bg-indigo-500/5';
+    : isDone
+      ? `border-${accent}-500/30 bg-${accent}-500/5`
+      : `border-${accent}-500/20 bg-${accent}-500/5`;
+
+  const icon = isLog
+    ? <FileSearch size={11} className="text-white" />
+    : isScenario
+      ? <GitBranch size={11} className="text-white" />
+      : <TestTube2 size={11} className="text-white" />;
+
+  const label = isLog ? 'Log Analysis Agent' : isScenario ? 'Scenario Agent' : 'Test Case Agent';
+  const iconBg = isLog ? 'bg-violet-600' : isScenario ? 'bg-teal-600' : 'bg-indigo-600';
 
   return (
     <div className={`flex-1 min-w-0 rounded-xl border p-3 ${borderCls}`}>
       <div className="flex items-center gap-2 mb-2">
-        <div
-          className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 ${
-            isLog ? 'bg-violet-600' : 'bg-indigo-600'
-          }`}
-        >
-          {isLog ? <FileSearch size={11} className="text-white" /> : <TestTube2 size={11} className="text-white" />}
-        </div>
-        <span className="text-xs font-medium text-gray-300 truncate">
-          {isLog ? 'Log Analysis Agent' : 'Test Case Agent'}
-        </span>
+        <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 ${iconBg}`}>{icon}</div>
+        <span className="text-xs font-medium text-gray-300 truncate">{label}</span>
         <div className="ml-auto shrink-0">
           {isRunning && <Loader2 size={13} className="text-violet-400 animate-spin" />}
           {isDone && <CheckCircle2 size={13} className="text-green-400" />}
           {isError && <AlertCircle size={13} className="text-red-400" />}
         </div>
       </div>
-
       {task.summary && isDone && <p className="text-[11px] text-gray-400 mb-2">{task.summary}</p>}
-
       {isRunning && (
         <div className="flex items-center gap-1.5 text-xs text-gray-500">
           <span>처리 중</span>
           <span className="flex gap-0.5 mt-0.5">
-            {[0, 150, 300].map((delay, i) => (
-              <span
-                key={i}
-                className="w-1 h-1 bg-gray-500 rounded-full inline-block animate-bounce"
-                style={{ animationDelay: `${delay}ms` }}
-              />
+            {[0, 150, 300].map((d, i) => (
+              <span key={i} className="w-1 h-1 bg-gray-500 rounded-full inline-block animate-bounce" style={{ animationDelay: `${d}ms` }} />
             ))}
           </span>
         </div>
       )}
-
       {isDone && isLog && task.incidentData && <IncidentResultView data={task.incidentData} />}
-      {isDone && !isLog && task.testData && <TestCaseResultView data={task.testData} />}
+      {isDone && task.type === 'test-generation' && task.testData && <TestCaseResultView data={task.testData} />}
+      {isDone && isScenario && task.scenarioData && <ScenarioResultView data={task.scenarioData} />}
       {isError && <p className="text-xs text-red-400">{task.errorMessage ?? '에이전트 오류가 발생했습니다.'}</p>}
     </div>
   );
@@ -778,26 +774,14 @@ function TaskCard({ task }: { task: AgentTask }) {
 // ─── ActionButton ─────────────────────────────────────────────────────────────
 
 function ActionButton({
-  icon,
-  label,
-  colorClass,
-  onClick,
-  disabled,
+  icon, label, colorClass, onClick, disabled,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  colorClass: string;
-  onClick: () => void;
-  disabled?: boolean;
+  icon: React.ReactNode; label: string; colorClass: string; onClick: () => void; disabled?: boolean;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`flex-1 flex items-center justify-center gap-1.5 border rounded-lg py-1.5 px-2 text-xs font-medium transition-all bg-[#13131a] disabled:opacity-40 disabled:cursor-not-allowed ${colorClass}`}
-    >
-      {icon}
-      {label}
+    <button onClick={onClick} disabled={disabled}
+      className={`flex items-center justify-center gap-1.5 border rounded-lg py-1.5 px-2 text-xs font-medium transition-all bg-[#13131a] disabled:opacity-40 disabled:cursor-not-allowed ${colorClass}`}>
+      {icon}{label}
     </button>
   );
 }
@@ -808,7 +792,7 @@ const INIT_MESSAGE: Message = {
   id: 'init',
   role: 'assistant',
   content:
-    '👋 안녕하세요! 저는 Orchestrator Agent입니다.\n\n여러 AI 에이전트를 조율하여 아래 세 가지 작업을 수행할 수 있습니다:\n\n• 🔍 로그 분석 — 에러 패턴 감지 및 원인 분석\n• 🧪 테스트 케이스 생성 — API 엔드포인트 테스트 자동 생성\n• ⚡ 동시 실행 — 두 작업을 병렬로 처리\n\n아래 버튼을 선택해 주세요.',
+    '👋 안녕하세요! 저는 Orchestrator Agent입니다.\n\n여러 AI 에이전트를 조율하여 네 가지 작업을 수행할 수 있습니다:\n\n• 🔍 로그 분석 — 에러 패턴 감지 및 원인 분석\n• 🧪 테스트 케이스 생성 — API 엔드포인트 테스트 자동 생성\n• 🌟 시나리오 생성 — 다중 API 연계 E2E 시나리오 자동 생성\n• ⚡ 동시 실행 — 로그 분석 + 테스트 케이스 병렬 처리\n\n아래 버튼을 선택해 주세요.',
 };
 
 export function OrchestratorAgent() {
@@ -820,35 +804,24 @@ export function OrchestratorAgent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  useEffect(() => {
-    if (isOpen && !isMinimized) {
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
-  }, [isOpen, isMinimized]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { if (isOpen && !isMinimized) setTimeout(() => inputRef.current?.focus(), 50); }, [isOpen, isMinimized]);
 
   const hasActiveForm = messages.some((m) => m.formType !== undefined);
 
-  const updateTask = (msgId: string, type: AgentTask['type'], updates: Partial<AgentTask>) => {
+  const updateTask = (msgId: string, type: AgentTask['type'], updates: Partial<AgentTask>) =>
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id !== msgId
-          ? m
-          : { ...m, tasks: m.tasks?.map((t) => (t.type === type ? { ...t, ...updates } : t)) },
-      ),
+      prev.map((m) => m.id !== msgId ? m : { ...m, tasks: m.tasks?.map((t) => t.type === type ? { ...t, ...updates } : t) }),
     );
-  };
 
   const replaceFormWithTasks = (formMsgId: string, userContent: string, tasks: AgentTask[]): string => {
     const taskMsgId = `task-${Date.now()}`;
-    const routingText =
-      tasks.length > 1
-        ? '병렬 실행을 시작합니다 — 두 에이전트를 동시에 가동합니다...'
-        : tasks[0].type === 'log-analysis'
-          ? 'Log Analysis Agent로 요청을 라우팅합니다...'
+    const routingText = tasks.length > 1
+      ? '병렬 실행을 시작합니다 — 두 에이전트를 동시에 가동합니다...'
+      : tasks[0].type === 'log-analysis'
+        ? 'Log Analysis Agent로 요청을 라우팅합니다...'
+        : tasks[0].type === 'scenario-generation'
+          ? 'Scenario Agent로 요청을 라우팅합니다...'
           : 'Test Case Agent로 요청을 라우팅합니다...';
     setMessages((prev) => [
       ...prev.filter((m) => m.id !== formMsgId),
@@ -860,248 +833,176 @@ export function OrchestratorAgent() {
   };
 
   const handleLogFormSubmit = async (formData: LogFormData, formMsgId: string) => {
-    const userContent = `로그 분석 요청: [${formData.service_name}] ${formData.user_prompt}`;
-    const taskMsgId = replaceFormWithTasks(formMsgId, userContent, [{ type: 'log-analysis', status: 'running' }]);
-
+    const taskMsgId = replaceFormWithTasks(formMsgId,
+      `로그 분석 요청: [${formData.service_name}] ${formData.user_prompt}`,
+      [{ type: 'log-analysis', status: 'running' }]);
     try {
-      const response = await flowOpsApi.dispatchOrchestrator({
+      const res = await flowOpsApi.dispatchOrchestrator({
         project_id: formData.project_id || 'default',
         user_prompt: formData.user_prompt,
-        context: {
-          service_name: formData.service_name,
-          occurred_at: new Date(formData.occurred_at).toISOString(),
-          raw_log: formData.raw_log,
-        },
+        context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
       });
-      const result = response.data.agent_results.find((r) => r.agent_type === 'incident');
-      if (result?.success && result.data) {
-        updateTask(taskMsgId, 'log-analysis', {
-          status: 'done',
-          incidentData: result.data as IncidentAgentData,
-          summary: response.data.summary,
-        });
+      const r = res.data.agent_results.find((x) => x.agent_type === 'incident');
+      if (r?.success && r.data) {
+        updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data.summary });
       } else {
-        updateTask(taskMsgId, 'log-analysis', {
-          status: 'error',
-          errorMessage: result?.error_message ?? '분석 중 오류가 발생했습니다.',
-        });
+        updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '분석 중 오류가 발생했습니다.' });
       }
     } catch (e) {
-      updateTask(taskMsgId, 'log-analysis', {
-        status: 'error',
-        errorMessage: e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.',
-      });
-    } finally {
-      setIsProcessing(false);
-    }
+      updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
+    } finally { setIsProcessing(false); }
   };
 
   const handleTestFormSubmit = async (formData: TestFormData, formMsgId: string) => {
     const endpointId = `${formData.method}:${formData.path}`;
-    const userContent = `테스트 케이스 생성 요청: [${formData.method} ${formData.path}] ${formData.user_prompt}`;
-    const taskMsgId = replaceFormWithTasks(formMsgId, userContent, [{ type: 'test-generation', status: 'running' }]);
-
+    const taskMsgId = replaceFormWithTasks(formMsgId,
+      `테스트 케이스 생성 요청: [${formData.method} ${formData.path}] ${formData.user_prompt}`,
+      [{ type: 'test-generation', status: 'running' }]);
     try {
-      const response = await flowOpsApi.dispatchOrchestratorTest({
+      const res = await flowOpsApi.dispatchOrchestratorTest({
         project_id: formData.project_id || 'default',
         user_prompt: formData.user_prompt,
         context: {
-          base_url: formData.base_url,
-          env_name: formData.env_name,
+          base_url: formData.base_url, env_name: formData.env_name,
           api_inventory: {
             project_id: formData.project_id || 'default',
-            endpoints: [
-              {
-                endpoint_id: endpointId,
-                path: formData.path,
-                method: formData.method,
-                ...(formData.summary ? { summary: formData.summary } : {}),
-                ...(formData.auth_type !== 'none' ? { auth: { type: formData.auth_type } } : {}),
-                ...(parseJsonSafe(formData.request_body_schema)
-                  ? { request_body_schema: parseJsonSafe(formData.request_body_schema) }
-                  : {}),
-                ...(parseJsonSafe(formData.response_schema)
-                  ? { response_schema: parseJsonSafe(formData.response_schema) }
-                  : {}),
-              },
-            ],
+            endpoints: [{
+              endpoint_id: endpointId, path: formData.path, method: formData.method,
+              ...(formData.summary ? { summary: formData.summary } : {}),
+              ...(formData.auth_type !== 'none' ? { auth: { type: formData.auth_type } } : {}),
+              ...(parseJsonSafe(formData.request_body_schema) ? { request_body_schema: parseJsonSafe(formData.request_body_schema) } : {}),
+              ...(parseJsonSafe(formData.response_schema) ? { response_schema: parseJsonSafe(formData.response_schema) } : {}),
+            }],
           },
         },
       });
-      const result = response.data.agent_results.find((r) => r.agent_type === 'testcase');
-      if (result?.success && result.data) {
-        updateTask(taskMsgId, 'test-generation', {
-          status: 'done',
-          testData: result.data as OrchestratorTestCaseData,
-          summary: response.data.summary,
-        });
+      const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
+      if (r?.success && r.data) {
+        updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data.summary });
       } else {
-        updateTask(taskMsgId, 'test-generation', {
-          status: 'error',
-          errorMessage: result?.error_message ?? '생성 중 오류가 발생했습니다.',
-        });
+        updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? '생성 중 오류가 발생했습니다.' });
       }
     } catch (e) {
-      updateTask(taskMsgId, 'test-generation', {
-        status: 'error',
-        errorMessage: e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.',
+      updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
+    } finally { setIsProcessing(false); }
+  };
+
+  const handleScenarioFormSubmit = async (formData: ScenarioFormData, formMsgId: string) => {
+    const taskMsgId = replaceFormWithTasks(formMsgId,
+      `시나리오 생성 요청: ${formData.user_prompt}`,
+      [{ type: 'scenario-generation', status: 'running' }]);
+    try {
+      const res = await flowOpsApi.dispatchOrchestratorScenario({
+        project_id: formData.project_id || 'default',
+        user_prompt: formData.user_prompt,
+        context: {
+          api_inventory: {
+            project_id: formData.project_id || 'default',
+            endpoints: formData.endpoints
+              .filter((e) => e.path.trim())
+              .map((e) => ({
+                endpoint_id: `${e.method}:${e.path}`,
+                path: e.path,
+                method: e.method,
+                ...(e.summary ? { summary: e.summary } : {}),
+                ...(e.auth_type !== 'none' ? { auth: { type: e.auth_type } } : {}),
+              })),
+          },
+        },
       });
-    } finally {
-      setIsProcessing(false);
-    }
+      const r = res.data.agent_results.find((x) => x.agent_type === 'scenario');
+      if (r?.success && r.data) {
+        updateTask(taskMsgId, 'scenario-generation', { status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary: res.data.summary });
+      } else {
+        updateTask(taskMsgId, 'scenario-generation', { status: 'error', errorMessage: r?.error_message ?? '생성 중 오류가 발생했습니다.' });
+      }
+    } catch (e) {
+      updateTask(taskMsgId, 'scenario-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
+    } finally { setIsProcessing(false); }
   };
 
   const handleBothFormSubmit = async (formData: BothFormData, formMsgId: string) => {
-    const userContent = `동시 실행: 로그 분석 [${formData.service_name}] + 테스트 케이스 [${formData.method} ${formData.path}]`;
-    const taskMsgId = replaceFormWithTasks(formMsgId, userContent, [
-      { type: 'log-analysis', status: 'running' },
-      { type: 'test-generation', status: 'running' },
-    ]);
+    const taskMsgId = replaceFormWithTasks(formMsgId,
+      `동시 실행: 로그 분석 [${formData.service_name}] + 테스트 케이스 [${formData.method} ${formData.path}]`,
+      [{ type: 'log-analysis', status: 'running' }, { type: 'test-generation', status: 'running' }]);
 
-    const runLog = flowOpsApi
-      .dispatchOrchestrator({
-        project_id: formData.project_id || 'default',
-        user_prompt: formData.log_user_prompt,
-        context: {
-          service_name: formData.service_name,
-          occurred_at: new Date(formData.occurred_at).toISOString(),
-          raw_log: formData.raw_log,
-        },
-      })
-      .then((response) => {
-        const result = response.data.agent_results.find((r) => r.agent_type === 'incident');
-        if (result?.success && result.data) {
-          updateTask(taskMsgId, 'log-analysis', {
-            status: 'done',
-            incidentData: result.data as IncidentAgentData,
-            summary: response.data.summary,
-          });
-        } else {
-          updateTask(taskMsgId, 'log-analysis', {
-            status: 'error',
-            errorMessage: result?.error_message ?? '분석 중 오류가 발생했습니다.',
-          });
-        }
-      })
-      .catch((e: unknown) => {
-        updateTask(taskMsgId, 'log-analysis', {
-          status: 'error',
-          errorMessage: e instanceof Error ? e.message : '오류 발생',
-        });
-      });
+    const runLog = flowOpsApi.dispatchOrchestrator({
+      project_id: formData.project_id || 'default',
+      user_prompt: formData.log_user_prompt,
+      context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
+    }).then((res) => {
+      const r = res.data.agent_results.find((x) => x.agent_type === 'incident');
+      if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data.summary });
+      else updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '오류' });
+    }).catch((e: unknown) => updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
-    const runTest = flowOpsApi
-      .dispatchOrchestratorTest({
-        project_id: formData.project_id || 'default',
-        user_prompt: formData.test_user_prompt,
-        context: {
-          base_url: formData.base_url,
-          env_name: formData.env_name,
-          api_inventory: {
-            project_id: formData.project_id || 'default',
-            endpoints: [
-              {
-                endpoint_id: `${formData.method}:${formData.path}`,
-                path: formData.path,
-                method: formData.method,
-                ...(formData.summary ? { summary: formData.summary } : {}),
-                auth: { type: 'bearer' },
-              },
-            ],
-          },
+    const runTest = flowOpsApi.dispatchOrchestratorTest({
+      project_id: formData.project_id || 'default',
+      user_prompt: formData.test_user_prompt,
+      context: {
+        base_url: formData.base_url, env_name: formData.env_name,
+        api_inventory: {
+          project_id: formData.project_id || 'default',
+          endpoints: [{ endpoint_id: `${formData.method}:${formData.path}`, path: formData.path, method: formData.method, ...(formData.summary ? { summary: formData.summary } : {}), auth: { type: 'bearer' } }],
         },
-      })
-      .then((response) => {
-        const result = response.data.agent_results.find((r) => r.agent_type === 'testcase');
-        if (result?.success && result.data) {
-          updateTask(taskMsgId, 'test-generation', {
-            status: 'done',
-            testData: result.data as OrchestratorTestCaseData,
-            summary: response.data.summary,
-          });
-        } else {
-          updateTask(taskMsgId, 'test-generation', {
-            status: 'error',
-            errorMessage: result?.error_message ?? '생성 중 오류가 발생했습니다.',
-          });
-        }
-      })
-      .catch((e: unknown) => {
-        updateTask(taskMsgId, 'test-generation', {
-          status: 'error',
-          errorMessage: e instanceof Error ? e.message : '오류 발생',
-        });
-      });
+      },
+    }).then((res) => {
+      const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
+      if (r?.success && r.data) updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data.summary });
+      else updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? '오류' });
+    }).catch((e: unknown) => updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
     await Promise.all([runLog, runTest]);
     setIsProcessing(false);
   };
 
-  const handleActionClick = (mode: 'log-analysis' | 'test-generation' | 'both') => {
+  const handleActionClick = (mode: 'log-analysis' | 'test-generation' | 'scenario' | 'both') => {
     if (isProcessing || hasActiveForm) return;
     const formId = `form-${Date.now()}`;
-    const content =
-      mode === 'log-analysis'
-        ? '분석할 로그 정보를 입력해 주세요.'
-        : mode === 'test-generation'
-          ? '테스트 케이스를 생성할 API 정보를 입력해 주세요.'
-          : '로그 분석과 테스트 케이스 생성에 필요한 정보를 입력해 주세요.';
+    const content = mode === 'log-analysis' ? '분석할 로그 정보를 입력해 주세요.'
+      : mode === 'test-generation' ? '테스트 케이스를 생성할 API 정보를 입력해 주세요.'
+      : mode === 'scenario' ? '시나리오를 생성할 API 엔드포인트 목록을 입력해 주세요.'
+      : '로그 분석과 테스트 케이스 생성에 필요한 정보를 입력해 주세요.';
     setMessages((prev) => [...prev, { id: formId, role: 'assistant', content, formType: mode }]);
   };
 
-  const handleCancelForm = (formMsgId: string) => {
+  const handleCancelForm = (formMsgId: string) =>
     setMessages((prev) => prev.filter((m) => m.id !== formMsgId));
-  };
 
   const handleSend = () => {
     const text = input.trim();
     if (!text || isProcessing) return;
     setInput('');
     const lower = text.toLowerCase();
-    const wantsLog =
-      lower.includes('로그') || lower.includes('분석') || lower.includes('log') || lower.includes('에러');
-    const wantsTest =
-      lower.includes('테스트') || lower.includes('생성') || lower.includes('test') || lower.includes('케이스');
-    if (wantsLog && wantsTest) {
-      handleActionClick('both');
-    } else if (wantsLog) {
-      handleActionClick('log-analysis');
-    } else if (wantsTest) {
-      handleActionClick('test-generation');
-    } else {
+    const wantsLog = lower.includes('로그') || lower.includes('분석') || lower.includes('log') || lower.includes('에러');
+    const wantsTest = lower.includes('테스트') || lower.includes('생성') || lower.includes('test') || lower.includes('케이스');
+    const wantsScenario = lower.includes('시나리오') || lower.includes('scenario') || lower.includes('e2e') || lower.includes('흐름');
+    if (wantsScenario) handleActionClick('scenario');
+    else if (wantsLog && wantsTest) handleActionClick('both');
+    else if (wantsLog) handleActionClick('log-analysis');
+    else if (wantsTest) handleActionClick('test-generation');
+    else {
       setMessages((prev) => [
         ...prev,
         { id: `user-${Date.now()}`, role: 'user', content: text },
-        {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: '아래 버튼으로 원하는 작업을 선택하거나, "로그 분석", "테스트 생성" 등의 키워드를 포함해 입력해 주세요.',
-        },
+        { id: `ai-${Date.now()}`, role: 'assistant', content: '아래 버튼으로 원하는 작업을 선택해 주세요.' },
       ]);
     }
   };
 
   return (
     <>
-      {/* Floating button */}
       {(!isOpen || isMinimized) && (
-        <button
-          onClick={() => {
-            setIsOpen(true);
-            setIsMinimized(false);
-          }}
+        <button onClick={() => { setIsOpen(true); setIsMinimized(false); }}
           className="fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-violet-600 to-indigo-700 hover:from-violet-500 hover:to-indigo-600 text-white rounded-full shadow-lg shadow-violet-500/30 hover:shadow-violet-500/50 transition-all duration-300 flex items-center justify-center z-50 group"
-          title="Orchestrator Agent"
-        >
+          title="Orchestrator Agent">
           <Bot size={24} className="group-hover:scale-110 transition-transform" />
           <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#060609] animate-pulse" />
         </button>
       )}
 
-      {/* Chat panel */}
       {isOpen && !isMinimized && (
         <div className="fixed bottom-6 right-6 w-[440px] h-[72vh] min-h-[500px] bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-up">
-          {/* Header */}
           <div className="bg-gradient-to-r from-violet-600 to-indigo-700 px-4 py-3.5 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center">
@@ -1113,27 +1014,17 @@ export function OrchestratorAgent() {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button
-                onClick={() => setIsMinimized(true)}
-                className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg transition-colors"
-                title="최소화"
-              >
+              <button onClick={() => setIsMinimized(true)}
+                className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg transition-colors" title="최소화">
                 <Minimize2 size={15} className="text-white" />
               </button>
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  setIsMinimized(false);
-                }}
-                className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg transition-colors"
-                title="닫기"
-              >
+              <button onClick={() => { setIsOpen(false); setIsMinimized(false); }}
+                className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg transition-colors" title="닫기">
                 <X size={15} className="text-white" />
               </button>
             </div>
           </div>
 
-          {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((msg) => (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -1146,29 +1037,20 @@ export function OrchestratorAgent() {
                       <span className="text-xs text-gray-400">Orchestrator</span>
                     </div>
                   )}
-                  <div
-                    className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                      msg.role === 'user'
-                        ? 'bg-violet-600 text-white rounded-tr-sm'
-                        : 'bg-[#13131a] border border-[#1f1f28] text-gray-200 rounded-tl-sm'
-                    }`}
-                  >
-                    {msg.content}
-                  </div>
+                  <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                    msg.role === 'user'
+                      ? 'bg-violet-600 text-white rounded-tr-sm'
+                      : 'bg-[#13131a] border border-[#1f1f28] text-gray-200 rounded-tl-sm'
+                  }`}>{msg.content}</div>
 
                   {msg.formType === 'log-analysis' && (
-                    <LogAnalysisFormCard
-                      formMsgId={msg.id}
-                      onSubmit={handleLogFormSubmit}
-                      onCancel={handleCancelForm}
-                    />
+                    <LogAnalysisFormCard formMsgId={msg.id} onSubmit={handleLogFormSubmit} onCancel={handleCancelForm} />
                   )}
                   {msg.formType === 'test-generation' && (
-                    <TestCaseFormCard
-                      formMsgId={msg.id}
-                      onSubmit={handleTestFormSubmit}
-                      onCancel={handleCancelForm}
-                    />
+                    <TestCaseFormCard formMsgId={msg.id} onSubmit={handleTestFormSubmit} onCancel={handleCancelForm} />
+                  )}
+                  {msg.formType === 'scenario' && (
+                    <ScenarioFormCard formMsgId={msg.id} onSubmit={handleScenarioFormSubmit} onCancel={handleCancelForm} />
                   )}
                   {msg.formType === 'both' && (
                     <BothFormCard formMsgId={msg.id} onSubmit={handleBothFormSubmit} onCancel={handleCancelForm} />
@@ -1176,9 +1058,7 @@ export function OrchestratorAgent() {
 
                   {msg.tasks && msg.tasks.length > 0 && (
                     <div className={`mt-2.5 flex gap-2 ${msg.tasks.length > 1 ? 'flex-row' : 'flex-col'}`}>
-                      {msg.tasks.map((task) => (
-                        <TaskCard key={task.type} task={task} />
-                      ))}
+                      {msg.tasks.map((task) => <TaskCard key={task.type} task={task} />)}
                     </div>
                   )}
                 </div>
@@ -1187,56 +1067,31 @@ export function OrchestratorAgent() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Action buttons */}
           <div className="border-t border-[#1f1f28] bg-[#0d0d12] px-3 pt-2.5 pb-2 shrink-0">
             <p className="text-xs text-gray-500 mb-2">액션 선택:</p>
-            <div className="flex gap-2">
-              <ActionButton
-                icon={<FileSearch size={13} />}
-                label="로그 분석"
+            <div className="grid grid-cols-2 gap-2">
+              <ActionButton icon={<FileSearch size={13} />} label="로그 분석"
                 colorClass="text-violet-300 border-violet-500/20 hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-200"
-                onClick={() => handleActionClick('log-analysis')}
-                disabled={isProcessing || hasActiveForm}
-              />
-              <ActionButton
-                icon={<TestTube2 size={13} />}
-                label="테스트 생성"
+                onClick={() => handleActionClick('log-analysis')} disabled={isProcessing || hasActiveForm} />
+              <ActionButton icon={<TestTube2 size={13} />} label="테스트 생성"
                 colorClass="text-indigo-300 border-indigo-500/20 hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-indigo-200"
-                onClick={() => handleActionClick('test-generation')}
-                disabled={isProcessing || hasActiveForm}
-              />
-              <ActionButton
-                icon={<Zap size={13} />}
-                label="동시 실행"
+                onClick={() => handleActionClick('test-generation')} disabled={isProcessing || hasActiveForm} />
+              <ActionButton icon={<GitBranch size={13} />} label="시나리오 생성"
+                colorClass="text-teal-300 border-teal-500/20 hover:border-teal-500/50 hover:bg-teal-500/10 hover:text-teal-200"
+                onClick={() => handleActionClick('scenario')} disabled={isProcessing || hasActiveForm} />
+              <ActionButton icon={<Zap size={13} />} label="동시 실행"
                 colorClass="text-amber-300 border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/10 hover:text-amber-200"
-                onClick={() => handleActionClick('both')}
-                disabled={isProcessing || hasActiveForm}
-              />
+                onClick={() => handleActionClick('both')} disabled={isProcessing || hasActiveForm} />
             </div>
           </div>
 
-          {/* Input */}
           <div className="border-t border-[#1f1f28] bg-[#0d0d12] px-3 pb-3 pt-2 shrink-0">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend();
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="직접 입력하세요..."
-                disabled={isProcessing}
-                className="flex-1 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/40 disabled:opacity-50 transition-colors"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || isProcessing}
-                className="w-9 h-9 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg flex items-center justify-center transition-colors shrink-0"
-              >
+            <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex items-center gap-2">
+              <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
+                placeholder="직접 입력하세요..." disabled={isProcessing}
+                className="flex-1 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/40 disabled:opacity-50 transition-colors" />
+              <button type="submit" disabled={!input.trim() || isProcessing}
+                className="w-9 h-9 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg flex items-center justify-center transition-colors shrink-0">
                 <Send size={15} />
               </button>
             </form>
@@ -1245,7 +1100,6 @@ export function OrchestratorAgent() {
         </div>
       )}
 
-      {/* Minimized bar */}
       {isOpen && isMinimized && (
         <div className="fixed bottom-6 right-6 bg-[#0a0a0f] border border-[#1f1f28] rounded-xl shadow-xl px-3 py-2.5 z-50 flex items-center gap-3 animate-slide-up">
           <div className="w-8 h-8 bg-gradient-to-br from-violet-600 to-indigo-700 rounded-full flex items-center justify-center shrink-0">
@@ -1255,21 +1109,12 @@ export function OrchestratorAgent() {
             <p className="text-white text-sm font-medium leading-none mb-0.5">Orchestrator Agent</p>
             <p className="text-gray-400 text-xs">Multi-agent coordinator</p>
           </div>
-          <button
-            onClick={() => setIsMinimized(false)}
-            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors ml-1"
-            title="펼치기"
-          >
+          <button onClick={() => setIsMinimized(false)}
+            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors ml-1" title="펼치기">
             <ChevronUp size={15} className="text-gray-400" />
           </button>
-          <button
-            onClick={() => {
-              setIsOpen(false);
-              setIsMinimized(false);
-            }}
-            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors"
-            title="닫기"
-          >
+          <button onClick={() => { setIsOpen(false); setIsMinimized(false); }}
+            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors" title="닫기">
             <X size={15} className="text-gray-400" />
           </button>
         </div>
