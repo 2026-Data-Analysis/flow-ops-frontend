@@ -489,6 +489,56 @@ export interface AiTestStrategyClassifyResponse {
   }>;
 }
 
+// ─── Orchestrator Agent types ─────────────────────────────────────────────────
+
+export interface OrchestratorContext {
+  service_name: string;
+  occurred_at: string;
+  raw_log: string;
+}
+
+export interface OrchestratorRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorContext;
+}
+
+export type RootCauseSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface RootCause {
+  summary: string;
+  evidence: string[];
+  severity: RootCauseSeverity;
+  suggested_fix: string;
+}
+
+export interface IncidentAgentData {
+  root_causes: RootCause[];
+  internal_report: string;
+  external_notice: string;
+}
+
+export interface OrchestratorAgentResult {
+  agent_type: string;
+  success: boolean;
+  data: IncidentAgentData | null;
+  error_message: string | null;
+}
+
+export interface OrchestratorApiResponse {
+  success: boolean;
+  data: {
+    dispatched_agents: string[];
+    agent_results: OrchestratorAgentResult[];
+    summary: string;
+  };
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string;
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
 function toQuery(params: Record<string, unknown>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -754,6 +804,12 @@ export const flowOpsApi = {
 
   classifyAiTestStrategy: (body: AiTestStrategyClassifyRequest) =>
     request<AiTestStrategyClassifyResponse>('/ai/agents/test-strategy/classify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  dispatchOrchestrator: (body: OrchestratorRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
