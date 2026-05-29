@@ -66,6 +66,12 @@ interface TestCase {
   validationRules?: string[];
 }
 
+const userRoles = ['Admin', 'User', 'Guest', 'Moderator'];
+const stateConditions = ['Logged In', 'Token Expired', 'Valid Token', 'Resource Exists', 'Rate Limited'];
+const dataVariants = ['Valid Input', 'Invalid Input', 'Boundary Value', 'Null / Empty'];
+const DEMO_TEST_GENERATION_FALLBACK_MS = 800;
+const GENERATION_POLL_INTERVAL_MS = 3000;
+const GENERATION_POLL_TIMEOUT_MS = 120_000;
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
 const EXPECTED_SPEC_PLACEHOLDER = `{
   "status": 201,
@@ -261,6 +267,8 @@ export function TestCaseGenerationPage() {
   const [isSavingTests, setIsSavingTests] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  const [runTestError, setRunTestError] = useState<string | null>(null);
   const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
   const [selectedExistingTestIds, setSelectedExistingTestIds] = useState<string[]>([]);
   const [isDeletingTests, setIsDeletingTests] = useState(false);
@@ -508,12 +516,67 @@ export function TestCaseGenerationPage() {
       setGeneratedTests(backendTests);
       setSelectedGeneratedTestIds(backendTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
-      if (backendTests.length > 0) {
-        setSaveMessage(null);
-      } else if (generationStillRunning(status.status || generation.status)) {
-        setSaveMessage('Generation is still running. Try Generate again in a moment to refresh drafts.');
-      } else {
-        setSaveMessage(status.status === 'FAILED' ? 'Backend test generation failed.' : 'Backend test generation returned no drafts.');
+      setSaveMessage(newTests.length > 0 ? null : 'AI did not return any test case drafts.');
+    } catch (error) {
+      try {
+        const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
+        const contextSummary = [
+          `${selectedApis.length} selected APIs`,
+          `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
+          `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
+          `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
+        ].join(' | ');
+        const environmentId = selectedEnvironment?.id ?? environments[0]?.id ?? 3;
+        const generation = await flowOpsApi.createTestGeneration({
+          appId: getDefaultAppId(),
+          environmentId,
+          requestedBy: DEFAULT_REQUESTER,
+          selectedApiIds: apiIds,
+          contextSummary,
+          currentCoverage,
+        });
+
+        const deadline = Date.now() + GENERATION_POLL_TIMEOUT_MS;
+        let status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
+        while (status.status !== 'COMPLETED' && status.status !== 'FAILED' && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+          status = await flowOpsApi.getTestGeneration(generation.id).catch(() => status);
+        }
+
+        const drafts = await flowOpsApi.listTestGenerationDrafts(generation.id);
+        setGenerationId(generation.id);
+        setGenerationStatus(status.status || generation.status || null);
+        const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
+        const newTests = backendTests.length > 0
+          ? backendTests
+          : allowMockData
+            ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
+            : [];
+        setGeneratedTests(newTests);
+        setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+        setExpandedGeneratedApiIds(apiIdsForGeneration);
+        setSaveMessage(newTests.length > 0 ? null : 'Backend test generation returned no drafts.');
+      } catch (fallbackError) {
+        const message =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : error instanceof Error
+              ? error.message
+              : 'Failed to generate AI test cases.';
+
+        if (allowMockData) {
+          const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
+          const newTests = await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests);
+          setGeneratedTests(newTests);
+          setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+          setExpandedGeneratedApiIds(apiIdsForGeneration);
+          setSaveMessage(null);
+        } else {
+          setGeneratedTests([]);
+          setSelectedGeneratedTestIds([]);
+          setExpandedGeneratedApiIds([]);
+          setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
@@ -551,6 +614,28 @@ export function TestCaseGenerationPage() {
       dataConstraints: [],
     });
     navigate('/execution/run');
+  };
+
+  const handleRunSavedTests = async () => {
+    if (existingTests.length === 0) return;
+    setIsRunningTests(true);
+    setRunTestError(null);
+    try {
+      const testCaseIds = existingTests
+        .map((t) => Number(t.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      await flowOpsApi.runTestCases({
+        appId: getDefaultAppId(),
+        environmentId: selectedEnvironment?.id,
+        testCaseIds: testCaseIds.length > 0 ? testCaseIds : undefined,
+        createdBy: DEFAULT_REQUESTER,
+      });
+      navigate('/monitoring/history');
+    } catch (error) {
+      setRunTestError(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+    } finally {
+      setIsRunningTests(false);
+    }
   };
 
   const toggleTestEdit = (testId: string) => {
@@ -1179,19 +1264,17 @@ export function TestCaseGenerationPage() {
                       API list source: {selectedEnvironment ? `${selectedEnvironment.branchName ? `${selectedEnvironment.branchName} / ` : ''}${selectedEnvironment.name}` : 'All API inventory sources'}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="flex items-center gap-3">
+                    {runTestError && <span className="text-xs text-red-400 max-w-xs truncate">{runTestError}</span>}
                     {existingTests.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => setSelectedExistingTestIds(allExistingTestsSelected ? [] : existingTests.map(t => t.id))}
-                        className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
+                        onClick={handleRunSavedTests}
+                        disabled={isRunningTests}
+                        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                          allExistingTestsSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
-                        }`}>
-                          {allExistingTestsSelected && <Check size={14} className="text-white" />}
-                        </span>
-                        Select all
+                        {isRunningTests ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                        {isRunningTests ? '실행 중...' : 'Run Tests'}
                       </button>
                     )}
                     <span className="text-xs text-gray-500">{existingTests.length} test cases</span>

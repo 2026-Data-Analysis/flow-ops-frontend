@@ -5,6 +5,7 @@ import { TopBar } from './TopBar';
 import { FlowIndicator } from './FlowIndicator';
 import { TestProvider } from '../contexts/TestContext';
 import { allowMockData } from '../config/runtime';
+import { OrchestratorAgent } from './OrchestratorAgent';
 
 type ThemeMode = 'dark' | 'light';
 
@@ -54,6 +55,7 @@ export function Layout() {
           <FlowIndicator />
           <Outlet />
         </div>
+        <OrchestratorAgent />
         {DevAIAssistant && (
           <Suspense fallback={null}>
             <DevAIAssistant />

@@ -394,6 +394,8 @@ export function ScenarioBuilderPage() {
   const [showCustomPromptModal, setShowCustomPromptModal] = useState(false);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
 
@@ -848,13 +850,47 @@ export function ScenarioBuilderPage() {
     setSelectedScenarioId(newScenario.id);
   };
 
+  const runScenariosDirectly = async (ids: string[]) => {
+    const numericIds = ids.map(Number).filter(Number.isFinite);
+    if (numericIds.length === 0) {
+      navigate('/execution/run', { state: { scenarioIds: ids } });
+      return;
+    }
+    setIsRunning(true);
+    setRunError(null);
+    try {
+      await flowOpsApi.runScenario({
+        appId: getDefaultAppId(),
+        environmentId: environments[0]?.id,
+        scenarioIds: numericIds,
+        createdBy: DEFAULT_REQUESTER,
+      });
+      navigate('/monitoring/history');
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
   const handleRunScenario = (scenarioId: string) => {
-    navigate('/execution/run', { state: { scenarioId } });
+    void runScenariosDirectly([scenarioId]);
   };
 
   const handleRunSelected = () => {
     if (selectedScenarioIds.length > 0) {
-      navigate('/execution/run', { state: { scenarioIds: selectedScenarioIds } });
+      void runScenariosDirectly(selectedScenarioIds);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedScenarioIds.length === 0) return;
+    const backendIds = selectedScenarioIds.map(Number).filter(Number.isFinite);
+    await Promise.all(backendIds.map((id) => flowOpsApi.deleteScenario(id).catch(() => null)));
+    setScenarios((prev) => prev.filter((s) => !selectedScenarioIds.includes(s.id)));
+    setSelectedScenarioIds([]);
+    if (selectedScenarioId && selectedScenarioIds.includes(selectedScenarioId)) {
+      setSelectedScenarioId(null);
     }
   };
 
@@ -1191,23 +1227,30 @@ export function ScenarioBuilderPage() {
               <p className="text-gray-500 text-sm">AI-powered multi-step API scenario testing</p>
             </div>
 
-            {selectedScenarioIds.length > 0 && (
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <span className="text-sm text-blue-300">{selectedScenarioIds.length} selected</span>
-                <button
-                  onClick={handleRunSelected}
-                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-                >
-                  <Play size={16} />
-                  Run
-                </button>
+            {isRunning && (
+              <div className="flex items-center gap-2 text-blue-400 text-sm">
+                <Loader2 size={16} className="animate-spin" />
+                실행 중...
+              </div>
+            )}
+            {runError && (
+              <div className="text-sm text-red-400 max-w-xs truncate">{runError}</div>
+            )}
+            {selectedScenarioIds.length > 0 && !isRunning && (
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleDeleteSelected}
-                  disabled={isDeletingScenarios}
-                  className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-[#13131a] px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-4 py-2.5 rounded-lg transition-colors text-sm"
                 >
-                  {isDeletingScenarios ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                  Delete
+                  <Trash2 size={16} />
+                  Delete ({selectedScenarioIds.length})
+                </button>
+                <button
+                  onClick={handleRunSelected}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors"
+                >
+                  <Play size={18} />
+                  Run Selected ({selectedScenarioIds.length})
                 </button>
               </div>
             )}
@@ -1256,33 +1299,12 @@ export function ScenarioBuilderPage() {
         {/* Scenario List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
-            {isLoading && (
-              <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
-                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
-                  <Loader2 size={24} className="animate-spin text-blue-400" />
-                </div>
-                <h3 className="mb-2 text-white font-semibold">Loading scenarios</h3>
-                <p className="max-w-md text-sm text-gray-500">
-                  Fetching saved scenario flows and matching them with the selected environment.
-                </p>
-
-                <div className="mt-8 grid w-full max-w-3xl gap-3">
-                  {[0, 1, 2].map((item) => (
-                    <div key={item} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
-                      <div className="mb-4 flex items-center gap-3">
-                        <div className="h-5 w-5 rounded border border-[#2f2f38] bg-[#1f1f28]" />
-                        <div className="h-4 w-40 rounded bg-[#1f1f28]" />
-                        <div className="h-5 w-20 rounded-full bg-[#1f1f28]" />
-                      </div>
-                      <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
-                      <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
-                    </div>
-                  ))}
-                </div>
+            {isLoading ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f]">
+                <Loader2 size={32} className="mb-3 text-blue-400 animate-spin" />
+                <p className="text-gray-500 text-sm">시나리오 목록을 불러오는 중...</p>
               </div>
-            )}
-
-            {!isLoading && visibleFilteredScenarios.length === 0 && (
+            ) : filteredScenarios.length === 0 ? (
               <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
                 <Sparkles size={32} className="mb-3 text-purple-400" />
                 <h3 className="mb-2 text-white font-semibold">No saved scenarios yet</h3>
@@ -1298,8 +1320,7 @@ export function ScenarioBuilderPage() {
                   Open Recommendations
                 </button>
               </div>
-            )}
-            {!isLoading && visibleFilteredScenarios.map((scenario) => {
+            ) : filteredScenarios.map((scenario) => {
               const TypeIcon = typeColors[scenario.type].icon;
               const ReasonIcon = reasonColors[scenario.reasonType].icon;
               return (
@@ -1620,10 +1641,11 @@ export function ScenarioBuilderPage() {
           <div className="p-6 border-t border-[#1f1f28]">
             <button
               onClick={() => handleRunScenario(selectedScenario.id)}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
+              disabled={isRunning}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg transition-colors font-semibold"
             >
-              <Play size={20} />
-              Run Scenario
+              {isRunning ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} />}
+              {isRunning ? '실행 중...' : 'Run Scenario'}
             </button>
           </div>
         </aside>
