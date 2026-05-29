@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import {
   Search,
@@ -9,22 +9,19 @@ import {
   Sparkles,
   Play,
   ArrowRight,
-  AlertCircle,
   ChevronDown,
   ChevronUp,
-  Lightbulb,
   BarChart3,
   FileText,
   Clock,
   Save,
+  Trash2,
   Loader2
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
 import {
   DEFAULT_REQUESTER,
   flowOpsApi,
-  getDefaultAppId,
-  type AiTestCaseDraftResponse,
   type ApiInventoryResponse,
   type EnvironmentResponse,
   type RepositoryResponse,
@@ -32,8 +29,7 @@ import {
   type TestGenerationDraftResponse,
   type TestLevel,
 } from '../api/flowOpsClient';
-import { allowMockData, isProductionBuild } from '../config/runtime';
-import { filterInventoryForEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
+import { filterEnvironmentsForBranchScope, filterInventoryForEnvironment, findDefaultBranchEnvironment, inventoryQueryParamsForScope } from '../utils/environmentScope';
 
 interface ApiEndpoint {
   id: string;
@@ -53,7 +49,7 @@ interface TestCase {
   id: string;
   draftId?: number;
   name: string;
-  type: 'success' | 'validation' | 'auth' | 'edge' | 'error';
+  type: 'success' | 'validation' | 'auth' | 'performance' | 'edge' | 'error';
   backendType?: string;
   testLevel?: TestLevel;
   apiId: string;
@@ -77,6 +73,12 @@ const DEMO_TEST_GENERATION_FALLBACK_MS = 800;
 const GENERATION_POLL_INTERVAL_MS = 3000;
 const GENERATION_POLL_TIMEOUT_MS = 120_000;
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+const EXPECTED_SPEC_PLACEHOLDER = `{
+  "status": 201,
+  "body": {
+    "status": "created"
+  }
+}`;
 
 
 const methodColors = {
@@ -92,7 +94,8 @@ const methodColors = {
 const typeColors = {
   success: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', label: 'Success' },
   validation: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Validation' },
-  auth: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Auth' },
+  auth: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Authorization' },
+  performance: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20', label: 'Performance' },
   edge: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', label: 'Edge' },
   error: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'Error' },
 };
@@ -111,6 +114,7 @@ const formatRelativeTime = (value?: string) => {
 const mapBackendType = (type?: string): TestCase['type'] => {
   const normalized = (type || '').toLowerCase();
   if (normalized.includes('auth')) return 'auth';
+  if (normalized.includes('performance') || normalized.includes('load') || normalized.includes('latency')) return 'performance';
   if (normalized.includes('edge') || normalized.includes('boundary')) return 'edge';
   if (normalized.includes('error') || normalized.includes('negative')) return 'error';
   if (normalized.includes('validation') || normalized.includes('invalid')) return 'validation';
@@ -122,22 +126,21 @@ const stringifySpec = (value?: unknown) => {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 };
 
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
+const generationStillRunning = (status?: string | null) => {
+  const normalized = String(status || '').toUpperCase();
+  return ['REQUESTED', 'QUEUED', 'PROCESSING', 'GENERATING', 'IN_PROGRESS', 'RUNNING', 'PENDING'].includes(normalized);
 };
 
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
 
-const readStoredRepositories = (): RepositoryResponse[] => {
+type StoredRegisteredRepository = RepositoryResponse & {
+  title?: string;
+  selectedBranches?: string[];
+};
+
+const readStoredRepositories = (): StoredRegisteredRepository[] => {
   try {
     const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
     return Array.isArray(parsed) ? parsed : [];
@@ -145,6 +148,19 @@ const readStoredRepositories = (): RepositoryResponse[] => {
     return [];
   }
 };
+
+const titleForAppId = (appId: number, repositories: RepositoryResponse[], storedRepositories: StoredRegisteredRepository[]) => {
+  const repository = repositories.find((item) => item.appId === appId);
+  const stored = storedRepositories.find((item) => item.appId === appId);
+  return repository?.appTitle || stored?.title || stored?.appTitle || repository?.fullName?.split('/').pop() || stored?.fullName?.split('/').pop() || `Application ${appId}`;
+};
+
+const mergeRepositoryScope = (repository: RepositoryResponse | undefined, stored: StoredRegisteredRepository | undefined) => ({
+  ...stored,
+  ...repository,
+  defaultBranch: repository?.defaultBranch || stored?.defaultBranch,
+  selectedBranches: stored?.selectedBranches,
+});
 
 const normalizeApiInventory = (inventory: ApiInventoryResponse): ApiEndpoint => {
   return {
@@ -205,9 +221,9 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     role: draft.userRole || draft.role,
     stateCondition,
     dataVariant: draft.dataVariant,
-    status: 'new',
+    status: draft.duplicate ? 'duplicate' : 'new',
     description: draft.description,
-    expectedResult: draft.expectedResult,
+    expectedResult: draft.expectedResult || draft.expectedSpec,
     requestPreview: requestSpec,
     requestSpec,
     assertionSpec,
@@ -216,41 +232,6 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
       : undefined,
   };
 };
-
-const normalizeAiDraft = (draft: AiTestCaseDraftResponse, index: number): TestCase => ({
-  id: `ai-draft-${draft.endpoint_id || draft.apiId || index}-${crypto.randomUUID()}`,
-  name: draft.title,
-  type: mapBackendType(draft.type),
-  backendType: draft.type,
-  testLevel: draft.testLevel,
-  apiId: String(draft.apiId || draft.endpoint_id || ''),
-  role: draft.userRole,
-  stateCondition: draft.stateCondition,
-  dataVariant: draft.dataVariant,
-  status: draft.duplicate ? 'duplicate' : 'new',
-  description: draft.description,
-  expectedResult: draft.expectedSpec,
-  requestPreview: draft.requestSpec,
-  requestSpec: draft.requestSpec,
-  assertionSpec: draft.assertionSpec,
-});
-
-const buildMockGeneratedTests: (
-  selectedApis: ApiEndpoint[],
-  roles: string[],
-  states: string[],
-  variants: string[],
-  existingTests: TestCase[],
-) => Promise<TestCase[]> = import.meta.env.DEV ? async (
-  selectedApis: ApiEndpoint[],
-  roles: string[],
-  states: string[],
-  variants: string[],
-  existingTests: TestCase[],
-) => {
-    const mock = await import('../mock/testCaseGenerationMock');
-    return mock.buildMockGeneratedTests(selectedApis, roles, states, variants, existingTests);
-  } : async () => [];
 
 export function TestCaseGenerationPage() {
   const navigate = useNavigate();
@@ -264,6 +245,7 @@ export function TestCaseGenerationPage() {
   const [isProjectLoading, setIsProjectLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [mainApplicationId, setMainApplicationId] = useState<number | null>(null);
   const [activeRepositoryId, setActiveRepositoryId] = useState<number | null>(null);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('all');
@@ -275,11 +257,6 @@ export function TestCaseGenerationPage() {
   const [selectedDomain, setSelectedDomain] = useState('all');
   const [methodFilter, setMethodFilter] = useState('all');
   const [expandedGeneratedApiIds, setExpandedGeneratedApiIds] = useState<string[]>([]);
-
-  // Context Builder State
-  const [selectedRoles, setSelectedRoles] = useState<string[]>(['Admin', 'User']);
-  const [selectedStates, setSelectedStates] = useState<string[]>(['Logged In', 'Token Expired']);
-  const [selectedDataVariants, setSelectedDataVariants] = useState<string[]>(['Valid Input', 'Invalid Input']);
 
   // Tests State
   const [existingTests, setExistingTests] = useState<TestCase[]>([]);
@@ -293,6 +270,10 @@ export function TestCaseGenerationPage() {
   const [isRunningTests, setIsRunningTests] = useState(false);
   const [runTestError, setRunTestError] = useState<string | null>(null);
   const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
+  const [selectedExistingTestIds, setSelectedExistingTestIds] = useState<string[]>([]);
+  const [isDeletingTests, setIsDeletingTests] = useState(false);
+  const [isLoadingExistingTests, setIsLoadingExistingTests] = useState(false);
+  const [editingExistingTestId, setEditingExistingTestId] = useState<string | null>(null);
 
   // Panel State
   const [rightPanelMode, setRightPanelMode] = useState<'existing' | 'comparison' | 'generated' | 'hidden'>('hidden');
@@ -303,25 +284,40 @@ export function TestCaseGenerationPage() {
     flowOpsApi
       .ensureProject()
       .then(async (project) => {
-        const [items, repositories] = await Promise.all([
-          flowOpsApi.listEnvironments(getDefaultAppId()).catch(() => [] as EnvironmentResponse[]),
-          flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]),
-        ]);
-        return { project, items, repositories };
-      })
-      .then(({ project, items, repositories }) => {
-        if (!active) return;
+        const mainApplication = await flowOpsApi.resolveMainApplication();
+        const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
         const storedRepositories = readStoredRepositories();
-        const activeRepository =
-          repositories.find((repository) => repository.appId === activeApplication.appId) ||
-          storedRepositories.find((repository) => repository.appId === activeApplication.appId);
+        let selectedApplication = mainApplication;
+        let items = await flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]);
+        console.info('[TestCaseGeneration] environment candidates', {
+          resolvedMainApplication: mainApplication,
+          activeApplication,
+          selectedApplication,
+          environmentCount: items.length,
+          environments: items.map((environment) => ({
+            id: environment.id,
+            appId: environment.appId,
+            name: environment.name,
+            branchName: environment.branchName,
+            repositoryId: environment.repositoryId,
+          })),
+        });
+        return { project, selectedApplication, items, repositories, storedRepositories };
+      })
+      .then(({ project, selectedApplication, items, repositories, storedRepositories }) => {
+        if (!active) return;
+        const mainRepository =
+          mergeRepositoryScope(
+            repositories.find((repository) => repository.appId === selectedApplication.appId),
+            storedRepositories.find((repository) => repository.appId === selectedApplication.appId),
+          );
 
         setProjectId(project.id);
-        setActiveRepositoryId(activeRepository?.id ? Number(activeRepository.id) : null);
-        setEnvironments(items);
-        if (items.length > 0 && selectedEnvironmentId === 'all') {
-          setSelectedEnvironmentId(String(items[0].id));
-        }
+        setMainApplicationId(selectedApplication.appId);
+        setActiveRepositoryId(mainRepository?.id ? Number(mainRepository.id) : null);
+        const scopedItems = filterEnvironmentsForBranchScope(items, mainRepository);
+        setEnvironments(scopedItems);
+        setSelectedEnvironmentId(String(findDefaultBranchEnvironment(scopedItems, mainRepository?.defaultBranch)?.id ?? 'all'));
       })
       .catch((error) => {
         if (!active) return;
@@ -337,7 +333,7 @@ export function TestCaseGenerationPage() {
     return () => {
       active = false;
     };
-  }, [activeApplication.appId]);
+  }, [activeApplication.appId, activeApplication.title]);
 
   useEffect(() => {
     let active = true;
@@ -455,10 +451,18 @@ export function TestCaseGenerationPage() {
   };
 
   const handleGenerateTests = async (apiIdsForGeneration = selectedApiIdsForGeneration) => {
+    const appId = mainApplicationId ?? activeApplication.appId;
     const apiIds = apiIdsForGeneration
       .map((id) => Number(id))
       .filter((id) => Number.isFinite(id) && id > 0);
-    if (apiIds.length === 0) return;
+    if (!appId) {
+      setSaveMessage('Select an App before generating tests.');
+      return;
+    }
+    if (apiIds.length === 0) {
+      setSaveMessage('Select APIs from a branch/environment source.');
+      return;
+    }
 
     setIsGenerating(true);
     setRightPanelMode('hidden');
@@ -466,81 +470,51 @@ export function TestCaseGenerationPage() {
     setGenerationStatus(null);
     setSaveMessage(null);
 
+    const contextSummary = [
+      `${apiIds.length} selected APIs`,
+    ].join(' | ');
+
     try {
-      const selectedApis = apis.filter((api) => apiIdsForGeneration.includes(api.id));
-      const contextSummary = [
-        `${selectedApis.length} selected APIs`,
-        `roles: ${selectedRoles.join(', ') || 'backend defaults'}`,
-        `edge states: ${selectedStates.join(', ') || 'backend defaults'}`,
-        `data variants: ${selectedDataVariants.join(', ') || 'backend defaults'}`,
-      ].join(' | ');
-
-      const aiResponse = await flowOpsApi.generateAiTestCases({
-        agent: 'TEST_CASE_GENERATOR',
-        requestId: crypto.randomUUID(),
-        requestedBy: DEFAULT_REQUESTER,
-        project: {
-          projectId: projectId || undefined,
-          appId: getDefaultAppId(),
-          appName: activeApplication.title,
-        },
-        environment: selectedEnvironment
-          ? {
-              environmentId: selectedEnvironment.id,
-              name: selectedEnvironment.name,
-              baseUrl: selectedEnvironment.baseUrl,
-              defaultTestLevel: selectedEnvironment.defaultTestLevel,
-            }
-          : undefined,
-        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
-        generationContext: {
-          mode: 'SELECTED_APIS',
-          testLevel: selectedEnvironment?.defaultTestLevel || 'REGRESSION',
-          currentCoverage,
-          contextSummary,
-        },
-        apis: selectedApis.map((api) => ({
-          apiId: Number(api.id),
-          endpoint_id: api.id,
-          method: api.method,
-          path: api.path,
-          domainTag: api.domain,
-          request_body_schema: api.requestSchema && typeof api.requestSchema === 'object' ? api.requestSchema as object : undefined,
-          response_schema: api.responseSchema && typeof api.responseSchema === 'object' ? api.responseSchema as object : undefined,
-        })),
-        existingTestCases: existingTests
-          .filter((test) => apiIdsForGeneration.includes(test.apiId))
-          .map((test) => ({
-            apiId: Number(test.apiId),
-            title: test.name,
-            type: test.backendType || test.type,
-            userRole: test.role,
-            stateCondition: test.stateCondition,
-            dataVariant: test.dataVariant,
-            requestSpec: test.requestSpec,
-            expectedSpec: test.expectedResult,
-            assertionSpec: test.assertionSpec,
-          })),
+      console.info('[TestCaseGeneration] requesting backend generation', {
+        appId,
+        environmentId: selectedEnvironment?.id,
+        selectedApiIds: apiIds,
+        contextSummary,
       });
-      setGenerationStatus('AI_DRAFTED');
-      const backendTests = (aiResponse.drafts || []).map(normalizeAiDraft).map((test) => {
-        const isDuplicate = existingTests.some(
-          (existing) =>
-            existing.apiId === test.apiId &&
-            existing.role === test.role &&
-            existing.stateCondition === test.stateCondition &&
-            existing.dataVariant === test.dataVariant,
-        );
-        return { ...test, status: isDuplicate ? 'duplicate' : 'new' } as TestCase;
-      }).filter((test) => apiIdsForGeneration.includes(test.apiId));
-      const newTests = backendTests.length > 0
-        ? backendTests
-        : allowMockData
-          ? await buildMockGeneratedTests(selectedApis, selectedRoles, selectedStates, selectedDataVariants, existingTests)
-          : [];
+      const generation = await flowOpsApi.createTestGeneration({
+        appId,
+        environmentId: selectedEnvironment?.id,
+        requestedBy: DEFAULT_REQUESTER,
+        selectedApiIds: apiIds,
+        contextSummary,
+        currentCoverage,
+      });
+      setGenerationId(generation.id);
+      setGenerationStatus(generation.status || 'REQUESTED');
+      setSaveMessage('AI is generating test case drafts. This can take a little while.');
 
-      setGeneratedTests(newTests);
-      setSelectedGeneratedTestIds(newTests.map((test) => test.id));
+      let status = await flowOpsApi.getTestGeneration(generation.id).catch(() => generation);
+      let drafts = await flowOpsApi.listTestGenerationDrafts(generation.id).catch(() => [] as TestGenerationDraftResponse[]);
+
+      for (let attempt = 0; attempt < 20 && drafts.length === 0 && generationStillRunning(status.status || generation.status); attempt += 1) {
+        setGenerationStatus(status.status || generation.status || 'GENERATING');
+        setSaveMessage(`Generating drafts... checked ${attempt + 1} time${attempt === 0 ? '' : 's'}.`);
+        await wait(2500);
+        status = await flowOpsApi.getTestGeneration(generation.id).catch(() => status);
+        drafts = await flowOpsApi.listTestGenerationDrafts(generation.id).catch(() => [] as TestGenerationDraftResponse[]);
+      }
+
+      console.info('[TestCaseGeneration] backend generation response', {
+        generation,
+        status,
+        draftCount: drafts.length,
+        drafts,
+      });
+
+      setGenerationStatus(status.status || generation.status || null);
+      const backendTests = drafts.map(normalizeDraft).filter((test) => apiIdsForGeneration.includes(test.apiId));
+      setGeneratedTests(backendTests);
+      setSelectedGeneratedTestIds(backendTests.map((test) => test.id));
       setExpandedGeneratedApiIds(apiIdsForGeneration);
       setSaveMessage(newTests.length > 0 ? null : 'AI did not return any test case drafts.');
     } catch (error) {
@@ -604,6 +578,13 @@ export function TestCaseGenerationPage() {
           setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
         }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
+
+      setGeneratedTests([]);
+      setSelectedGeneratedTestIds([]);
+      setExpandedGeneratedApiIds([]);
+      setSaveMessage(message);
     } finally {
       setIsGenerating(false);
     }
@@ -628,9 +609,9 @@ export function TestCaseGenerationPage() {
 
     setSelectedAPIs(selectedApiData);
     setTestContext({
-      businessRules: selectedRoles,
-      edgeCases: selectedStates,
-      dataConstraints: selectedDataVariants,
+      businessRules: [],
+      edgeCases: [],
+      dataConstraints: [],
     });
     navigate('/execution/run');
   };
@@ -659,6 +640,62 @@ export function TestCaseGenerationPage() {
 
   const toggleTestEdit = (testId: string) => {
     setExpandedTestId(expandedTestId === testId ? null : testId);
+    if (expandedTestId === testId) setEditingExistingTestId(null);
+  };
+
+  const toggleExistingTestSelection = (testId: string) => {
+    setSelectedExistingTestIds(prev =>
+      prev.includes(testId) ? prev.filter(id => id !== testId) : [...prev, testId]
+    );
+  };
+
+  const handleDeleteSelectedExisting = async () => {
+    if (selectedExistingTestIds.length === 0) return;
+    if (!window.confirm(`선택한 ${selectedExistingTestIds.length}개 테스트케이스를 삭제하시겠습니까?`)) return;
+    setIsDeletingTests(true);
+    await Promise.all(
+      selectedExistingTestIds.map(id => flowOpsApi.deleteTestCase(Number(id)).catch(() => null))
+    );
+    setExistingTests(prev => prev.filter(t => !selectedExistingTestIds.includes(t.id)));
+    setSelectedExistingTestIds([]);
+    setIsDeletingTests(false);
+  };
+
+  const handleRunSelectedExisting = () => {
+    const selected = existingTests.filter(t => selectedExistingTestIds.includes(t.id));
+    const apiData = selected.map(t => {
+      const api = apis.find(a => a.id === t.apiId);
+      return { id: t.id, name: t.name, endpoint: api?.path || '', method: (api?.method || 'GET') as any };
+    });
+    setSelectedAPIs(apiData);
+    navigate('/execution/run', {
+      state: {
+        selectedTestCaseIds: selectedExistingTestIds.map(Number),
+        selectedTestCases: selected.map((test) => ({ id: Number(test.id), name: test.name })),
+      },
+    });
+  };
+
+  const handleSaveExistingTestEdit = async (test: TestCase) => {
+    try {
+      await flowOpsApi.updateTestCase(Number(test.id), {
+        name: test.name,
+        description: test.description,
+        expectedResult: test.expectedResult,
+        expectedSpec: test.expectedResult,
+        type: test.backendType || test.type,
+        testLevel: test.testLevel,
+        userRole: test.role,
+        stateCondition: test.stateCondition,
+        dataVariant: test.dataVariant,
+        requestSpec: test.requestSpec || test.requestPreview,
+        assertionSpec: test.assertionSpec,
+      });
+      setEditingExistingTestId(null);
+      setExistingTests(prev => prev.map(t => t.id === test.id ? { ...t, isEdited: false } : t));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '저장에 실패했습니다.');
+    }
   };
 
   const updateTestCase = (testId: string, updates: Partial<TestCase>) => {
@@ -688,8 +725,13 @@ export function TestCaseGenerationPage() {
   };
 
   const handleSaveSelectedTests = async () => {
+    const appId = mainApplicationId ?? activeApplication.appId;
     const testsToSave = generatedTests.filter((test) => selectedGeneratedTestIds.includes(test.id));
     if (testsToSave.length === 0) return;
+    if (!appId) {
+      setSaveMessage('Select an App before saving test cases.');
+      return;
+    }
 
     const invalidTest = testsToSave.find((test) => !test.name.trim());
     if (invalidTest) {
@@ -704,6 +746,7 @@ export function TestCaseGenerationPage() {
       const demoTestsToSave = testsToSave.filter((test) => !test.draftId);
       const result = generationId && backendDraftsToSave.length > 0
         ? await flowOpsApi.saveTestGenerationDrafts(generationId, {
+            appId,
             testCases: backendDraftsToSave.map((test) => ({
               draftId: test.draftId as number,
               name: test.name.trim(),
@@ -715,18 +758,34 @@ export function TestCaseGenerationPage() {
               dataVariant: test.dataVariant,
               requestSpec: test.requestSpec || test.requestPreview,
               expectedResult: test.expectedResult?.trim() || '',
+              expectedSpec: test.expectedResult?.trim() || '',
               assertionSpec: test.assertionSpec,
             })),
           })
         : [];
 
       const saved = Array.isArray(result) ? result : result.testCases || result.saved || [];
-      const normalizedSaved = saved.length
-        ? saved.map(normalizeTestCase)
+      const savedApiIds = Array.from(
+        new Set([
+          ...backendDraftsToSave.map((test) => Number(test.apiId)),
+          ...(!Array.isArray(result) && Array.isArray(result.apiIds) ? result.apiIds.map(Number) : []),
+        ].filter((apiId) => Number.isFinite(apiId) && apiId > 0)),
+      );
+      const refreshedSaved = saved.length
+        ? saved
+        : (
+            await Promise.all(
+              savedApiIds.map((apiId) =>
+                flowOpsApi.listTestCasesByApi(apiId).catch(() => [] as TestCaseResponse[]),
+              ),
+            )
+          ).flat();
+      const normalizedSaved = refreshedSaved.length
+        ? refreshedSaved.map(normalizeTestCase)
         : backendDraftsToSave.map((test) => ({ ...test, status: 'existing' as const }));
       const createdDirectDrafts = await Promise.all(
         demoTestsToSave.map((test) =>
-          flowOpsApi.createTestCase(getDefaultAppId(), {
+          flowOpsApi.createTestCase(appId, {
             apiId: Number(test.apiId),
             name: test.name.trim(),
             title: test.name.trim(),
@@ -738,6 +797,7 @@ export function TestCaseGenerationPage() {
             dataVariant: test.dataVariant,
             requestSpec: test.requestSpec || test.requestPreview,
             expectedResult: test.expectedResult?.trim() || '',
+            expectedSpec: test.expectedResult?.trim() || '',
             assertionSpec: test.assertionSpec,
           }).catch(() => null),
         ),
@@ -764,32 +824,11 @@ export function TestCaseGenerationPage() {
     }
   };
 
-  // Matrix data
-  const matrixData = selectedRoles.map(role => ({
-    role,
-    cells: selectedStates.flatMap(state =>
-      selectedDataVariants.map(variant => {
-        const hasExisting = existingTests.some(
-          t => selectedApiIdsForGeneration.includes(t.apiId) && t.role === role && t.stateCondition === state && t.dataVariant === variant
-        );
-        const hasGenerated = generatedTests.some(
-          t => t.role === role && t.stateCondition === state && t.dataVariant === variant
-        );
-        return {
-          state,
-          variant,
-          hasExisting,
-          hasGenerated,
-          isMissing: !hasExisting && !hasGenerated,
-        };
-      })
-    ),
-  }));
-
   // Calculate stats
   const existingCount = existingTests.filter(t => selectedApiIdsForGeneration.includes(t.apiId)).length;
   const newCount = generatedTests.filter(t => t.status === 'new').length;
   const duplicateCount = generatedTests.filter(t => t.status === 'duplicate').length;
+  const allExistingTestsSelected = existingTests.length > 0 && selectedExistingTestIds.length === existingTests.length;
   const currentCoverage = selectedApiIdsForGeneration.length > 0
     ? Math.round(apis.filter(a => selectedApiIdsForGeneration.includes(a.id)).reduce((sum, a) => sum + a.coverage, 0) / selectedApiIdsForGeneration.length)
     : 0;
@@ -829,19 +868,23 @@ export function TestCaseGenerationPage() {
                 />
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <select
-                  value={selectedEnvironmentId}
-                  onChange={(e) => setSelectedEnvironmentId(e.target.value)}
-                  className="px-3 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
-                >
-                  <option value="all">All Environments</option>
-                  {environments.map((environment) => (
-                    <option key={environment.id} value={String(environment.id)}>
-                      {environment.name}
-                      {environment.branchName ? ` (${environment.branchName})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <label className="flex items-center gap-2 text-xs text-gray-500">
+                  API Source
+                  <select
+                    aria-label="API inventory source"
+                    value={selectedEnvironmentId}
+                    onChange={(e) => setSelectedEnvironmentId(e.target.value)}
+                    className="px-3 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+                  >
+                    <option value="all">All API inventory sources</option>
+                    {environments.map((environment) => (
+                      <option key={environment.id} value={String(environment.id)}>
+                        {environment.branchName ? `${environment.branchName} / ` : ''}
+                        {environment.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <select
                   value={methodFilter}
                   onChange={(e) => setMethodFilter(e.target.value)}
@@ -919,13 +962,13 @@ export function TestCaseGenerationPage() {
               <div className="text-sm text-gray-400">
                 {pendingApiIdsForGeneration.length} API{pendingApiIdsForGeneration.length !== 1 ? 's' : ''} selected
               </div>
-              <button
-                onClick={handleConfirmApiSelection}
-                disabled={pendingApiIdsForGeneration.length === 0}
-                className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Sparkles size={18} />
-                Generate for Selected APIs
+                <button
+                  onClick={handleConfirmApiSelection}
+                  disabled={pendingApiIdsForGeneration.length === 0 || isGenerating}
+                  className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                {isGenerating ? <Clock size={18} className="animate-pulse" /> : <Sparkles size={18} />}
+                {isGenerating ? 'Generating...' : 'Generate for Selected APIs'}
               </button>
             </div>
           </div>
@@ -941,76 +984,99 @@ export function TestCaseGenerationPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-white text-2xl font-semibold mb-1">AI Test Generation</h1>
-                <p className="text-gray-500 text-sm">Generate, browse, and manage test cases</p>
+                <p className="text-gray-500 text-sm">Select APIs from a branch/environment source. Generated test cases are saved at the App level.</p>
               </div>
 
-              {false && generatedTests.length > 0 && (
-                <button
-                  onClick={() => setRightPanelMode(prev => prev === 'comparison' ? 'generated' : 'comparison')}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white rounded-lg transition-all text-sm"
-                >
-                  {rightPanelMode === 'comparison' ? (
-                    <>
-                      <FileText size={16} />
-                      View Test Cases
-                    </>
-                  ) : (
-                    <>
-                      <BarChart3 size={16} />
-                      Compare Results
-                    </>
-                  )}
-                </button>
+              {selectedExistingTestIds.length > 0 && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="text-sm text-blue-300">{selectedExistingTestIds.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={handleRunSelectedExisting}
+                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                  >
+                    <Play size={16} />
+                    Run
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelectedExisting}
+                    disabled={isDeletingTests}
+                    className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-[#13131a] px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDeletingTests ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                    Delete
+                  </button>
+                </div>
               )}
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <select
-                value={selectedEnvironmentId}
-                onChange={(e) => setSelectedEnvironmentId(e.target.value)}
-                className="bg-[#13131a] border border-[#1f1f28] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/30"
-              >
-                <option value="all">All Environments</option>
-                {environments.map((environment) => (
-                  <option key={environment.id} value={String(environment.id)}>
-                    {environment.name}
-                    {environment.branchName ? ` (${environment.branchName})` : ''}
-                  </option>
-                ))}
-              </select>
-
               <button
                 onClick={() => {
                   setPendingApiIdsForGeneration(selectedApiIdsForGeneration);
                   setShowApiModal(true);
                 }}
-                className="scenario-ai-action flex items-center justify-center gap-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-xl transition-colors"
+                disabled={isGenerating}
+                className="scenario-ai-action flex items-center justify-center gap-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
               >
-                <Sparkles size={20} />
-                <span className="font-semibold">{generatedTests.length > 0 ? 'Add APIs' : 'Generate Test Cases'}</span>
+                {isGenerating ? <Clock size={20} className="animate-pulse" /> : <Sparkles size={20} />}
+                <span className="font-semibold">
+                  {isGenerating ? 'Generating...' : generatedTests.length > 0 ? 'Add APIs' : 'Generate Test Cases'}
+                </span>
               </button>
 
-              {selectedApiIdsForGeneration.length > 0 && generatedTests.length === 0 && (
+              {selectedApiIdsForGeneration.length > 0 && generatedTests.length === 0 && !isGenerating && (
                 <button
                   onClick={() => handleGenerateTests()}
                   disabled={isGenerating}
                   className="scenario-ai-action flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
                 >
-                  <Sparkles size={18} />
+                  {isGenerating ? <Clock size={18} className="animate-pulse" /> : <Sparkles size={18} />}
                   {isGenerating ? 'Generating...' : `Generate for Selected APIs (${selectedApiIdsForGeneration.length})`}
                 </button>
               )}
 
-              {generatedTests.length > 0 && (
+              {(generatedTests.length > 0 || isGenerating) && (
                 <button
                   onClick={handleRunGeneratedTests}
-                  className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl transition-colors"
+                  disabled={isGenerating}
+                  className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl transition-colors ${
+                    isGenerating
+                      ? 'cursor-not-allowed bg-[#13131a] text-gray-500 ring-1 ring-[#1f1f28]'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
                 >
                   <Play size={18} />
                   Run Generated Tests
                 </button>
               )}
             </div>
+
+            {isGenerating && (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-5">
+                <div className="flex items-start gap-3">
+                  <Clock size={20} className="mt-0.5 flex-shrink-0 animate-pulse text-blue-300" />
+                  <div>
+                    <div className="text-sm font-semibold text-blue-100">Generating test case drafts</div>
+                    <div className="mt-1 text-sm text-blue-200/80">
+                      {saveMessage || 'Waiting for the backend AI generation job to finish.'}
+                    </div>
+                    {generationId && (
+                      <div className="mt-2 text-xs text-blue-200/60">
+                        Generation #{generationId}{generationStatus ? ` · ${generationStatus}` : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isGenerating && generatedTests.length === 0 && saveMessage && (
+              <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+                {saveMessage}
+              </div>
+            )}
 
             {generatedTests.length > 0 && (
               <div className="space-y-4">
@@ -1065,20 +1131,6 @@ export function TestCaseGenerationPage() {
                   const apiDuplicateCount = apiGeneratedTests.filter((test) => test.status === 'duplicate').length;
                   const apiProjectedCoverage = Math.min(100, api.coverage + apiNewCount * 3);
                   const isExpanded = expandedGeneratedApiIds.includes(api.id);
-                  const apiMatrixData = selectedRoles.map(role => ({
-                    role,
-                    cells: selectedStates.flatMap(state =>
-                      selectedDataVariants.map(variant => {
-                        const hasExisting = existingTests.some(
-                          t => t.apiId === api.id && t.role === role && t.stateCondition === state && t.dataVariant === variant
-                        );
-                        const hasGenerated = apiGeneratedTests.some(
-                          t => t.role === role && t.stateCondition === state && t.dataVariant === variant
-                        );
-                        return { state, variant, hasExisting, hasGenerated, isMissing: !hasExisting && !hasGenerated };
-                      })
-                    ),
-                  }));
 
                   return (
                     <div key={api.id} className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl overflow-hidden">
@@ -1111,42 +1163,6 @@ export function TestCaseGenerationPage() {
                               <div className="bg-[#13131a] border border-[#1f1f28] rounded-lg p-4"><div className="text-xs text-gray-500 mb-1">Existing</div><div className="text-2xl text-white font-semibold">{apiExistingCount}</div></div>
                               <div className="bg-[#13131a] border border-green-500/20 rounded-lg p-4"><div className="text-xs text-gray-500 mb-1">New</div><div className="text-2xl text-green-400 font-semibold">{apiNewCount}</div></div>
                               <div className="bg-[#13131a] border border-yellow-500/20 rounded-lg p-4"><div className="text-xs text-gray-500 mb-1">Duplicates</div><div className="text-2xl text-yellow-400 font-semibold">{apiDuplicateCount}</div></div>
-                            </div>
-                          </div>
-
-                          <div className="order-3">
-                            <h3 className="text-white mb-3 flex items-center gap-2"><BarChart3 size={18} className="text-blue-400" />Coverage Matrix</h3>
-                            <div className="overflow-x-auto">
-                              <table className="w-max min-w-full border-separate border-spacing-x-1 border-spacing-y-1">
-                                <thead>
-                                  <tr>
-                                    <th className="sticky left-0 z-10 w-28 bg-[#0a0a0f] pr-3 text-left align-bottom text-xs font-medium text-gray-500">Role</th>
-                                    {selectedStates.flatMap(state => selectedDataVariants.map(variant => (
-                                      <th key={`${api.id}-${state}-${variant}`} className="w-14 max-w-14 align-bottom text-center text-[10px] font-medium leading-tight text-gray-500">
-                                        <div className="mx-auto flex h-10 w-12 items-end justify-center break-words" title={`${state} / ${variant}`}>
-                                          {state.slice(0, 4)}/{variant.slice(0, 4)}
-                                        </div>
-                                      </th>
-                                    )))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {apiMatrixData.map((row) => (
-                                    <tr key={`${api.id}-${row.role}`}>
-                                      <td className="sticky left-0 z-10 w-28 bg-[#0a0a0f] pr-3 text-sm font-medium text-white">{row.role}</td>
-                                      {row.cells.map((cell, idx) => (
-                                        <td key={idx} className="h-12 w-14 min-w-14 p-1 align-middle">
-                                          <div className={`mx-auto flex h-10 w-10 items-center justify-center rounded-lg ${cell.hasGenerated ? 'bg-green-500/20 border-2 border-green-500/40' : cell.hasExisting ? 'bg-blue-500/20 border-2 border-blue-500/40' : 'bg-red-500/10 border-2 border-red-500/20'}`}>
-                                            {cell.hasGenerated && <Sparkles size={16} className="text-green-400" />}
-                                            {!cell.hasGenerated && cell.hasExisting && <CheckCircle2 size={16} className="text-blue-400" />}
-                                            {cell.isMissing && <AlertCircle size={16} className="text-red-400" />}
-                                          </div>
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
                             </div>
                           </div>
 
@@ -1196,15 +1212,11 @@ export function TestCaseGenerationPage() {
                                       <label className="block text-xs text-gray-500 mb-2">Description</label>
                                       <textarea value={test.description || ''} onChange={(e) => updateTestCase(test.id, { description: e.target.value })} rows={3} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none" />
                                     </div>
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                                      <div>
-                                        <label className="block text-xs text-gray-500 mb-2">User Role</label>
-                                        <input value={test.role || ''} onChange={(e) => updateTestCase(test.id, { role: e.target.value })} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30" />
-                                      </div>
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                       <div>
                                         <label className="block text-xs text-gray-500 mb-2">Test Level</label>
                                         <select value={test.testLevel || ''} onChange={(e) => updateTestCase(test.id, { testLevel: e.target.value ? e.target.value as TestLevel : undefined })} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30">
-                                          <option value="">Environment default</option>
+                                          <option value="">Source default</option>
                                           <option value="SMOKE">SMOKE</option>
                                           <option value="SANITY">SANITY</option>
                                           <option value="REGRESSION">REGRESSION</option>
@@ -1216,19 +1228,9 @@ export function TestCaseGenerationPage() {
                                         <input value={test.backendType || ''} onChange={(e) => updateTestCase(test.id, { backendType: e.target.value, type: mapBackendType(e.target.value) })} placeholder="HAPPY_PATH" className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30" />
                                       </div>
                                     </div>
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                      <div>
-                                        <label className="block text-xs text-gray-500 mb-2">Edge States</label>
-                                        <textarea value={test.stateCondition || ''} onChange={(e) => updateTestCase(test.id, { stateCondition: e.target.value })} rows={2} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none" />
-                                      </div>
-                                      <div>
-                                        <label className="block text-xs text-gray-500 mb-2">Data Variant</label>
-                                        <textarea value={test.dataVariant || ''} onChange={(e) => updateTestCase(test.id, { dataVariant: e.target.value })} rows={2} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none" />
-                                      </div>
-                                    </div>
                                     <div>
-                                      <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                                      <textarea value={test.expectedResult || ''} onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })} rows={3} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none" />
+                                      <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                                      <textarea value={test.expectedResult || ''} onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })} rows={5} placeholder={EXPECTED_SPEC_PLACEHOLDER} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none" />
                                     </div>
                                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                                       <div>
@@ -1253,13 +1255,13 @@ export function TestCaseGenerationPage() {
               </div>
             )}
 
-            {generatedTests.length === 0 && (
+            {!isGenerating && generatedTests.length === 0 && (
               <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl overflow-hidden">
                 <div className="p-5 border-b border-[#1f1f28] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h3 className="text-white font-semibold">Saved Test Cases</h3>
+                    <h3 className="text-white font-semibold">Previously saved test cases for this App</h3>
                     <p className="text-gray-500 text-sm">
-                      Previously saved test cases for {selectedEnvironment?.name || 'all environments'}
+                      API list source: {selectedEnvironment ? `${selectedEnvironment.branchName ? `${selectedEnvironment.branchName} / ` : ''}${selectedEnvironment.name}` : 'All API inventory sources'}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -1279,10 +1281,30 @@ export function TestCaseGenerationPage() {
                   </div>
                 </div>
 
-                {(isLoadingApis || isProjectLoading) ? (
-                  <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-                    <Loader2 size={32} className="text-blue-400 mb-3 animate-spin" />
-                    <p className="text-gray-500 text-sm">테스트 케이스 목록을 불러오는 중...</p>
+                {isLoadingApis ? (
+                  <div className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center">
+                    <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                      <Loader2 size={24} className="animate-spin text-blue-400" />
+                    </div>
+                    <h3 className="mb-2 text-white font-semibold">Loading test cases</h3>
+                    <p className="max-w-md text-sm text-gray-500">
+                      Fetching saved test cases and matching them with the selected environment.
+                    </p>
+
+                    <div className="mt-8 grid w-full max-w-3xl gap-3">
+                      {[0, 1, 2].map((item) => (
+                        <div key={item} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
+                          <div className="mb-4 flex items-center gap-3">
+                            <div className="h-4 w-4 rounded border border-[#2f2f38] bg-[#1f1f28]" />
+                            <div className="h-5 w-20 rounded bg-[#1f1f28]" />
+                            <div className="h-5 w-16 rounded bg-[#1f1f28]" />
+                            <div className="h-4 w-44 rounded bg-[#1f1f28]" />
+                          </div>
+                          <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
+                          <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : existingTests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -1295,14 +1317,31 @@ export function TestCaseGenerationPage() {
                     {existingTests.map((test) => {
                       const api = apis.find((item) => item.id === test.apiId);
                       const isExpanded = expandedTestId === test.id;
+                      const isEditing = editingExistingTestId === test.id;
+                      const isSelected = selectedExistingTestIds.includes(test.id);
                       return (
-                        <div key={test.id} className="bg-[#0a0a0f] overflow-hidden">
-                          <button
-                            type="button"
-                            onClick={() => toggleTestEdit(test.id)}
-                            className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors text-left"
-                          >
-                            <div className="min-w-0 flex-1">
+                        <div key={test.id} className={`bg-[#0a0a0f] overflow-hidden transition-colors ${isSelected ? 'bg-blue-500/5' : ''}`}>
+                          <div className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors">
+                            {/* Checkbox */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExistingTestSelection(test.id);
+                              }}
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                                isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
+                              }`}
+                              aria-label={isSelected ? 'Deselect test case' : 'Select test case'}
+                            >
+                              {isSelected && <Check size={14} className="text-white" />}
+                            </button>
+                            {/* Main info — clickable for expand */}
+                            <button
+                              type="button"
+                              onClick={() => toggleTestEdit(test.id)}
+                              className="min-w-0 flex-1 text-left"
+                            >
                               <div className="mb-2 flex flex-wrap items-center gap-2">
                                 <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
                                   {typeColors[test.type].label}
@@ -1315,54 +1354,79 @@ export function TestCaseGenerationPage() {
                               </div>
                               <div className="text-white text-sm font-medium">{test.name}</div>
                               <div className="mt-1 text-xs text-gray-500 font-mono">{api?.path || 'Unlinked API'}</div>
-                            </div>
+                            </button>
                             <div className="flex items-center gap-3 flex-shrink-0">
-                              <span className="text-xs text-gray-500">
-                                {[test.role, test.stateCondition, test.dataVariant].filter(Boolean).join(' / ') || 'No context'}
-                              </span>
-                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              <button type="button" onClick={() => toggleTestEdit(test.id)}>
+                                {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              </button>
                             </div>
-                          </button>
+                          </div>
                           {isExpanded && (
                             <div className="border-t border-[#1f1f28] p-4 bg-[#0d0d12] space-y-4">
-                              {test.description && (
-                                <div>
-                                  <div className="text-xs text-gray-500 mb-1">Description</div>
-                                  <div className="text-sm text-gray-300">{test.description}</div>
-                                </div>
-                              )}
-                              {test.expectedResult && (
-                                <div>
-                                  <div className="text-xs text-gray-500 mb-1">Expected Result</div>
-                                  <div className="text-sm text-gray-300">{test.expectedResult}</div>
-                                </div>
-                              )}
-                              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                                {test.testLevel && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">Test Level</div>
-                                    <div className="text-xs text-white font-mono">{test.testLevel}</div>
-                                  </div>
-                                )}
-                                {test.role && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">User Role</div>
-                                    <div className="text-xs text-white">{test.role}</div>
-                                  </div>
-                                )}
-                                {test.stateCondition && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">State Condition</div>
-                                    <div className="text-xs text-white">{test.stateCondition}</div>
-                                  </div>
-                                )}
-                                {test.dataVariant && (
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">Data Variant</div>
-                                    <div className="text-xs text-white">{test.dataVariant}</div>
-                                  </div>
+                              {/* Name */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Name</div>
+                                {isEditing ? (
+                                  <input
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none"
+                                    value={test.name}
+                                    onChange={e => updateTestCase(test.id, { name: e.target.value })}
+                                  />
+                                ) : (
+                                  <div className="text-sm text-gray-300">{test.name}</div>
                                 )}
                               </div>
+                              {/* Description */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Description</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
+                                    rows={2}
+                                    value={test.description || ''}
+                                    onChange={e => updateTestCase(test.id, { description: e.target.value })}
+                                  />
+                                ) : (
+                                  test.description && <div className="text-sm text-gray-300">{test.description}</div>
+                                )}
+                              </div>
+                              {/* Expected Result */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Expected Spec</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none placeholder-gray-600"
+                                    rows={5}
+                                    placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                                    value={test.expectedResult || ''}
+                                    onChange={e => updateTestCase(test.id, { expectedResult: e.target.value })}
+                                  />
+                                ) : (
+                                  test.expectedResult && <div className="text-sm text-gray-300">{test.expectedResult}</div>
+                                )}
+                              </div>
+                              {test.testLevel && (
+                              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Test Level</div>
+                                  {isEditing ? (
+                                    <select
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
+                                      value={test.testLevel || ''}
+                                      onChange={e => updateTestCase(test.id, { testLevel: e.target.value as any })}
+                                    >
+                                      <option value="">-</option>
+                                      <option value="SMOKE">SMOKE</option>
+                                      <option value="SANITY">SANITY</option>
+                                      <option value="REGRESSION">REGRESSION</option>
+                                      <option value="FULL">FULL</option>
+                                    </select>
+                                  ) : (
+                                    <div className="text-xs text-white font-mono">{test.testLevel || '-'}</div>
+                                  )}
+                                </div>
+                              </div>
+                              )}
                               {test.requestPreview && (
                                 <div>
                                   <div className="text-xs text-gray-500 mb-1">Request Spec</div>
@@ -1373,8 +1437,37 @@ export function TestCaseGenerationPage() {
                                 <div>
                                   <div className="text-xs text-gray-500 mb-1">Assertion Spec</div>
                                   <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.assertionSpec}</pre>
-                                </div>
-                              )}
+                                </div>)}
+                              {/* Edit/Save buttons */}
+                              <div className="flex items-center gap-2 pt-1 border-t border-[#1f1f28]">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveExistingTestEdit(test)}
+                                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors"
+                                    >
+                                      <Save size={13} />
+                                      저장
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setEditingExistingTestId(null); setExistingTests(prev => prev.map(t => t.id === test.id ? { ...t, isEdited: false } : t)); }}
+                                      className="px-4 py-2 bg-[#1f1f28] hover:bg-[#2a2a38] text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
+                                    >
+                                      취소
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingExistingTestId(test.id)}
+                                    className="flex items-center gap-1.5 px-4 py-2 bg-[#1f1f28] hover:bg-[#2a2a38] text-gray-400 hover:text-white text-xs rounded-lg transition-colors"
+                                  >
+                                    수정
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1479,125 +1572,6 @@ export function TestCaseGenerationPage() {
             </div>
             )}
 
-            {selectedApiIdsForGeneration.length > 0 && generatedTests.length === 0 && (
-              <>
-                {/* Horizontal Condition Bar */}
-                <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Lightbulb size={16} className="text-purple-400" />
-                    <span className="text-sm text-gray-400">
-                      AI recommends context combinations based on endpoint purpose and existing coverage
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">User Role</label>
-                      <select
-                        multiple
-                        value={selectedRoles}
-                        onChange={(e) => setSelectedRoles(Array.from(e.target.selectedOptions, option => option.value))}
-                        className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 h-32"
-                      >
-                        {userRoles.map(role => (
-                          <option key={role} value={role} className="py-1">{role}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Data Variants</label>
-                      <select
-                        multiple
-                        value={selectedDataVariants}
-                        onChange={(e) => setSelectedDataVariants(Array.from(e.target.selectedOptions, option => option.value))}
-                        className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 h-32"
-                      >
-                        {dataVariants.map(variant => (
-                          <option key={variant} value={variant} className="py-1">{variant}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">State Conditions</label>
-                      <select
-                        multiple
-                        value={selectedStates}
-                        onChange={(e) => setSelectedStates(Array.from(e.target.selectedOptions, option => option.value))}
-                        className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 h-32"
-                      >
-                        {stateConditions.map(state => (
-                          <option key={state} value={state} className="py-1">{state}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Test Matrix */}
-                {generatedTests.length > 0 && (
-                  <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl p-6">
-                    <h3 className="text-white mb-4 flex items-center gap-2">
-                      <BarChart3 size={18} className="text-blue-400" />
-                      Coverage Matrix
-                    </h3>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr>
-                            <th className="text-left text-xs text-gray-500 pb-3 pr-4 font-medium">Role</th>
-                            {selectedStates.flatMap(state =>
-                              selectedDataVariants.map(variant => (
-                                <th key={`${state}-${variant}`} className="text-center text-xs text-gray-500 pb-3 px-2 font-medium">
-                                  <div className="truncate max-w-[80px]" title={`${state} / ${variant}`}>
-                                    {state.slice(0, 5)}/{variant.slice(0, 5)}
-                                  </div>
-                                </th>
-                              ))
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {matrixData.map((row) => (
-                            <tr key={row.role}>
-                              <td className="text-sm text-white py-2 pr-4 font-medium">{row.role}</td>
-                              {row.cells.map((cell, idx) => (
-                                <td key={idx} className="p-1">
-                                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
-                                    cell.hasGenerated ? 'bg-green-500/20 border-2 border-green-500/40' :
-                                    cell.hasExisting ? 'bg-blue-500/20 border-2 border-blue-500/40' :
-                                    'bg-red-500/10 border-2 border-red-500/20'
-                                  }`}>
-                                    {cell.hasGenerated && <Sparkles size={16} className="text-green-400" />}
-                                    {!cell.hasGenerated && cell.hasExisting && <CheckCircle2 size={16} className="text-blue-400" />}
-                                    {cell.isMissing && <AlertCircle size={16} className="text-red-400" />}
-                                  </div>
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="mt-6 flex items-center gap-6 text-xs">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 bg-blue-500/20 border-2 border-blue-500/40 rounded"></div>
-                        <span className="text-gray-400">Existing</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 bg-green-500/20 border-2 border-green-500/40 rounded"></div>
-                        <span className="text-gray-400">AI Generated</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 bg-red-500/10 border-2 border-red-500/20 rounded"></div>
-                        <span className="text-gray-400">Missing</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
           </div>
         </main>
 
@@ -1694,29 +1668,14 @@ export function TestCaseGenerationPage() {
                               />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-2">User Role</label>
-                                <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.role}</div>
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-2">State</label>
-                                <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.stateCondition}</div>
-                              </div>
-                            </div>
-
                             <div>
-                              <label className="block text-xs text-gray-500 mb-2">Data Variant</label>
-                              <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.dataVariant}</div>
-                            </div>
-
-                            <div>
-                              <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                              <input
-                                type="text"
+                              <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                              <textarea
                                 value={test.expectedResult}
                                 onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })}
-                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                                rows={5}
+                                placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                               />
                             </div>
 
@@ -1857,29 +1816,14 @@ export function TestCaseGenerationPage() {
                           />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-2">User Role</label>
-                            <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.role}</div>
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-2">State</label>
-                            <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.stateCondition}</div>
-                          </div>
-                        </div>
-
                         <div>
-                          <label className="block text-xs text-gray-500 mb-2">Data Variant</label>
-                          <div className="text-white text-sm bg-[#1f1f28] rounded-lg px-3 py-2">{test.dataVariant}</div>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">Expected Result</label>
-                          <input
-                            type="text"
+                          <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                          <textarea
                             value={test.expectedResult}
                             onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                            rows={5}
+                            placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                           />
                         </div>
 

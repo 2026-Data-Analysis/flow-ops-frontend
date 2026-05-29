@@ -5,6 +5,8 @@ const API_BASE_URL =
 export const DEFAULT_APP_ID = Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
 export const DEFAULT_REQUESTER = import.meta.env.VITE_FLOW_OPS_REQUESTER || 'qa.engineer@flowops.dev';
 const DEFAULT_PROJECT_NAME = import.meta.env.VITE_FLOW_OPS_PROJECT_NAME || 'FlowOps Workspace';
+export const DEFAULT_ENVIRONMENT_BASE_URL =
+  import.meta.env.VITE_FLOW_OPS_DEFAULT_ENVIRONMENT_BASE_URL || 'http://localhost:8080';
 
 export function getDefaultAppId() {
   return Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
@@ -63,6 +65,7 @@ export interface EnvironmentResponse {
   authConfig?: unknown;
   headers?: unknown;
   defaultTestLevel: TestLevel;
+  defaultTestLevelSource?: 'MANUAL' | 'AI_RECOMMENDED';
   lastRunAt?: string;
   coverage?: number;
 }
@@ -102,17 +105,21 @@ export interface RepositoryResponse {
   projectId: number;
   appId?: number;
   appTitle?: string;
+  main?: boolean;
+  primary?: boolean;
   fullName: string;
   repositoryUrl?: string;
   defaultBranch?: string;
   connectionStatus?: 'ACTIVE' | 'DISCONNECTED' | 'ERROR';
-  branches?: Array<{ name?: string; branchName?: string; defaultBranch?: boolean }>;
+  branches?: Array<{ name?: string; branchName?: string; defaultBranch?: boolean; selected?: boolean }>;
   scanResults?: ScanResultResponse[];
 }
 
 export interface BranchResponse {
   name: string;
+  branchName?: string;
   isDefault?: boolean;
+  defaultBranch?: boolean;
   selected?: boolean;
 }
 
@@ -195,6 +202,7 @@ export interface ExecutionDetailResponse {
   environmentId: number;
   environmentName?: string;
   executionType?: 'API' | 'API_BATCH' | 'TEST_CASE' | 'SCENARIO';
+  targetId?: number;
   testLevel?: TestLevel;
   status: 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELED';
   executedAt?: string;
@@ -211,6 +219,9 @@ export interface ExecutionDetailResponse {
   responseTimeMs?: number;
   errorMessage?: string;
   createdBy?: string;
+  startedAt?: string;
+  endedAt?: string;
+  createdAt?: string;
   timeline?: ExecutionStepLogResponse[];
 }
 
@@ -249,19 +260,23 @@ export interface TestCaseResponse {
 
 export interface ScenarioSummaryResponse {
   id: number;
+  environmentId?: number;
   name: string;
   description?: string;
   type?: string;
   steps?: number;
   updatedAt?: string;
+  lastExecutedAt?: string;
 }
 
 export interface ScenarioDetailResponse {
   id: number;
   appId: number;
+  environmentId?: number;
   name: string;
   description?: string;
   type?: string;
+  lastExecutedAt?: string;
   steps?: Array<{
     id: number;
     stepOrder: number;
@@ -297,6 +312,14 @@ export interface ScenarioRecommendationResponse {
   name: string;
   type: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
   recommendationReason?: string;
+  steps?: Array<{
+    stepOrder?: number;
+    apiId?: number | null;
+    label?: string;
+    requestConfig?: string;
+    extractRules?: string;
+    validationRules?: string;
+  }>;
 }
 
 export interface TestGenerationResponse {
@@ -331,13 +354,15 @@ export interface TestGenerationDraftResponse {
   requestSpec?: string;
   requestPreview?: unknown;
   expectedResult?: string;
+  expectedSpec?: string;
   assertionSpec?: string;
   validationRules?: string[] | unknown;
+  duplicate?: boolean;
 }
 
 export interface CreateTestGenerationRequest {
   appId: number;
-  environmentId: number;
+  environmentId?: number;
   requestedBy: string;
   selectedApiIds: number[];
   contextSummary?: string;
@@ -345,10 +370,12 @@ export interface CreateTestGenerationRequest {
 }
 
 export interface SaveTestGenerationDraftRequest {
+  appId?: number;
   testCases: Array<{
     draftId: number;
     name: string;
     expectedResult: string;
+    expectedSpec?: string;
     description?: string;
     type?: string;
     testLevel?: TestLevel;
@@ -704,8 +731,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     payload = { message: text };
   }
 
+  if (typeof text === 'string' && /<\/?[a-z][\s\S]*>/i.test(text) && payload?.message === text) {
+    throw new Error(`API request failed (${response.status} ${response.statusText || 'Error'}). The server returned an HTML page instead of JSON.`);
+  }
+
   if (!response.ok) {
-    const message = payload?.message || response.statusText || 'API request failed';
+    const rawMessage = payload?.message || response.statusText || 'API request failed';
+    const message = typeof rawMessage === 'string' && /<\/?[a-z][\s\S]*>/i.test(rawMessage)
+      ? `API request failed (${response.status} ${response.statusText || 'Error'}). The server returned an HTML page instead of JSON.`
+      : rawMessage;
+    console.error('[flowOpsApi] request failed', {
+      path,
+      status: response.status,
+      statusText: response.statusText,
+      payload,
+    });
     throw new Error(message);
   }
 
@@ -717,7 +757,7 @@ async function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
   if (response.success === false) {
     throw new Error(response.message || response.code || 'API request failed');
   }
-  return response.data;
+  return response.data ?? (response as T);
 }
 
 export const flowOpsApi = {
@@ -728,7 +768,14 @@ export const flowOpsApi = {
 
   ensureProject: async () => {
     const projects = await flowOpsApi.listProjects();
-    const activeProject = projects.find((project) => project.status !== 'ARCHIVED') || projects[0];
+    const normalizedDefaultName = DEFAULT_PROJECT_NAME.trim().toLowerCase();
+    const activeProjects = projects.filter((project) => project.status !== 'ARCHIVED');
+    const activeProject =
+      activeProjects.find((project) => project.name?.trim().toLowerCase() === normalizedDefaultName) ||
+      activeProjects.find((project) => project.slug === 'flowops-workspace') ||
+      activeProjects.find((project) => project.name?.trim().toLowerCase().includes('flowops')) ||
+      activeProjects[0] ||
+      projects[0];
     if (activeProject) {
       rememberProjectId(activeProject.id);
       return activeProject;
@@ -739,6 +786,44 @@ export const flowOpsApi = {
     });
     rememberProjectId(project.id);
     return project;
+  },
+
+  resolveMainApplication: async () => {
+    const project = await flowOpsApi.ensureProject();
+    const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
+    const appIds = Array.from(
+      new Set(repositories.map((repository) => repository.appId).filter((appId): appId is number => Boolean(appId))),
+    );
+
+    const repositoryMarkedMain = repositories.find((repository) => repository.main || repository.primary);
+    if (repositoryMarkedMain?.appId) {
+      return {
+        appId: repositoryMarkedMain.appId,
+        title: repositoryMarkedMain.appTitle || repositoryMarkedMain.fullName.split('/').pop() || 'Main Application',
+      };
+    }
+
+    const appDetails = (
+      await Promise.all(appIds.map((appId) => flowOpsApi.getApp(appId).catch(() => null)))
+    ).filter(Boolean) as AppDetailResponse[];
+    const mainApp =
+      appDetails.find((app) => app.main || app.primary) ||
+      appDetails.find((app) => app.id === getDefaultAppId()) ||
+      appDetails[0];
+
+    if (mainApp) {
+      return {
+        appId: mainApp.id,
+        title: mainApp.title || mainApp.name || 'Main Application',
+      };
+    }
+
+    const fallbackAppId = getDefaultAppId();
+    const fallbackApp = await flowOpsApi.getApp(fallbackAppId);
+    return {
+      appId: fallbackApp.id,
+      title: fallbackApp.title || fallbackApp.name || 'Main Application',
+    };
   },
 
   createApp: (body: CreateAppRequest) =>
@@ -816,6 +901,21 @@ export const flowOpsApi = {
   }) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions/run-apis', { method: 'POST', body: JSON.stringify(body) })),
 
+  runBatchTests: (body: {
+    appId: number;
+    environmentId: number;
+    apiIds?: number[];
+    testCaseIds?: number[];
+    testLevel?: TestLevel;
+    createdBy: string;
+  }) =>
+    unwrap(
+      request<ApiResponse<ExecutionDetailResponse>>('/executions/batch-tests', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
   createExecution: (body: Record<string, unknown>) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>('/executions', { method: 'POST', body: JSON.stringify(body) })),
 
@@ -826,12 +926,27 @@ export const flowOpsApi = {
       ),
     ),
 
-  listTestCases: (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) =>
-    unwrap(
-      request<ApiResponse<PageResponse<TestCaseResponse>>>(
-        `/apps/${appId}/test-cases${toQuery({ page: 0, size: 100, ...params })}`,
-      ),
-    ),
+  listTestCases: async (appId = DEFAULT_APP_ID, params: Record<string, unknown> = {}) => {
+    const apis = await flowOpsApi.listApis(appId, params);
+    const testCases = (
+      await Promise.all(
+        apis.content
+          .map((api) => api.id)
+          .filter((apiId) => Number.isFinite(apiId) && apiId > 0)
+          .map((apiId) => flowOpsApi.listTestCasesByApi(apiId).catch(() => [] as TestCaseResponse[])),
+      )
+    ).flat();
+
+    return {
+      content: testCases,
+      page: 0,
+      size: testCases.length,
+      totalElements: testCases.length,
+      totalPages: testCases.length > 0 ? 1 : 0,
+      first: true,
+      last: true,
+    } satisfies PageResponse<TestCaseResponse>;
+  },
 
   listTestCasesByApi: (apiId: number) =>
     unwrap(request<ApiResponse<TestCaseResponse[]>>(`/apis/${apiId}/test-cases`)),
@@ -850,7 +965,13 @@ export const flowOpsApi = {
 
   saveTestGenerationDrafts: (generationId: number, body: SaveTestGenerationDraftRequest) =>
     unwrap(
-      request<ApiResponse<TestCaseResponse[] | { testCases?: TestCaseResponse[]; saved?: TestCaseResponse[] }>>(
+      request<ApiResponse<TestCaseResponse[] | {
+        testCases?: TestCaseResponse[];
+        saved?: TestCaseResponse[];
+        savedCount?: number;
+        savedTestCaseIds?: number[];
+        apiIds?: number[];
+      }>>(
         `/test-generations/${generationId}/save`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
@@ -883,6 +1004,37 @@ export const flowOpsApi = {
   listScenarios: (appId = DEFAULT_APP_ID) =>
     unwrap(request<ApiResponse<ScenarioSummaryResponse[]>>(`/apps/${appId}/scenarios`)),
 
+  listScenariosByEnvironment: (appId: number, environmentId?: number) =>
+    unwrap(
+      request<ApiResponse<ScenarioSummaryResponse[]>>(
+        `/apps/${appId}/scenarios${environmentId !== undefined ? `?environmentId=${environmentId}` : ''}`,
+      ),
+    ),
+
+  createScenario: (body: {
+    appId: number;
+    environmentId?: number;
+    name: string;
+    description?: string;
+    type?: string;
+    recommendationReason?: string;
+    source?: 'AI' | 'MANUAL' | string;
+    steps: Array<{
+      stepOrder: number;
+      apiId: number;
+      label: string;
+      requestConfig?: string | null;
+      extractRules?: string | null;
+      validationRules?: string | null;
+    }>;
+  }) =>
+    unwrap(
+      request<ApiResponse<ScenarioDetailResponse>>('/scenarios', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    ),
+
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
     const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
       '/scenarios/recommend',
@@ -893,6 +1045,9 @@ export const flowOpsApi = {
 
   getScenario: (scenarioId: number) =>
     unwrap(request<ApiResponse<ScenarioDetailResponse>>(`/scenarios/${scenarioId}`)),
+
+  deleteScenario: (scenarioId: number) =>
+    unwrap(request<ApiResponse<void>>(`/scenarios/${scenarioId}`, { method: 'DELETE' })),
 
   getTestCase: (testCaseId: number) =>
     unwrap(request<ApiResponse<TestCaseResponse>>(`/test-cases/${testCaseId}`)),

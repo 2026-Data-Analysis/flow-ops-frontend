@@ -13,18 +13,20 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  StopCircle
+  StopCircle,
+  Loader2
 } from 'lucide-react';
 import { useTestContext } from '../contexts/TestContext';
 import {
   DEFAULT_REQUESTER,
   flowOpsApi,
-  getDefaultAppId,
   type EnvironmentResponse,
   type ExecutionDetailResponse,
   type ExecutionStepLogResponse,
   type HttpMethod,
 } from '../api/flowOpsClient';
+import { findDefaultBranchEnvironment } from '../utils/environmentScope';
+import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
 
 interface ExecutionLog {
   id: string;
@@ -39,6 +41,7 @@ interface ExecutionLog {
   requestBody?: string;
   responseBody?: string;
   errorMessage?: string;
+  assertions: NormalizedAssertionResult[];
 }
 
 
@@ -53,9 +56,9 @@ const methodColors = {
 };
 
 const toTime = (value?: string) => {
-  if (!value) return new Date().toLocaleTimeString();
+  if (!value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
 
 const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['status'] => {
@@ -64,10 +67,19 @@ const normalizeStatus = (status?: string, success?: boolean): ExecutionLog['stat
   return 'success';
 };
 
-const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLog => ({
+const normalizeLog = (
+  log: ExecutionStepLogResponse,
+  index: number,
+  options: { preferCaseName?: boolean; fallbackCaseName?: string; testCaseNameById?: Map<number, string> } = {},
+): ExecutionLog => ({
   id: String(log.id ?? index + 1),
   timestamp: toTime(log.executedAt || log.startedAt),
-  testCase: log.caseName || log.step || `Execution step ${index + 1}`,
+  testCase: options.preferCaseName
+    ? (log.testCaseId ? options.testCaseNameById?.get(log.testCaseId) : undefined) ||
+      log.caseName ||
+      options.fallbackCaseName ||
+      `Execution ${index + 1}`
+    : log.step || log.caseName || `Execution step ${index + 1}`,
   endpoint: log.endpoint || '-',
   method: (log.method || 'GET') as HttpMethod,
   status: normalizeStatus(log.status, log.success),
@@ -77,27 +89,46 @@ const normalizeLog = (log: ExecutionStepLogResponse, index: number): ExecutionLo
   requestBody: log.requestBody ? JSON.stringify(log.requestBody, null, 2) : undefined,
   responseBody: log.responseBody ? JSON.stringify(log.responseBody, null, 2) : undefined,
   errorMessage: log.errorMessage,
+  assertions: normalizeAssertionResults(log.validationResults, log.assertionResults),
 });
 
-const normalizeExecution = (execution: ExecutionDetailResponse): ExecutionLog[] => {
+const normalizeExecution = (
+  execution: ExecutionDetailResponse,
+  requestedExecutionType?: 'tests' | 'scenario',
+  options: { testCaseNameById?: Map<number, string>; fallbackTestCaseName?: string } = {},
+): ExecutionLog[] => {
+  const isScenarioExecution = requestedExecutionType === 'scenario' || execution.executionType === 'SCENARIO';
+
   if (execution.timeline?.length) {
-    return execution.timeline.map(normalizeLog);
+    return execution.timeline.map((log, index) => {
+      const normalized = normalizeLog(log, index, {
+        preferCaseName: !isScenarioExecution,
+        fallbackCaseName: options.fallbackTestCaseName || execution.caseName,
+        testCaseNameById: options.testCaseNameById,
+      });
+      return isScenarioExecution ? { ...normalized, testCase: `${normalized.testCase} #step ${index + 1}` } : normalized;
+    });
   }
 
   return [
     {
       id: String(execution.id),
       timestamp: toTime(execution.executedAt),
-      testCase: execution.caseName || 'FlowOps execution',
+      testCase:
+        (!isScenarioExecution && execution.targetId ? options.testCaseNameById?.get(execution.targetId) : undefined) ||
+        options.fallbackTestCaseName ||
+        execution.caseName ||
+        'FlowOps execution',
       endpoint: execution.endpoint || '-',
       method: 'GET',
       status: normalizeStatus(execution.status, execution.status === 'SUCCESS'),
-      duration: execution.responseTimeMs ?? execution.durationMs ?? execution.avgDurationMs ?? 0,
+      duration: execution.avgDurationMs ?? execution.responseTimeMs ?? execution.durationMs ?? 0,
       responseCode: execution.statusCode ?? (execution.status === 'SUCCESS' ? 200 : 500),
       source: 'auto',
       requestBody: execution.body ? JSON.stringify(execution.body, null, 2) : undefined,
       responseBody: execution.response ? JSON.stringify(execution.response, null, 2) : undefined,
       errorMessage: execution.errorMessage,
+      assertions: [],
     },
   ];
 };
@@ -108,7 +139,7 @@ const hasUnfilledPathParameter = (path: string) =>
 export function TestExecutionPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { environment, setEnvironment, selectedAPIs, executionResults, setExecutionResults } = useTestContext();
+  const { activeApplication, environment, setEnvironment, selectedAPIs, executionResults, setExecutionResults } = useTestContext();
 
   // Configuration State
   const [executionType, setExecutionType] = useState<'tests' | 'scenario'>('tests');
@@ -120,6 +151,7 @@ export function TestExecutionPage() {
   const [currentLogIndex, setCurrentLogIndex] = useState(0);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [environments, setEnvironments] = useState<EnvironmentResponse[]>([]);
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>('');
   const [executionError, setExecutionError] = useState<string | null>(null);
 
   // Context-aware prefill from navigation
@@ -133,20 +165,46 @@ export function TestExecutionPage() {
   }, [location.state]);
 
   useEffect(() => {
+    let active = true;
     flowOpsApi
-      .listEnvironments(getDefaultAppId())
-      .then(setEnvironments)
+      .listEnvironments(activeApplication.appId)
+      .then((items) => {
+        if (!active) return;
+        setEnvironments(items);
+        setSelectedEnvironmentId((current) =>
+          items.some((item) => String(item.id) === current)
+            ? current
+            : String(findDefaultBranchEnvironment(items)?.id || items[0]?.id || ''),
+        );
+      })
       .catch(() => undefined);
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [activeApplication.appId]);
 
   const resolveEnvironmentId = () => {
-    const selected = environments.find((env) => {
+    const explicit = environments.find((env) => String(env.id) === selectedEnvironmentId);
+    const legacy = environments.find((env) => {
       const label = `${env.name} ${env.branchName || ''}`.toLowerCase();
       if (environment === 'dev') return label.includes('dev') || label.includes('develop');
-      if (environment === 'prod') return label.includes('prod') || label.includes('main');
+      if (environment === 'prod') return label.includes('prod') || label.includes('main') || label.includes('master');
       return label.includes('staging') || label.includes('stage');
     });
-    return selected?.id ?? environments[0]?.id ?? null;
+    return explicit?.id ?? legacy?.id ?? findDefaultBranchEnvironment(environments)?.id ?? null;
+  };
+
+  const selectEnvironment = (environmentId: string) => {
+    setSelectedEnvironmentId(environmentId);
+    const selected = environments.find((env) => String(env.id) === environmentId);
+    const label = `${selected?.name || ''} ${selected?.branchName || ''}`.toLowerCase();
+    if (label.includes('prod') || label.includes('main') || label.includes('master')) {
+      setEnvironment('prod');
+    } else if (label.includes('dev') || label.includes('develop')) {
+      setEnvironment('dev');
+    } else {
+      setEnvironment('staging');
+    }
   };
 
   const getSelectedApiIds = () => {
@@ -158,6 +216,29 @@ export function TestExecutionPage() {
       .filter((id) => Number.isFinite(id) && id > 0);
   };
 
+  const getSelectedTestCaseIds = () => {
+    const state = location.state as any;
+    return (state?.selectedTestCaseIds || [])
+      .map((id: unknown) => Number(id))
+      .filter((id: number) => Number.isFinite(id) && id > 0);
+  };
+
+  const getSelectedTestCaseNameMap = () => {
+    const state = location.state as any;
+    const entries = (state?.selectedTestCases || [])
+      .map((testCase: { id?: unknown; name?: unknown }) => [Number(testCase.id), testCase.name])
+      .filter(([id, name]: [number, unknown]) => Number.isFinite(id) && typeof name === 'string' && name.length > 0) as Array<[number, string]>;
+
+    selectedAPIs.forEach((api) => {
+      const id = Number(api.id);
+      if (Number.isFinite(id) && api.name) {
+        entries.push([id, api.name]);
+      }
+    });
+
+    return new Map(entries);
+  };
+
   const handleRun = async () => {
     setLogs([]);
     setCurrentLogIndex(0);
@@ -166,6 +247,9 @@ export function TestExecutionPage() {
     setExecutionError(null);
 
     const apiIds = getSelectedApiIds();
+    const testCaseIds = getSelectedTestCaseIds();
+    const testCaseNameById = getSelectedTestCaseNameMap();
+    const fallbackTestCaseName = testCaseIds.length === 1 ? testCaseNameById.get(testCaseIds[0]) : undefined;
     const environmentId = resolveEnvironmentId();
 
     try {
@@ -173,7 +257,9 @@ export function TestExecutionPage() {
         throw new Error('Select an environment before running tests.');
       }
       if (executionType === 'tests') {
-        const invalidApi = selectedAPIs.find((api) => !api.method || !api.endpoint || hasUnfilledPathParameter(api.endpoint));
+        const invalidApi = testCaseIds.length > 0
+          ? undefined
+          : selectedAPIs.find((api) => !api.method || !api.endpoint || hasUnfilledPathParameter(api.endpoint));
         if (invalidApi) {
           throw new Error(`Check method/path and path parameter values for ${invalidApi.endpoint || invalidApi.name}.`);
         }
@@ -188,15 +274,23 @@ export function TestExecutionPage() {
           throw new Error('Select a scenario before running tests.');
         }
         result = await flowOpsApi.runScenario({
-          appId: getDefaultAppId(),
+          appId: activeApplication.appId,
           environmentId,
           scenarioIds: normalizedScenarioIds,
           testLevel: testLevel.toUpperCase() as any,
           createdBy: DEFAULT_REQUESTER,
         });
+      } else if (testCaseIds.length > 0) {
+        result = await flowOpsApi.runTestCases({
+          appId: activeApplication.appId,
+          environmentId,
+          testCaseIds,
+          testLevel: testLevel.toUpperCase() as any,
+          createdBy: DEFAULT_REQUESTER,
+        });
       } else if (apiIds.length > 0) {
         result = await flowOpsApi.runApis({
-          appId: getDefaultAppId(),
+          appId: activeApplication.appId,
           environmentId,
           apiIds,
           executionMode: 'RUN_EXISTING',
@@ -206,7 +300,7 @@ export function TestExecutionPage() {
       } else {
         throw new Error('Select test cases or APIs before running tests.');
       }
-      const nextLogs = normalizeExecution(result);
+      const nextLogs = normalizeExecution(result, executionType, { testCaseNameById, fallbackTestCaseName });
       setLogs(nextLogs);
       setExecutionResults({
         timestamp: new Date().toISOString(),
@@ -301,14 +395,20 @@ export function TestExecutionPage() {
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className="text-xs text-gray-500 uppercase tracking-wider hidden sm:inline">Env</span>
               <select
-                value={environment}
-                onChange={(e) => setEnvironment(e.target.value as any)}
-                disabled={isRunning}
+                value={selectedEnvironmentId}
+                onChange={(e) => selectEnvironment(e.target.value)}
+                disabled={isRunning || environments.length === 0}
                 className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
               >
-                <option value="dev">Development</option>
-                <option value="staging">Staging</option>
-                <option value="prod">Production</option>
+                {environments.length === 0 ? (
+                  <option value="">No environments</option>
+                ) : (
+                  environments.map((env) => (
+                    <option key={env.id} value={String(env.id)}>
+                      {env.name}{env.branchName ? ` (${env.branchName})` : ''}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -400,7 +500,28 @@ export function TestExecutionPage() {
               Backend execution failed: {executionError}
             </div>
           )}
-          {logs.length === 0 && !isRunning ? (
+          {isRunning && logs.length === 0 ? (
+            <div className="flex min-h-[420px] flex-col items-center justify-center rounded-xl border border-blue-500/20 bg-[#0a0a0f] px-6 py-12 text-center">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                <Loader2 size={28} className="animate-spin text-blue-400" />
+              </div>
+              <h3 className="mb-2 text-white font-semibold">
+                {executionType === 'scenario' ? 'Running scenario' : 'Running tests'}
+              </h3>
+              <p className="max-w-md text-sm text-gray-500">
+                Sending the execution request and waiting for backend results. Logs will appear here as soon as the run completes.
+              </p>
+
+              <div className="mt-8 grid w-full max-w-2xl gap-3 text-left">
+                {['Resolving environment', 'Preparing execution payload', 'Waiting for response'].map((step, index) => (
+                  <div key={step} className="flex items-center gap-3 rounded-lg border border-[#1f1f28] bg-[#13131a] px-4 py-3">
+                    <div className={`h-2.5 w-2.5 rounded-full ${index === 2 ? 'animate-pulse bg-blue-400' : 'bg-blue-500/40'}`} />
+                    <span className="text-sm text-gray-300">{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <div className="w-16 h-16 bg-[#13131a] rounded-full flex items-center justify-center mb-4">
                 <Play size={24} className="text-gray-500" />
@@ -519,6 +640,37 @@ export function TestExecutionPage() {
                                 HTTP request did not reach a valid response. Check baseUrl, DNS, connection, timeout, SSL, or server availability.
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {log.assertions.length > 0 && (
+                          <div className="col-span-2">
+                            <div className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Assertions</div>
+                            <div className="space-y-2">
+                              {log.assertions.map((assertion) => (
+                                <div key={assertion.id} className="rounded-lg border border-[#1f1f28] bg-[#13131a] p-3">
+                                  <div className="mb-2 flex items-center gap-2">
+                                    {assertion.passed ? (
+                                      <CheckCircle2 size={14} className="text-green-400" />
+                                    ) : (
+                                      <XCircle size={14} className="text-red-400" />
+                                    )}
+                                    <span className="text-sm text-white">{assertion.name}</span>
+                                  </div>
+                                  <div className="grid gap-2 text-xs md:grid-cols-2">
+                                    <div>
+                                      <span className="text-gray-500">Expected </span>
+                                      <span className="font-mono text-gray-300">{assertion.expected}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-500">Actual </span>
+                                      <span className="font-mono text-gray-300">{assertion.actual}</span>
+                                    </div>
+                                  </div>
+                                  {assertion.message && <div className="mt-2 text-xs text-gray-400">{assertion.message}</div>}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
 

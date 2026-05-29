@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useState, ReactNode } from 'react';
 
 interface API {
   id: string;
@@ -39,12 +39,12 @@ export function TestProvider({ children }: { children: ReactNode }) {
   const [testContext, setTestContext] = useState<TestContextType['testContext']>({});
   const [executionResults, setExecutionResults] = useState<any>(undefined);
 
-  const setActiveApplication = (application: { appId: number; title: string }) => {
+  const setActiveApplication = useCallback((application: { appId: number; title: string }) => {
     localStorage.setItem('flowOps.appId', String(application.appId));
     localStorage.setItem('flowOps.appTitle', application.title);
     setActiveApplicationState(application);
     window.dispatchEvent(new Event('flowOps.applicationChanged'));
-  };
+  }, []);
 
   return (
     <TestContext.Provider
