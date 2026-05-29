@@ -516,6 +516,53 @@ export interface AiTestStrategyClassifyResponse {
   }>;
 }
 
+export interface AiOrchestratorChatRequest {
+  project_id: string;
+  user_prompt: string;
+  context?: Record<string, unknown>;
+}
+
+export interface AiOrchestratorFormField {
+  name: string;
+  label?: string;
+  type?: 'text' | 'url' | 'checkbox' | 'select' | string;
+  required?: boolean;
+  placeholder?: string;
+  defaultValue?: unknown;
+  options?: Array<{ label?: string; value: string | boolean | number }>;
+}
+
+export interface AiOrchestratorAction {
+  type?: string;
+  route?: string;
+  payload?: Record<string, unknown>;
+  form?: {
+    type?: string;
+    fields?: AiOrchestratorFormField[];
+  };
+}
+
+export interface AiOrchestratorResult {
+  status: 'collect_input' | 'redirect' | 'ready' | 'need_validation' | string;
+  action?: AiOrchestratorAction;
+  payload?: Record<string, unknown>;
+  route?: string;
+  confirmation?: {
+    title?: string;
+    message?: string;
+    confirmText?: string;
+    cancelText?: string;
+  };
+  requiresUserConfirmation?: boolean;
+  message?: string;
+}
+
+export interface AiOrchestratorChatResponse {
+  agent_results?: Array<{
+    data?: AiOrchestratorResult;
+  }>;
+}
+
 function toQuery(params: Record<string, unknown>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -653,6 +700,9 @@ export const flowOpsApi = {
         body: JSON.stringify(body),
       }),
     ),
+
+  deleteApp: (appId: number) =>
+    unwrap(request<ApiResponse<void>>(`/apps/${appId}`, { method: 'DELETE' })),
 
   setMainApp: (appId: number, body: { title?: string } = {}) =>
     unwrap(
@@ -878,6 +928,22 @@ export const flowOpsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  orchestrateChat: async (body: AiOrchestratorChatRequest) => {
+    const response = await request<ApiResponse<AiOrchestratorChatResponse> | AiOrchestratorChatResponse>(
+      '/ai/agents/orchestrator/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    );
+    const envelope = 'data' in response ? response.data : response;
+    const result = envelope?.agent_results?.[0]?.data;
+    if (!result) {
+      throw new Error('AI orchestrator returned no actionable result.');
+    }
+    return result;
+  },
 
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
     unwrap(

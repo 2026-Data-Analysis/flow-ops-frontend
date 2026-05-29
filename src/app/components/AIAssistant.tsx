@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { 
   Sparkles,
   X,
@@ -12,8 +12,17 @@ import {
   Activity,
   FileSearch,
   CheckCircle2,
-  Layers
+  Layers,
+  Loader2
 } from 'lucide-react';
+import {
+  flowOpsApi,
+  rememberAppId,
+  rememberAppTitle,
+  type AiOrchestratorFormField,
+  type AiOrchestratorResult,
+} from '../api/flowOpsClient';
+import { useTestContext } from '../contexts/TestContext';
 
 interface Message {
   id: string;
@@ -21,6 +30,20 @@ interface Message {
   content: string;
   timestamp: Date;
   suggestions?: string[];
+}
+
+interface ActiveForm {
+  type: string;
+  fields: AiOrchestratorFormField[];
+  values: Record<string, string | boolean>;
+}
+
+interface PendingConfirmation {
+  result: AiOrchestratorResult;
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
 }
 
 interface PageContext {
@@ -204,8 +227,72 @@ const mockAIResponses: Record<string, string> = {
   'postmortem-template': 'I\'ve generated a postmortem template:\n\n# Incident Postmortem\n## Database Connection Timeout - Apr 3, 2026\n\n### Summary\nService: Authentication\nDuration: 23 minutes (14:32 - 14:55 UTC)\nSeverity: P0 - Critical\nImpact: ~245 users unable to login\n\n### Timeline\n• 14:15 - v2.4.1 deployed\n• 14:30 - Latency increase detected\n• 14:32 - Error spike begins\n• 14:35 - PagerDuty alert\n• 14:42 - Service restarted\n• 14:48 - Pool size increased\n• 14:55 - Incident resolved\n\n### Root Cause\nConnection pool size (10) insufficient for post-deployment load\n\n### Resolution\n1. Emergency service restart\n2. Increased pool to 25\n3. Added connection timeout\n\n### Prevention\n[ ] Load testing in CI/CD\n[ ] Connection pool monitoring\n[ ] Auto-scaling rules',
 };
 
+const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
+
+const DEFAULT_APPLICATION_FORM_FIELDS: AiOrchestratorFormField[] = [
+  { name: 'title', label: 'Application title', type: 'text', required: true, placeholder: 'FlowOps Admin' },
+  {
+    name: 'mainRepository',
+    label: 'Main repository',
+    type: 'url',
+    required: true,
+    placeholder: 'https://github.com/org/flowops-admin',
+  },
+  { name: 'autoSync', label: 'Auto sync', type: 'checkbox', defaultValue: true },
+];
+
+const fieldLabel = (field: AiOrchestratorFormField) =>
+  field.label || field.name.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase());
+
+const initialFieldValue = (field: AiOrchestratorFormField): string | boolean => {
+  if (field.type === 'checkbox') return Boolean(field.defaultValue);
+  return typeof field.defaultValue === 'string' ? field.defaultValue : '';
+};
+
+const normalizeRepositoryFullName = (value: string) => {
+  const normalized = value
+    .trim()
+    .replace(/^https:\/\/github\.com\//, '')
+    .replace(/^http:\/\/github\.com\//, '')
+    .replace(/\.git$/, '');
+  const [owner, name, ...rest] = normalized.split('/').filter(Boolean);
+  if (!owner || !name || rest.length > 0) return null;
+  return `${owner}/${name}`;
+};
+
+const rememberRegisteredRepository = (repository: {
+  id: number;
+  projectId: number;
+  appId: number;
+  title: string;
+  fullName: string;
+  repositoryUrl?: string;
+  defaultBranch?: string;
+  selectedBranches?: string[];
+  connectionStatus?: string;
+}) => {
+  const existing = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]') as Array<typeof repository>;
+  const next = [
+    repository,
+    ...existing.filter((item) => item.id !== repository.id && item.fullName !== repository.fullName),
+  ];
+  localStorage.setItem(REGISTERED_REPOSITORIES_KEY, JSON.stringify(next));
+};
+
+const routeFromAction = (result: AiOrchestratorResult) => result.action?.route || result.route;
+
+const messageFromResult = (result: AiOrchestratorResult) => {
+  if (result.message) return result.message;
+  if (result.status === 'collect_input') return '필요한 정보를 입력해 주세요.';
+  if (result.status === 'redirect') return '요청하신 화면으로 이동할게요.';
+  if (result.status === 'need_validation') return '실행 전에 입력값을 검증할게요.';
+  return '요청을 처리할 준비가 됐습니다.';
+};
+
 export function AIAssistant() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { activeApplication, setActiveApplication } = useTestContext();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -218,6 +305,9 @@ export function AIAssistant() {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -235,6 +325,171 @@ export function AIAssistant() {
     }
   }, [isOpen, isMinimized]);
 
+  const appendAiMessage = (content: string) => {
+    const aiMessage: Message = {
+      id: `${Date.now()}-${Math.random()}`,
+      type: 'ai',
+      content,
+      timestamp: new Date(),
+    };
+    setMessages(prev => [...prev, aiMessage]);
+  };
+
+  const buildOrchestratorContext = (extraContext: Record<string, unknown> = {}) => ({
+    userId: localStorage.getItem('flowOps.userId') || 'user_123',
+    workspaceId: localStorage.getItem('flowOps.workspaceId') || 'workspace_123',
+    currentRoute: location.pathname,
+    activeApplication,
+    ...extraContext,
+  });
+
+  const executeCreateApplication = async (values: Record<string, unknown>) => {
+    const title = String(values.title || values.name || '').trim();
+    const repositoryValue = String(values.mainRepository || values.repositoryUrl || values.repoUrl || '').trim();
+    const fullName = normalizeRepositoryFullName(repositoryValue);
+
+    if (!title) throw new Error('Application title is required.');
+    if (!fullName) throw new Error('Main repository must be owner/repository or a GitHub repository URL.');
+
+    const project = await flowOpsApi.ensureProject();
+    const app = await flowOpsApi.createApp({
+      name: title,
+      repoUrl: `https://github.com/${fullName}`,
+    });
+    await flowOpsApi.setMainApp(app.id, { title }).catch(() => undefined);
+    const repository = await flowOpsApi.registerRepository(project.id, { fullName, appId: app.id });
+
+    rememberAppId(app.id);
+    rememberAppTitle(title);
+    setActiveApplication({ appId: app.id, title });
+    rememberRegisteredRepository({
+      id: repository.id,
+      projectId: project.id,
+      appId: app.id,
+      title,
+      fullName,
+      repositoryUrl: repository.repositoryUrl || `https://github.com/${fullName}`,
+      defaultBranch: repository.defaultBranch,
+      selectedBranches: [],
+      connectionStatus: repository.connectionStatus || 'ACTIVE',
+    });
+
+    if (values.autoSync === true) {
+      const branches = await flowOpsApi.listRepositoryBranches(project.id, repository.id).catch(() => []);
+      const defaultBranch = branches.find((branch) => branch.selected || branch.isDefault || branch.defaultBranch);
+      const branchName = defaultBranch?.name || defaultBranch?.branchName || repository.defaultBranch;
+      if (branchName) {
+        await flowOpsApi.scanRepository(project.id, repository.id, [branchName]).catch(() => []);
+      }
+    }
+
+    return { appId: app.id, title, projectId: project.id, repositoryId: repository.id };
+  };
+
+  const executeApplicationAction = async (result: AiOrchestratorResult) => {
+    const action = result.action;
+    const actionType = action?.type;
+    const payload = { ...(result.payload || {}), ...(action?.payload || {}) };
+
+    if (actionType === 'open_form') {
+      const fields = action?.form?.fields?.length ? action.form.fields : DEFAULT_APPLICATION_FORM_FIELDS;
+      setActiveForm({
+        type: action.form?.type || 'application_create',
+        fields,
+        values: Object.fromEntries(fields.map((field) => [field.name, initialFieldValue(field)])),
+      });
+      return;
+    }
+
+    if (actionType === 'redirect' || result.status === 'redirect') {
+      const route = routeFromAction(result);
+      if (route) navigate(route, { state: action?.payload || result.payload });
+      return;
+    }
+
+    if (actionType === 'create_application') {
+      const created = await executeCreateApplication(payload);
+      appendAiMessage(`Application "${created.title}" was created and selected.`);
+      navigate('/app/settings', { state: created });
+      return;
+    }
+
+    if (actionType === 'update_application') {
+      const appId = Number(payload.appId || activeApplication.appId);
+      const title = typeof payload.title === 'string' ? payload.title.trim() : undefined;
+      const updated = await flowOpsApi.updateApp(appId, {
+        ...payload,
+        title,
+        name: title,
+      });
+      const nextTitle = updated.title || updated.name || title || activeApplication.title;
+      rememberAppTitle(nextTitle);
+      setActiveApplication({ appId: updated.id || appId, title: nextTitle });
+      appendAiMessage(`Application "${nextTitle}" was updated.`);
+      return;
+    }
+
+    if (actionType === 'delete_application') {
+      const appId = Number(payload.appId || activeApplication.appId);
+      await flowOpsApi.deleteApp(appId);
+      appendAiMessage('Application was deleted.');
+      navigate('/app/settings');
+      return;
+    }
+
+    appendAiMessage(`Ready to execute action: ${actionType || 'unknown'}.`);
+  };
+
+  const handleOrchestratorResult = async (result: AiOrchestratorResult) => {
+    appendAiMessage(messageFromResult(result));
+
+    if (result.requiresUserConfirmation) {
+      setPendingConfirmation({
+        result,
+        title: result.confirmation?.title || 'Confirm action',
+        message: result.confirmation?.message || 'Do you want to continue?',
+        confirmText: result.confirmation?.confirmText || 'Confirm',
+        cancelText: result.confirmation?.cancelText || 'Cancel',
+      });
+      return;
+    }
+
+    if (result.status === 'collect_input') {
+      const fields = result.action?.form?.fields?.length
+        ? result.action.form.fields
+        : DEFAULT_APPLICATION_FORM_FIELDS;
+      setActiveForm({
+        type: result.action?.form?.type || 'application_create',
+        fields,
+        values: Object.fromEntries(fields.map((field) => [field.name, initialFieldValue(field)])),
+      });
+      return;
+    }
+
+    if (result.status === 'need_validation' || result.status === 'ready' || result.status === 'redirect') {
+      await executeApplicationAction(result);
+    }
+  };
+
+  const sendToOrchestrator = async (userPrompt: string, extraContext: Record<string, unknown> = {}) => {
+    setActionError(null);
+    setIsTyping(true);
+    try {
+      const result = await flowOpsApi.orchestrateChat({
+        project_id: 'ecommerce-backend',
+        user_prompt: userPrompt,
+        context: buildOrchestratorContext(extraContext),
+      });
+      await handleOrchestratorResult(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI orchestrator request failed.';
+      appendAiMessage(message);
+      setActionError(message);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   const handleSendMessage = (content: string) => {
     if (!content.trim()) return;
 
@@ -247,19 +502,8 @@ export function AIAssistant() {
 
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
-    setIsTyping(true);
-
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'ai',
-        content: 'I understand you\'re asking about: "' + content + '"\n\nBased on your current context (' + context.page + '), here are my suggestions:\n\n• Review the current configuration\n• Check for common issues\n• Apply best practices\n\nWould you like me to explain any of these in detail?',
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, aiMessage]);
-      setIsTyping(false);
-    }, 1500);
+    setActiveForm(null);
+    void sendToOrchestrator(content.trim());
   };
 
   const handleQuickAction = (actionId: string) => {
@@ -288,6 +532,61 @@ export function AIAssistant() {
       setMessages(prev => [...prev, aiMessage]);
       setIsTyping(false);
     }, 1200);
+  };
+
+  const handleFormValueChange = (fieldName: string, value: string | boolean) => {
+    setActiveForm((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        values: {
+          ...current.values,
+          [fieldName]: value,
+        },
+      };
+    });
+  };
+
+  const handleFormSubmit = () => {
+    if (!activeForm) return;
+    const missingField = activeForm.fields.find(
+      (field) => field.required && field.type !== 'checkbox' && !String(activeForm.values[field.name] ?? '').trim(),
+    );
+    if (missingField) {
+      setActionError(`${fieldLabel(missingField)} is required.`);
+      return;
+    }
+    setMessages(prev => [
+      ...prev,
+      {
+        id: Date.now().toString(),
+        type: 'user',
+        content: 'Application creation information submitted.',
+        timestamp: new Date(),
+      },
+    ]);
+    const submittedForm = activeForm;
+    setActiveForm(null);
+    void sendToOrchestrator('application 생성 정보를 입력했습니다.', {
+      formSubmission: {
+        type: submittedForm.type,
+        values: submittedForm.values,
+      },
+    });
+  };
+
+  const handleConfirmAction = () => {
+    if (!pendingConfirmation) return;
+    const confirmedResult = pendingConfirmation.result;
+    setPendingConfirmation(null);
+    setIsTyping(true);
+    executeApplicationAction(confirmedResult)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Action execution failed.';
+        appendAiMessage(message);
+        setActionError(message);
+      })
+      .finally(() => setIsTyping(false));
   };
 
   const handleToggle = () => {
@@ -421,6 +720,88 @@ export function AIAssistant() {
                       <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {activeForm && (
+              <div className="rounded-xl border border-blue-500/20 bg-[#111827] p-4">
+                <div className="mb-3 text-sm font-medium text-white">Application form</div>
+                <div className="space-y-3">
+                  {activeForm.fields.map((field) => (
+                    <label key={field.name} className="block text-xs text-gray-400">
+                      <span className="mb-1 block">{fieldLabel(field)}</span>
+                      {field.type === 'checkbox' ? (
+                        <span className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#0a0a0f] px-3 py-2 text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(activeForm.values[field.name])}
+                            onChange={(event) => handleFormValueChange(field.name, event.target.checked)}
+                            className="h-4 w-4 accent-blue-600"
+                          />
+                          Enabled
+                        </span>
+                      ) : field.type === 'select' && field.options?.length ? (
+                        <select
+                          value={String(activeForm.values[field.name] ?? '')}
+                          onChange={(event) => handleFormValueChange(field.name, event.target.value)}
+                          className="w-full rounded-lg border border-[#1f1f28] bg-[#0a0a0f] px-3 py-2 text-sm text-white focus:border-blue-500/30 focus:outline-none"
+                        >
+                          <option value="">Select...</option>
+                          {field.options.map((option) => (
+                            <option key={String(option.value)} value={String(option.value)}>
+                              {option.label || String(option.value)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type === 'url' ? 'url' : 'text'}
+                          required={field.required}
+                          value={String(activeForm.values[field.name] ?? '')}
+                          onChange={(event) => handleFormValueChange(field.name, event.target.value)}
+                          placeholder={field.placeholder}
+                          className="w-full rounded-lg border border-[#1f1f28] bg-[#0a0a0f] px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-blue-500/30 focus:outline-none"
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+                {actionError && (
+                  <div className="mt-3 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
+                    {actionError}
+                  </div>
+                )}
+                <button
+                  onClick={handleFormSubmit}
+                  disabled={isTyping}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isTyping && <Loader2 size={14} className="animate-spin" />}
+                  Submit
+                </button>
+              </div>
+            )}
+
+            {pendingConfirmation && (
+              <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-4">
+                <div className="text-sm font-medium text-white">{pendingConfirmation.title}</div>
+                <div className="mt-1 text-xs leading-5 text-yellow-100">{pendingConfirmation.message}</div>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={handleConfirmAction}
+                    disabled={isTyping}
+                    className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {pendingConfirmation.confirmText}
+                  </button>
+                  <button
+                    onClick={() => setPendingConfirmation(null)}
+                    disabled={isTyping}
+                    className="flex-1 rounded-lg border border-[#2a2a34] px-3 py-2 text-sm text-gray-200 hover:bg-[#1f1f28] disabled:opacity-50"
+                  >
+                    {pendingConfirmation.cancelText}
+                  </button>
                 </div>
               </div>
             )}
