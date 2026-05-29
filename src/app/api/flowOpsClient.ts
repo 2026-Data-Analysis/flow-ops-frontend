@@ -518,10 +518,71 @@ export interface IncidentAgentData {
   external_notice: string;
 }
 
+export interface OrchestratorTestEndpoint {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  auth?: { type: string };
+  request_body_schema?: object;
+  response_schema?: object;
+}
+
+export interface OrchestratorTestApiInventory {
+  project_id: string;
+  endpoints: OrchestratorTestEndpoint[];
+}
+
+export interface OrchestratorTestContext {
+  base_url: string;
+  env_name: string;
+  api_inventory: OrchestratorTestApiInventory;
+}
+
+export interface OrchestratorTestRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorTestContext;
+}
+
+export interface OrchestratorTestCaseDraft {
+  apiId: string;
+  title: string;
+  description: string;
+  type: string;
+  test_case_type: string;
+  userRole: string | null;
+  stateCondition: string | null;
+  dataVariant: string | null;
+  requestSpec: {
+    method: string;
+    pathParams: Record<string, unknown>;
+    queryParams: Record<string, unknown>;
+    body: unknown;
+  };
+  expectedSpec: {
+    statusCode: number;
+    body: unknown;
+    errorMessage: string | null;
+  };
+  assertionSpec: {
+    statusCode: number;
+    bodyContains: string[];
+    headerContains: Record<string, string>;
+  };
+  duplicate: boolean;
+}
+
+export interface OrchestratorTestCaseData {
+  requestId: string;
+  generationId: string;
+  drafts: OrchestratorTestCaseDraft[];
+}
+
 export interface OrchestratorAgentResult {
   agent_type: string;
   success: boolean;
-  data: IncidentAgentData | null;
+  data: IncidentAgentData | OrchestratorTestCaseData | null;
   error_message: string | null;
 }
 
@@ -809,6 +870,12 @@ export const flowOpsApi = {
     }),
 
   dispatchOrchestrator: (body: OrchestratorRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  dispatchOrchestratorTest: (body: OrchestratorTestRequest) =>
     request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', {
       method: 'POST',
       body: JSON.stringify(body),
