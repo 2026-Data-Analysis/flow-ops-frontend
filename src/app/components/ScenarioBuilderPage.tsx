@@ -1635,7 +1635,7 @@ export function ScenarioBuilderPage() {
                           )}
                         </div>
 
-                        {step.duplicate === false && (
+                        {step.duplicate !== true && (
                           <span className={`flex items-center gap-1 px-2 py-1 text-xs rounded border flex-shrink-0 ${
                             savedStepIds.has(step.id)
                               ? 'bg-green-500/10 text-green-400 border-green-500/20'
@@ -1833,7 +1833,7 @@ export function ScenarioBuilderPage() {
                         </div>
 
                         {/* ── TC 저장 버튼 (duplicate=false인 경우만) ── */}
-                        {step.duplicate === false && (
+                        {step.duplicate !== true && (
                           <div className="border-t border-[#1f1f28] pt-4 flex items-center gap-3">
                             <button
                               onClick={(e) => { e.stopPropagation(); void handleSaveStepAsTestCase(step); }}
