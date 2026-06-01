@@ -12,9 +12,10 @@ import {
   X,
   AlertCircle,
   FileText,
-  Code
+  Code,
+  Loader2
 } from 'lucide-react';
-import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
+import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse, type IncidentAnalyzeResponse } from '../api/flowOpsClient';
 import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
 
 interface ExecutionLog {
@@ -162,9 +163,48 @@ export function ExecutionListPage() {
     navigate('/execution/run', { state: { rerunLog: selectedLog } });
   };
 
-  const handleGenerateTests = () => {
+  const [isAnalyzingIncident, setIsAnalyzingIncident] = useState(false);
+  const [incidentAnalysisError, setIncidentAnalysisError] = useState<string | null>(null);
+
+  const handleGenerateIncidentReport = async () => {
     if (!selectedLog) return;
-    navigate('/qc/testcase', { state: { generateFromFailure: true, log: selectedLog } });
+    setIsAnalyzingIncident(true);
+    setIncidentAnalysisError(null);
+    try {
+      const rawLog = [
+        selectedLog.errorMessage,
+        selectedLog.step ? `Step: ${selectedLog.step}` : null,
+        `${selectedLog.method} ${selectedLog.path} → ${selectedLog.responseCode ?? 'no response'}`,
+      ].filter(Boolean).join('\n');
+
+      const analysis = await flowOpsApi.analyzeIncident({
+        project_id: String(getDefaultAppId()),
+        service_name: selectedLog.execution,
+        occurred_at: selectedLog.timestamp || new Date().toISOString(),
+        raw_log: rawLog,
+        log_entries: [{
+          timestamp: selectedLog.timestamp || new Date().toISOString(),
+          level: 'ERROR',
+          message: selectedLog.errorMessage || `${selectedLog.method} ${selectedLog.path} failed`,
+          logger: selectedLog.path,
+          stack_trace: null,
+          extra: { statusCode: String(selectedLog.responseCode ?? '') },
+        }],
+        failure_context: {
+          endpoint: `${selectedLog.method} ${selectedLog.path}`,
+          expected_status: 200,
+          actual_status: selectedLog.responseCode,
+          request_body: selectedLog.requestBody ? JSON.parse(selectedLog.requestBody) : undefined,
+          response_body: selectedLog.responseBody ? JSON.parse(selectedLog.responseBody) : undefined,
+          error_message: selectedLog.errorMessage,
+        },
+      });
+      navigate('/monitoring/response', { state: { incidentAnalysis: analysis, executionId: selectedLog.id } });
+    } catch (error) {
+      setIncidentAnalysisError(error instanceof Error ? error.message : '장애 분석에 실패했습니다.');
+    } finally {
+      setIsAnalyzingIncident(false);
+    }
   };
 
   return (
@@ -608,13 +648,19 @@ export function ExecutionListPage() {
             </button>
 
             {selectedLog.status === 'failed' && (
-              <button
-                onClick={handleGenerateTests}
-                className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-purple-500/20 hover:bg-purple-500/5 text-purple-400 px-4 py-3 rounded-lg transition-all"
-              >
-                <Sparkles size={18} />
-                Generate Test Cases from Failure
-              </button>
+              <>
+                <button
+                  onClick={handleGenerateIncidentReport}
+                  disabled={isAnalyzingIncident}
+                  className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 px-4 py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isAnalyzingIncident ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                  장애대응문안 생성
+                </button>
+                {incidentAnalysisError && (
+                  <p className="text-xs text-red-400 text-center">{incidentAnalysisError}</p>
+                )}
+              </>
             )}
           </div>
         </aside>

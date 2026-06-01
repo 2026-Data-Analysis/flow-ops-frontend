@@ -69,6 +69,16 @@ interface ScenarioStep {
   stopOnFail: boolean;
   duplicate?: boolean;
   rawV2Step?: ScenarioV2Step;
+  // Test case fields (from PDF spec / draft fields)
+  type?: string;
+  testCaseType?: string;
+  testLevel?: string;
+  userRole?: string;
+  stateCondition?: string;
+  dataVariant?: string;
+  requestSpec?: string;
+  expectedSpec?: string;
+  assertionSpec?: string;
 }
 
 interface ExtractedVariable {
@@ -296,11 +306,12 @@ const normalizeV2Scenario = (
     const api = apiByEndpointId.get(step.apiId) || apiByPath.get(step.apiId?.split(':').slice(1).join(':') || '');
     const method = (step.requestSpec?.method || api?.method || 'GET') as ScenarioStep['method'];
 
+    const safeMethod = (method === 'TRACE' || method === 'OPTIONS' || method === 'HEAD' ? 'GET' : method) as ScenarioStep['method'];
     return createStep(
       `${idPrefix}-${scenario.scenario_id}-step-${index + 1}`,
       step.order || index + 1,
-      step.title || step.apiId,
-      method === 'TRACE' || method === 'OPTIONS' || method === 'HEAD' ? 'GET' : method,
+      step.title || step.name || step.apiId,
+      safeMethod,
       api?.endpointPath || step.apiId,
       {
         apiId: api ? (hasNumericId(api) ? api.id : undefined) : undefined,
@@ -308,11 +319,17 @@ const normalizeV2Scenario = (
         extractRules: step.chained_variables?.length
           ? JSON.stringify(step.chained_variables)
           : undefined,
-        validationRules: step.assertionSpec
-          ? [`Status: ${step.assertionSpec.statusCode}`]
-          : ['Status code validation'],
+        validationRules: [],
         duplicate: step.duplicate,
         rawV2Step: step,
+        type: step.type || undefined,
+        testCaseType: step.test_case_type || undefined,
+        userRole: step.userRole || undefined,
+        stateCondition: step.stateCondition || undefined,
+        dataVariant: step.dataVariant || undefined,
+        requestSpec: step.requestSpec ? JSON.stringify(step.requestSpec, null, 2) : undefined,
+        expectedSpec: step.expectedSpec ? JSON.stringify(step.expectedSpec, null, 2) : undefined,
+        assertionSpec: step.assertionSpec ? JSON.stringify(step.assertionSpec, null, 2) : undefined,
       },
     );
   });
@@ -1390,9 +1407,28 @@ export function ScenarioBuilderPage() {
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
             {isLoading ? (
-              <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f]">
-                <Loader2 size={32} className="mb-3 text-blue-400 animate-spin" />
-                <p className="text-gray-500 text-sm">시나리오 목록을 불러오는 중...</p>
+              <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                  <Loader2 size={24} className="animate-spin text-blue-400" />
+                </div>
+                <h3 className="mb-2 text-white font-semibold">시나리오 목록 로딩 중</h3>
+                <p className="mb-8 max-w-md text-center text-sm text-gray-500">
+                  저장된 시나리오를 불러오고 있습니다.
+                </p>
+                <div className="w-full max-w-3xl space-y-3">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="h-4 w-4 rounded border border-[#2f2f38] bg-[#1f1f28]" />
+                        <div className="h-5 w-40 rounded bg-[#1f1f28]" />
+                        <div className="h-5 w-20 rounded bg-[#1f1f28]" />
+                        <div className="h-4 w-16 rounded bg-[#1f1f28]" />
+                      </div>
+                      <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
+                      <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : filteredScenarios.length === 0 ? (
               <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
@@ -1599,22 +1635,15 @@ export function ScenarioBuilderPage() {
                           )}
                         </div>
 
-                        {step.rawV2Step && !step.duplicate && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); void handleSaveStepAsTestCase(step); }}
-                            disabled={savingStepIds.has(step.id) || savedStepIds.has(step.id)}
-                            className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="테스트케이스로 저장"
-                          >
-                            {savingStepIds.has(step.id) ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : savedStepIds.has(step.id) ? (
-                              <Check size={12} />
-                            ) : (
-                              <Save size={12} />
-                            )}
-                            {savedStepIds.has(step.id) ? '저장됨' : 'TC 저장'}
-                          </button>
+                        {step.duplicate === false && (
+                          <span className={`flex items-center gap-1 px-2 py-1 text-xs rounded border flex-shrink-0 ${
+                            savedStepIds.has(step.id)
+                              ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                              : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                          }`}>
+                            {savedStepIds.has(step.id) ? <Check size={11} /> : <Save size={11} />}
+                            {savedStepIds.has(step.id) ? '저장됨' : '신규'}
+                          </span>
                         )}
 
                         <button
@@ -1636,8 +1665,10 @@ export function ScenarioBuilderPage() {
                     {/* Expanded Step Editor */}
                     {expandedStepId === step.id && (
                       <div className="border-t border-[#1f1f28] p-4 bg-[#0d0d12] space-y-4">
+
+                        {/* ── 기본 식별 필드 ── */}
                         <div>
-                          <label className="block text-xs text-gray-500 mb-2">Label</label>
+                          <label className="block text-xs text-gray-500 mb-2">Test Case Name</label>
                           <input
                             type="text"
                             value={step.label}
@@ -1648,85 +1679,180 @@ export function ScenarioBuilderPage() {
 
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs text-gray-500 mb-2">Method</label>
+                            <label className="block text-xs text-gray-500 mb-2">Type</label>
+                            <input
+                              type="text"
+                              value={step.type || step.testCaseType || ''}
+                              onChange={(e) => updateStep(step.id, { type: e.target.value })}
+                              placeholder="HAPPY_PATH"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Test Level</label>
                             <select
-                              value={step.method}
-                              onChange={(e) => updateStep(step.id, { method: e.target.value as any })}
+                              value={step.testLevel || ''}
+                              onChange={(e) => updateStep(step.id, { testLevel: e.target.value || undefined })}
                               className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
                             >
-                              <option value="GET">GET</option>
-                              <option value="POST">POST</option>
-                              <option value="PUT">PUT</option>
-                              <option value="DELETE">DELETE</option>
-                              <option value="PATCH">PATCH</option>
+                              <option value="">Source default</option>
+                              <option value="SMOKE">SMOKE</option>
+                              <option value="SANITY">SANITY</option>
+                              <option value="REGRESSION">REGRESSION</option>
+                              <option value="FULL">FULL</option>
                             </select>
                           </div>
+                        </div>
 
+                        <div className="grid grid-cols-3 gap-3">
                           <div>
-                            <label className="block text-xs text-gray-500 mb-2">Stop on Fail</label>
-                            <div className="flex items-center h-full">
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={step.stopOnFail}
-                                  onChange={(e) => updateStep(step.id, { stopOnFail: e.target.checked })}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-11 h-6 bg-[#1f1f28] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">API Endpoint</label>
-                          <input
-                            type="text"
-                            value={step.apiEndpoint}
-                            onChange={(e) => updateStep(step.id, { apiEndpoint: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">Request Config</label>
-                          <textarea
-                            value={step.requestConfig || ''}
-                            onChange={(e) => updateStep(step.id, { requestConfig: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
-                            rows={4}
-                            placeholder='{"pathParams":{},"queryParams":{},"headers":{},"body":{}}'
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">Extract Variables</label>
-                          <div className="space-y-2">
-                            {step.extractedVars.map((v) => (
-                              <div key={v.id} className="flex items-center gap-2 text-xs">
-                                <span className="text-white font-mono">{v.name}</span>
-                                <span className="text-gray-500">-</span>
-                                <span className="text-gray-400 font-mono">{v.jsonPath}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {step.validationRules && step.validationRules.length > 0 && (
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-2">Validation Rules</label>
-                            <textarea
-                              value={step.validationRules.join('\n')}
-                              onChange={(e) => updateStep(step.id, { validationRules: e.target.value.split('\n').filter(Boolean) })}
-                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
-                              rows={3}
-                              placeholder='{"status": 201, "body": {"status": "created"}}'
+                            <label className="block text-xs text-gray-500 mb-2">User Role</label>
+                            <input
+                              type="text"
+                              value={step.userRole || ''}
+                              onChange={(e) => updateStep(step.id, { userRole: e.target.value || undefined })}
+                              placeholder="Admin"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
                             />
-                            <div className="mt-1 text-xs text-gray-500">
-                              Body rules are matched as contained JSON fields, not full-response equality.
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">State Condition</label>
+                            <input
+                              type="text"
+                              value={step.stateCondition || ''}
+                              onChange={(e) => updateStep(step.id, { stateCondition: e.target.value || undefined })}
+                              placeholder="Logged In"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Data Variant</label>
+                            <input
+                              type="text"
+                              value={step.dataVariant || ''}
+                              onChange={(e) => updateStep(step.id, { dataVariant: e.target.value || undefined })}
+                              placeholder="Valid Input"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                        </div>
+
+                        {/* ── 스펙 필드 ── */}
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-2">Request Spec</label>
+                          <textarea
+                            value={step.requestSpec || step.requestConfig || ''}
+                            onChange={(e) => updateStep(step.id, { requestSpec: e.target.value, requestConfig: e.target.value })}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                            rows={5}
+                            placeholder='{"method":"POST","pathParams":{},"queryParams":{},"body":{}}'
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                            <textarea
+                              value={step.expectedSpec || ''}
+                              onChange={(e) => updateStep(step.id, { expectedSpec: e.target.value || undefined })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                              rows={5}
+                              placeholder='{"statusCode":201,"body":{"status":"created"},"errorMessage":null}'
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Assertion Spec</label>
+                            <textarea
+                              value={step.assertionSpec || ''}
+                              onChange={(e) => updateStep(step.id, { assertionSpec: e.target.value || undefined })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                              rows={5}
+                              placeholder='{"statusCode":201,"bodyContains":[],"bodyEquals":{},"headerContains":{}}'
+                            />
+                          </div>
+                        </div>
+
+                        {/* ── 실행 설정 ── */}
+                        <div className="border-t border-[#1f1f28] pt-4">
+                          <div className="text-xs text-gray-500 mb-3 uppercase tracking-wide">실행 설정</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-2">Method</label>
+                              <select
+                                value={step.method}
+                                onChange={(e) => updateStep(step.id, { method: e.target.value as any })}
+                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                              >
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="PATCH">PATCH</option>
+                              </select>
                             </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-2">Stop on Fail</label>
+                              <div className="flex items-center h-[38px]">
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={step.stopOnFail}
+                                    onChange={(e) => updateStep(step.id, { stopOnFail: e.target.checked })}
+                                    className="sr-only peer"
+                                  />
+                                  <div className="w-11 h-6 bg-[#1f1f28] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3">
+                            <label className="block text-xs text-gray-500 mb-2">API Endpoint</label>
+                            <input
+                              type="text"
+                              value={step.apiEndpoint}
+                              onChange={(e) => updateStep(step.id, { apiEndpoint: e.target.value })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+
+                          {step.extractedVars.length > 0 && (
+                            <div className="mt-3">
+                              <label className="block text-xs text-gray-500 mb-2">Chained Variables</label>
+                              <div className="space-y-1">
+                                {step.extractedVars.map((v) => (
+                                  <div key={v.id} className="flex items-center gap-2 text-xs">
+                                    <span className="text-white font-mono">{v.name}</span>
+                                    <span className="text-gray-500">→</span>
+                                    <span className="text-gray-400 font-mono">{v.jsonPath}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* ── TC 저장 버튼 (duplicate=false인 경우만) ── */}
+                        {step.duplicate === false && (
+                          <div className="border-t border-[#1f1f28] pt-4 flex items-center gap-3">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void handleSaveStepAsTestCase(step); }}
+                              disabled={savingStepIds.has(step.id) || savedStepIds.has(step.id)}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {savingStepIds.has(step.id) ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : savedStepIds.has(step.id) ? (
+                                <Check size={14} />
+                              ) : (
+                                <Save size={14} />
+                              )}
+                              {savedStepIds.has(step.id) ? '테스트케이스 저장됨' : '테스트케이스로 저장'}
+                            </button>
+                            <span className="text-xs text-gray-500">기존 테스트케이스에 없는 신규 스텝입니다</span>
                           </div>
                         )}
+
                       </div>
                     )}
                   </div>
