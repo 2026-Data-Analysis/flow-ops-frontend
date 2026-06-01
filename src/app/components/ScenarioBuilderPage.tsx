@@ -933,31 +933,31 @@ export function ScenarioBuilderPage() {
   };
 
   const handleSaveStepAsTestCase = async (step: ScenarioStep) => {
-    if (!step.rawV2Step) return;
     const appId = mainApplicationId ?? getDefaultAppId();
     const v2 = step.rawV2Step;
+    const stepName = v2?.title || step.name || step.endpoint;
 
     setSavingStepIds((prev) => new Set(prev).add(step.id));
     try {
-      const apiInventoryItem = inventoryApis.find(
-        (api) => `${api.method}:${api.endpointPath}` === v2.apiId,
-      );
+      const apiInventoryItem = v2?.apiId
+        ? inventoryApis.find((api) => `${api.method}:${api.endpointPath}` === v2.apiId)
+        : inventoryApis.find((api) => api.method === step.method && api.endpointPath === step.endpoint);
       await flowOpsApi.createTestCase(appId, {
         apiInventoryId: apiInventoryItem ? (hasNumericId(apiInventoryItem) ? apiInventoryItem.id : undefined) : undefined,
-        name: v2.title,
-        title: v2.title,
-        description: v2.description || undefined,
-        type: v2.type,
-        userRole: v2.userRole || undefined,
-        stateCondition: v2.stateCondition || undefined,
-        dataVariant: v2.dataVariant || undefined,
-        requestSpec: v2.requestSpec ? JSON.stringify(v2.requestSpec) : undefined,
-        expectedSpec: v2.expectedSpec ? JSON.stringify(v2.expectedSpec) : undefined,
-        assertionSpec: v2.assertionSpec ? JSON.stringify(v2.assertionSpec) : undefined,
+        name: stepName,
+        title: stepName,
+        description: v2?.description || undefined,
+        type: v2?.type || 'POSITIVE',
+        userRole: v2?.userRole || step.userRole || undefined,
+        stateCondition: v2?.stateCondition || step.stateCondition || undefined,
+        dataVariant: v2?.dataVariant || step.dataVariant || undefined,
+        requestSpec: v2?.requestSpec ? JSON.stringify(v2.requestSpec) : step.requestConfig || undefined,
+        expectedSpec: v2?.expectedSpec ? JSON.stringify(v2.expectedSpec) : step.expectedSpec || undefined,
+        assertionSpec: v2?.assertionSpec ? JSON.stringify(v2.assertionSpec) : step.assertionSpec || undefined,
         active: true,
       });
       setSavedStepIds((prev) => new Set(prev).add(step.id));
-      setSaveToast({ type: 'success', message: `"${v2.title}" saved to test cases.` });
+      setSaveToast({ type: 'success', message: `"${stepName}" saved to test cases.` });
       setTimeout(() => setSaveToast(null), 3000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save test case.';

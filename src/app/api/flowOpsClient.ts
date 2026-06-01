@@ -1051,10 +1051,10 @@ export const flowOpsApi = {
     }),
 
   analyzeIncident: (body: IncidentAnalyzeRequest) =>
-    request<IncidentAnalyzeResponse>('/ai/agents/incidents/analyze', {
+    unwrap(request<ApiResponse<IncidentAnalyzeResponse>>('/ai/agents/incidents/analyze', {
       method: 'POST',
       body: JSON.stringify(body),
-    }),
+    })),
 
   classifyAiTestStrategy: (body: AiTestStrategyClassifyRequest) =>
     request<AiTestStrategyClassifyResponse>('/ai/agents/test-strategy/classify', {
