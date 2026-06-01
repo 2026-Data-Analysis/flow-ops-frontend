@@ -404,6 +404,7 @@ export function ResponseAssistantPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const analysisReference = (location.state as any)?.analysis;
+  const incidentAnalysis = (location.state as any)?.incidentAnalysis as import('../api/flowOpsClient').IncidentAnalyzeResponse | undefined;
 
   const buildContent = (
     nextAudience: AudienceType,
@@ -468,6 +469,14 @@ export function ResponseAssistantPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (incidentAnalysis?.data?.internal_report) {
+      setContent(incidentAnalysis.data.internal_report);
+      setAudience('internal');
+      setMessageType('report');
+    }
+  }, [incidentAnalysis]);
 
   const handleAudienceChange = (newAudience: AudienceType) => {
     setAudience(newAudience);
@@ -549,6 +558,37 @@ export function ResponseAssistantPage() {
                 </div>
               </div>
               <p className="mt-3 text-sm leading-6 text-gray-300">{analysisReference.diagnosis}</p>
+            </div>
+          )}
+
+          {incidentAnalysis?.data && (
+            <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 p-5">
+              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-orange-300">
+                <Sparkles size={16} />
+                Incident Analysis Result
+              </div>
+              {incidentAnalysis.data.root_causes?.length > 0 && (
+                <div className="mb-3 space-y-2">
+                  <div className="text-xs text-orange-200/70 mb-1">Root Causes</div>
+                  {incidentAnalysis.data.root_causes.map((cause, i) => (
+                    <div key={i} className="rounded-lg bg-[#13131a] p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${cause.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                          {cause.severity}
+                        </span>
+                        <span className="text-sm text-white">{cause.summary}</span>
+                      </div>
+                      <p className="text-xs text-gray-400">{cause.suggested_fix}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {incidentAnalysis.data.external_notice && (
+                <div>
+                  <div className="text-xs text-orange-200/70 mb-1">External Notice</div>
+                  <p className="text-xs text-gray-300">{incidentAnalysis.data.external_notice}</p>
+                </div>
+              )}
             </div>
           )}
 
