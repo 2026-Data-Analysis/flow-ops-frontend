@@ -505,6 +505,53 @@ export interface AiLogAnalysisResponse {
   }>;
 }
 
+export interface IncidentLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  logger: string;
+  stack_trace?: string | null;
+  extra?: Record<string, unknown>;
+}
+
+export interface IncidentFailureContext {
+  test_case_id?: string;
+  endpoint?: string;
+  expected_status?: number;
+  actual_status?: number;
+  request_body?: unknown;
+  response_body?: unknown;
+  error_message?: string;
+}
+
+export interface IncidentAnalyzeRequest {
+  project_id: string;
+  service_name: string;
+  occurred_at: string;
+  raw_log: string;
+  log_entries?: IncidentLogEntry[];
+  failure_context?: IncidentFailureContext;
+}
+
+export interface IncidentRootCause {
+  summary: string;
+  severity: string;
+  suggested_fix: string;
+  evidence: string[];
+}
+
+export interface IncidentAnalyzeResponse {
+  success: boolean;
+  data: {
+    root_causes: IncidentRootCause[];
+    internal_report: string;
+    external_notice: string;
+  };
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string;
+}
+
 export interface AiTestStrategyClassifyRequest extends AiAgentBaseRequest {
   agent?: 'TEST_STRATEGY_CLASSIFIER';
   drafts: Array<Record<string, unknown>>;
@@ -921,6 +968,12 @@ export const flowOpsApi = {
 
   analyzeAiLogs: (body: Record<string, unknown>) =>
     request<AiLogAnalysisResponse>('/ai/agents/logs/analyze', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  analyzeIncident: (body: IncidentAnalyzeRequest) =>
+    request<IncidentAnalyzeResponse>('/ai/agents/incidents/analyze', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
