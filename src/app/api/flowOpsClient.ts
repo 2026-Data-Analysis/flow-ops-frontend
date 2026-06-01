@@ -485,6 +485,115 @@ export interface AiScenarioBuildResponse {
   }>;
 }
 
+// ─── Scenario Generation V2 (PDF spec) ────────────────────────────────────────
+
+export interface ScenarioV2ChainedVariable {
+  name: string;
+  source: string;
+  source_step_ref: string | null;
+  source_json_path: string | null;
+  literal_value: unknown | null;
+  target_location: string;
+  target_field: string;
+  target_template: string | null;
+}
+
+export interface ScenarioV2Step {
+  step_id: string;
+  ref: string;
+  order: number;
+  chained_variables: ScenarioV2ChainedVariable[];
+  apiId: string;
+  title: string;
+  description: string | null;
+  type: string;
+  test_case_type: string | null;
+  userRole: string | null;
+  stateCondition: string | null;
+  dataVariant: string | null;
+  requestSpec: {
+    method: string;
+    pathParams: Record<string, unknown>;
+    queryParams: Record<string, unknown>;
+    body: unknown;
+  } | null;
+  expectedSpec: {
+    statusCode: number;
+    body: unknown;
+    errorMessage: string | null;
+  } | null;
+  assertionSpec: {
+    statusCode: number;
+    bodyContains: string[];
+    bodyEquals: Record<string, unknown>;
+    headerContains: Record<string, string>;
+  } | null;
+  duplicate: boolean;
+}
+
+export interface ScenarioV2Meta {
+  rationale: string;
+  coverage_gap: string | null;
+  estimated_risk: string;
+}
+
+export interface ScenarioV2 {
+  scenario_id: string;
+  name: string;
+  description: string | null;
+  steps: ScenarioV2Step[];
+  meta: ScenarioV2Meta;
+}
+
+export interface ScenarioGenerationV2Result {
+  scenarios: ScenarioV2[];
+  used_endpoint_ids: string[];
+}
+
+export interface ScenarioGenerationV2Response {
+  success: boolean;
+  data: ScenarioGenerationV2Result | null;
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string | null;
+}
+
+export interface ScenarioEndpointV2Payload {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  description?: string;
+  request_body_schema?: object;
+  response_schema?: object;
+  auth?: { type: string };
+  tags?: string[];
+}
+
+export interface ScenarioApiInventoryV2Payload {
+  project_id: string;
+  endpoints: ScenarioEndpointV2Payload[];
+}
+
+export interface ScenarioExistingTestCaseV2Payload {
+  test_case_id: string;
+  endpoint_id: string;
+  name: string;
+  type: string;
+  description?: string;
+  expected_status_code?: number;
+}
+
+export interface ScenarioGenerationV2Request {
+  project_id: string;
+  mode: 'NATURAL_LANGUAGE' | 'RECOMMEND';
+  user_intent?: string | null;
+  api_inventory: ScenarioApiInventoryV2Payload;
+  existing_test_cases?: ScenarioExistingTestCaseV2Payload[];
+  max_scenarios?: number;
+  max_steps_per_scenario?: number;
+}
+
 export interface AiLogAnalysisResponse {
   diagnosis: string;
   failureCategory: string;
@@ -665,7 +774,7 @@ export interface OrchestratorScenarioStep {
 export interface OrchestratorScenarioMeta {
   rationale: string;
   coverage_gap: string | null;
-  estimated_risk: 'HIGH' | 'MEDIUM' | 'LOW';
+  estimated_risk: string;
 }
 
 export interface OrchestratorScenario {
@@ -982,6 +1091,9 @@ export const flowOpsApi = {
 
   buildAiScenario: (body: AiScenarioBuildRequest) =>
     request<AiScenarioBuildResponse>('/ai/agents/scenarios/build', { method: 'POST', body: JSON.stringify(body) }),
+
+  generateScenarioV2: (body: ScenarioGenerationV2Request) =>
+    request<ScenarioGenerationV2Response>('/ai/agents/scenarios/build', { method: 'POST', body: JSON.stringify(body) }),
 
   analyzeAiLogs: (body: Record<string, unknown>) =>
     request<AiLogAnalysisResponse>('/ai/agents/logs/analyze', { method: 'POST', body: JSON.stringify(body) }),
