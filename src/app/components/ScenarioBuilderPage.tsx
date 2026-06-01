@@ -882,7 +882,7 @@ export function ScenarioBuilderPage() {
       });
 
       if (!response.success || !response.data?.scenarios?.length) {
-        throw new Error(response.error_message || '시나리오를 생성하지 못했습니다.');
+        throw new Error(response.error_message || 'Failed to generate scenario.');
       }
 
       const newScenarios = response.data.scenarios.map((s) =>
@@ -958,7 +958,7 @@ export function ScenarioBuilderPage() {
       });
       setSavedStepIds((prev) => new Set(prev).add(step.id));
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : '테스트케이스 저장에 실패했습니다.');
+      setApiError(err instanceof Error ? err.message : 'Failed to save test case.');
     } finally {
       setSavingStepIds((prev) => {
         const next = new Set(prev);
@@ -985,7 +985,7 @@ export function ScenarioBuilderPage() {
       });
       navigate('/monitoring/history');
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+      setRunError(error instanceof Error ? error.message : 'Failed to run scenario.');
     } finally {
       setIsRunning(false);
     }
@@ -1337,7 +1337,7 @@ export function ScenarioBuilderPage() {
             {isRunning && (
               <div className="flex items-center gap-2 text-blue-400 text-sm">
                 <Loader2 size={16} className="animate-spin" />
-                실행 중...
+                Running...
               </div>
             )}
             {runError && (
@@ -1411,9 +1411,9 @@ export function ScenarioBuilderPage() {
                 <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
                   <Loader2 size={24} className="animate-spin text-blue-400" />
                 </div>
-                <h3 className="mb-2 text-white font-semibold">시나리오 목록 로딩 중</h3>
+                <h3 className="mb-2 text-white font-semibold">Loading Scenarios</h3>
                 <p className="mb-8 max-w-md text-center text-sm text-gray-500">
-                  저장된 시나리오를 불러오고 있습니다.
+                  Fetching your saved scenarios...
                 </p>
                 <div className="w-full max-w-3xl space-y-3">
                   {[0, 1, 2].map((i) => (
@@ -1620,7 +1620,7 @@ export function ScenarioBuilderPage() {
                             <span className="text-white text-sm font-medium">{step.label}</span>
                             {step.duplicate === true && (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">
-                                중복
+                                Duplicate
                               </span>
                             )}
                             {step.rawV2Step?.type && (
@@ -1642,7 +1642,7 @@ export function ScenarioBuilderPage() {
                               : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                           }`}>
                             {savedStepIds.has(step.id) ? <Check size={11} /> : <Save size={11} />}
-                            {savedStepIds.has(step.id) ? '저장됨' : '신규'}
+                            {savedStepIds.has(step.id) ? 'Saved' : 'New'}
                           </span>
                         )}
 
@@ -1772,9 +1772,9 @@ export function ScenarioBuilderPage() {
                           </div>
                         </div>
 
-                        {/* ── 실행 설정 ── */}
+                        {/* ── Execution Config ── */}
                         <div className="border-t border-[#1f1f28] pt-4">
-                          <div className="text-xs text-gray-500 mb-3 uppercase tracking-wide">실행 설정</div>
+                          <div className="text-xs text-gray-500 mb-3 uppercase tracking-wide">Execution Config</div>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs text-gray-500 mb-2">Method</label>
@@ -1832,7 +1832,7 @@ export function ScenarioBuilderPage() {
                           )}
                         </div>
 
-                        {/* ── TC 저장 버튼 (duplicate=false인 경우만) ── */}
+                        {/* Save as Test Case (only when step is not a duplicate) */}
                         {step.duplicate !== true && (
                           <div className="border-t border-[#1f1f28] pt-4 flex items-center gap-3">
                             <button
@@ -1847,9 +1847,9 @@ export function ScenarioBuilderPage() {
                               ) : (
                                 <Save size={14} />
                               )}
-                              {savedStepIds.has(step.id) ? '테스트케이스 저장됨' : '테스트케이스로 저장'}
+                              {savedStepIds.has(step.id) ? 'Saved to Test Cases' : 'Save as Test Case'}
                             </button>
-                            <span className="text-xs text-gray-500">기존 테스트케이스에 없는 신규 스텝입니다</span>
+                            <span className="text-xs text-gray-500">This is a new step not yet in test cases</span>
                           </div>
                         )}
 
@@ -1900,7 +1900,7 @@ export function ScenarioBuilderPage() {
               className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg transition-colors font-semibold"
             >
               {isRunning ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} />}
-              {isRunning ? '실행 중...' : 'Run Scenario'}
+              {isRunning ? 'Running...' : 'Run Scenario'}
             </button>
           </div>
         </aside>

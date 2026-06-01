@@ -604,7 +604,7 @@ export function ExecutionHistoryPage() {
                   className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isAnalyzingIncident ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                  장애대응문안 생성
+                  Generate Incident Report
                 </button>
               )}
               <button
@@ -793,7 +793,7 @@ export function ExecutionHistoryPage() {
                                     className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-3 py-1.5 text-xs text-white transition-colors hover:bg-orange-700 disabled:opacity-50"
                                   >
                                     {isAnalyzingIncident ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                                    장애대응문안 생성
+                                    Generate Incident Report
                                   </button>
                                 </div>
                               </div>

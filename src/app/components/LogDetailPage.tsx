@@ -148,7 +148,7 @@ export function LogDetailPage() {
                 className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition-colors"
               >
                 <Sparkles size={16} />
-                장애대응문안 생성
+                Generate Incident Report
               </button>
             )}
             <button

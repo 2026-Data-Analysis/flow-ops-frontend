@@ -201,7 +201,7 @@ export function ExecutionListPage() {
       });
       navigate('/monitoring/response', { state: { incidentAnalysis: analysis, executionId: selectedLog.id } });
     } catch (error) {
-      setIncidentAnalysisError(error instanceof Error ? error.message : '장애 분석에 실패했습니다.');
+      setIncidentAnalysisError(error instanceof Error ? error.message : 'Failed to analyze incident.');
     } finally {
       setIsAnalyzingIncident(false);
     }
@@ -655,7 +655,7 @@ export function ExecutionListPage() {
                   className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 px-4 py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isAnalyzingIncident ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                  장애대응문안 생성
+                  Generate Incident Report
                 </button>
                 {incidentAnalysisError && (
                   <p className="text-xs text-red-400 text-center">{incidentAnalysisError}</p>
