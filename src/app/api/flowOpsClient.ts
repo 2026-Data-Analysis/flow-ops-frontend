@@ -594,6 +594,53 @@ export interface ScenarioGenerationV2Request {
   max_steps_per_scenario?: number;
 }
 
+export interface IncidentLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  logger: string;
+  stack_trace?: string | null;
+  extra?: Record<string, unknown>;
+}
+
+export interface IncidentFailureContext {
+  test_case_id?: string;
+  endpoint?: string;
+  expected_status?: number;
+  actual_status?: number;
+  request_body?: unknown;
+  response_body?: unknown;
+  error_message?: string;
+}
+
+export interface IncidentAnalyzeRequest {
+  project_id: string;
+  service_name: string;
+  occurred_at: string;
+  raw_log: string;
+  log_entries?: IncidentLogEntry[];
+  failure_context?: IncidentFailureContext;
+}
+
+export interface IncidentRootCause {
+  summary: string;
+  severity: string;
+  suggested_fix: string;
+  evidence: string[];
+}
+
+export interface IncidentAnalyzeResponse {
+  success: boolean;
+  data: {
+    root_causes: IncidentRootCause[];
+    internal_report: string;
+    external_notice: string;
+  };
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string;
+}
+
 export interface AiLogAnalysisResponse {
   diagnosis: string;
   failureCategory: string;
@@ -1109,6 +1156,9 @@ export const flowOpsApi = {
 
   dispatchOrchestratorScenario: (body: OrchestratorScenarioRequest) =>
     request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
+
+  analyzeIncident: (body: IncidentAnalyzeRequest) =>
+    request<IncidentAnalyzeResponse>('/ai/agents/incidents/analyze', { method: 'POST', body: JSON.stringify(body) }),
 
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/environments/${environmentId}/quick-test`, { method: 'POST', body: JSON.stringify(body) })),

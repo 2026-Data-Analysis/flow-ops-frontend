@@ -30,6 +30,7 @@ import {
   type AiLogAnalysisResponse,
   type ExecutionDetailResponse,
   type ExecutionStepLogResponse,
+  type IncidentAnalyzeResponse,
 } from '../api/flowOpsClient';
 import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
 
@@ -147,6 +148,9 @@ export function ExecutionHistoryPage() {
   const [logAnalysis, setLogAnalysis] = useState<AiLogAnalysisResponse | null>(null);
   const [isAnalyzingLogs, setIsAnalyzingLogs] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [incidentAnalysis, setIncidentAnalysis] = useState<IncidentAnalyzeResponse | null>(null);
+  const [isAnalyzingIncident, setIsAnalyzingIncident] = useState(false);
+  const [incidentAnalysisError, setIncidentAnalysisError] = useState<string | null>(null);
 
   const selectedExecution = selectedExecutionId
     ? executions.find(e => e.id === selectedExecutionId)
@@ -155,6 +159,8 @@ export function ExecutionHistoryPage() {
   useEffect(() => {
     setLogAnalysis(null);
     setAnalysisError(null);
+    setIncidentAnalysis(null);
+    setIncidentAnalysisError(null);
   }, [selectedExecutionId]);
 
   useEffect(() => {
@@ -260,6 +266,47 @@ export function ExecutionHistoryPage() {
       setLogAnalysis(null);
     } finally {
       setIsAnalyzingLogs(false);
+    }
+  };
+
+  const handleGenerateIncidentReport = async () => {
+    if (!selectedExecution) return;
+    setIsAnalyzingIncident(true);
+    setIncidentAnalysisError(null);
+    try {
+      const failedSteps = selectedExecution.steps.filter((step) => step.status === 'failed');
+      const firstFailed = failedSteps[0];
+      const rawLog = failedSteps.map(s => `${s.errorMessage || s.name} - ${s.apiMethod} ${s.apiPath} → ${s.response.statusCode}`).join('\n');
+      const analysis = await flowOpsApi.analyzeIncident({
+        project_id: String(getDefaultAppId()),
+        service_name: selectedExecution.name,
+        occurred_at: selectedExecution.timestamp || new Date().toISOString(),
+        raw_log: rawLog,
+        log_entries: failedSteps.map(s => ({
+          timestamp: new Date().toISOString(),
+          level: 'ERROR',
+          message: s.errorMessage || s.name,
+          logger: `${s.apiMethod} ${s.apiPath}`,
+          stack_trace: null,
+          extra: { statusCode: String(s.response.statusCode) },
+        })),
+        failure_context: firstFailed ? {
+          endpoint: `${firstFailed.apiMethod} ${firstFailed.apiPath}`,
+          expected_status: 200,
+          actual_status: firstFailed.response.statusCode,
+          request_body: firstFailed.request.body ? JSON.parse(firstFailed.request.body) : undefined,
+          response_body: firstFailed.response.body ? JSON.parse(firstFailed.response.body) : undefined,
+          error_message: firstFailed.errorMessage,
+        } : undefined,
+      });
+      setIncidentAnalysis(analysis);
+      navigate('/monitoring/response', {
+        state: { incidentAnalysis: analysis, executionId: selectedExecution.id },
+      });
+    } catch (error) {
+      setIncidentAnalysisError(error instanceof Error ? error.message : 'Failed to analyze incident.');
+    } finally {
+      setIsAnalyzingIncident(false);
     }
   };
 
@@ -550,6 +597,16 @@ export function ExecutionHistoryPage() {
                   Analyze Failure
                 </button>
               )}
+              {selectedExecution.failedSteps > 0 && (
+                <button
+                  onClick={handleGenerateIncidentReport}
+                  disabled={isAnalyzingIncident}
+                  className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isAnalyzingIncident ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  장애대응문안 생성
+                </button>
+              )}
               <button
                 onClick={handleOpenInBuilder}
                 className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 hover:bg-blue-500/5 text-white px-4 py-2 rounded-lg transition-all"
@@ -558,6 +615,12 @@ export function ExecutionHistoryPage() {
                 Open in Builder
               </button>
             </div>
+
+            {incidentAnalysisError && (
+              <div className="rounded-xl border border-orange-500/20 bg-orange-500/10 p-4">
+                <p className="text-sm text-orange-400">{incidentAnalysisError}</p>
+              </div>
+            )}
 
             {(logAnalysis || analysisError) && (
               <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl p-6">
@@ -707,18 +770,32 @@ export function ExecutionHistoryPage() {
                                   <AlertTriangle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
                                   <div className="text-xs text-red-400">{step.errorMessage}</div>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleAnalyzeLogs();
-                                  }}
-                                  disabled={isAnalyzingLogs}
-                                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-1.5 text-xs text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
-                                >
-                                  {isAnalyzingLogs ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                                  Log Analysis
-                                </button>
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleAnalyzeLogs();
+                                    }}
+                                    disabled={isAnalyzingLogs}
+                                    className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-1.5 text-xs text-white transition-colors hover:bg-purple-700 disabled:opacity-50"
+                                  >
+                                    {isAnalyzingLogs ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                    Log Analysis
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleGenerateIncidentReport();
+                                    }}
+                                    disabled={isAnalyzingIncident}
+                                    className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-3 py-1.5 text-xs text-white transition-colors hover:bg-orange-700 disabled:opacity-50"
+                                  >
+                                    {isAnalyzingIncident ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                    장애대응문안 생성
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>

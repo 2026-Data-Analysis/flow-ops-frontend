@@ -144,11 +144,11 @@ export function LogDetailPage() {
           <div className="flex items-center gap-3">
             {failedSteps.length > 0 && (
               <button
-                onClick={() => navigate('/qc/testcase', { state: { generateFromFailure: true } })}
-                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors"
+                onClick={() => navigate('/monitoring/response')}
+                className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition-colors"
               >
                 <Sparkles size={16} />
-                Generate Tests
+                장애대응문안 생성
               </button>
             )}
             <button

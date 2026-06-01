@@ -275,6 +275,11 @@ export function TestCaseGenerationPage() {
   const [isLoadingExistingTests, setIsLoadingExistingTests] = useState(false);
   const [editingExistingTestId, setEditingExistingTestId] = useState<string | null>(null);
 
+  // Existing test filters
+  const [existingTestSearch, setExistingTestSearch] = useState('');
+  const [existingTestLevelFilter, setExistingTestLevelFilter] = useState('all');
+  const [existingHideDuplicates, setExistingHideDuplicates] = useState(false);
+
   // Panel State
   const [rightPanelMode, setRightPanelMode] = useState<'existing' | 'comparison' | 'generated' | 'hidden'>('hidden');
 
@@ -413,6 +418,13 @@ export function TestCaseGenerationPage() {
 
   const selectedApi = selectedApiId ? apis.find(a => a.id === selectedApiId) : null;
   const currentApiTests = existingTests.filter(t => t.apiId === selectedApiId);
+
+  const filteredExistingTests = existingTests.filter(test => {
+    const matchesSearch = !existingTestSearch || test.name.toLowerCase().includes(existingTestSearch.toLowerCase());
+    const matchesLevel = existingTestLevelFilter === 'all' || test.testLevel === existingTestLevelFilter;
+    const matchesDuplicate = !existingHideDuplicates || test.status !== 'duplicate';
+    return matchesSearch && matchesLevel && matchesDuplicate;
+  });
 
   const hasEmptyDomain = apis.some((api) => !api.domain);
   const domains = [
@@ -578,13 +590,6 @@ export function TestCaseGenerationPage() {
           setSaveMessage(isProductionBuild ? message : `Mock fallback disabled: ${message}`);
         }
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to generate test cases.';
-
-      setGeneratedTests([]);
-      setSelectedGeneratedTestIds([]);
-      setExpandedGeneratedApiIds([]);
-      setSaveMessage(message);
     } finally {
       setIsGenerating(false);
     }
@@ -828,7 +833,14 @@ export function TestCaseGenerationPage() {
   const existingCount = existingTests.filter(t => selectedApiIdsForGeneration.includes(t.apiId)).length;
   const newCount = generatedTests.filter(t => t.status === 'new').length;
   const duplicateCount = generatedTests.filter(t => t.status === 'duplicate').length;
-  const allExistingTestsSelected = existingTests.length > 0 && selectedExistingTestIds.length === existingTests.length;
+  const allExistingTestsSelected = filteredExistingTests.length > 0 && filteredExistingTests.every(t => selectedExistingTestIds.includes(t.id));
+  const toggleAllExistingTests = () => {
+    if (allExistingTestsSelected) {
+      setSelectedExistingTestIds(prev => prev.filter(id => !filteredExistingTests.some(t => t.id === id)));
+    } else {
+      setSelectedExistingTestIds(prev => Array.from(new Set([...prev, ...filteredExistingTests.map(t => t.id)])));
+    }
+  };
   const currentCoverage = selectedApiIdsForGeneration.length > 0
     ? Math.round(apis.filter(a => selectedApiIdsForGeneration.includes(a.id)).reduce((sum, a) => sum + a.coverage, 0) / selectedApiIdsForGeneration.length)
     : 0;
@@ -976,7 +988,7 @@ export function TestCaseGenerationPage() {
       )}
 
       {/* Main Content */}
-      <div className="responsive-detail-grid flex-1 overflow-hidden grid" style={{ gridTemplateColumns: rightPanelMode === 'hidden' ? '1fr' : '1fr 480px' }}>
+      <div className="responsive-detail-grid flex-1 overflow-hidden grid" style={{ gridTemplateColumns: (rightPanelMode === 'hidden' || rightPanelMode === 'existing') ? '1fr' : 'minmax(0, 1fr) 480px' }}>
         {/* Center Main Panel */}
         <main className="overflow-y-auto bg-[#060609]">
           <div className="p-8 max-w-6xl mx-auto space-y-6">
@@ -1281,6 +1293,56 @@ export function TestCaseGenerationPage() {
                   </div>
                 </div>
 
+                {existingTests.length > 0 && (
+                  <div className="px-5 py-3 border-b border-[#1f1f28] flex flex-wrap items-center gap-3">
+                    <div className="relative flex-1 min-w-[160px]">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                      <input
+                        type="text"
+                        placeholder="Search test cases..."
+                        value={existingTestSearch}
+                        onChange={e => setExistingTestSearch(e.target.value)}
+                        className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/30"
+                      />
+                    </div>
+                    <select
+                      value={existingTestLevelFilter}
+                      onChange={e => setExistingTestLevelFilter(e.target.value)}
+                      className="px-3 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+                    >
+                      <option value="all">All Levels</option>
+                      <option value="SMOKE">SMOKE</option>
+                      <option value="SANITY">SANITY</option>
+                      <option value="REGRESSION">REGRESSION</option>
+                      <option value="FULL">FULL</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setExistingHideDuplicates(prev => !prev)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                        existingHideDuplicates
+                          ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                          : 'bg-[#13131a] border-[#1f1f28] text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${existingHideDuplicates ? 'bg-yellow-500 border-yellow-500' : 'border-gray-500'}`}>
+                        {existingHideDuplicates && <Check size={10} className="text-white" />}
+                      </div>
+                      Hide Duplicates
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleAllExistingTests}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#1f1f28] bg-[#13131a] text-sm text-gray-400 hover:text-white transition-colors"
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${allExistingTestsSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500'}`}>
+                        {allExistingTestsSelected && <Check size={10} className="text-white" />}
+                      </div>
+                      {allExistingTestsSelected ? 'Clear All' : 'Select All'}
+                    </button>
+                  </div>
+                )}
+
                 {isLoadingApis ? (
                   <div className="flex min-h-[360px] flex-col items-center justify-center px-6 py-12 text-center">
                     <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
@@ -1312,9 +1374,15 @@ export function TestCaseGenerationPage() {
                     <p className="text-gray-500 text-sm">No saved test cases yet</p>
                     <p className="text-gray-600 text-xs mt-1">Use Generate Test Cases to create and save new tests.</p>
                   </div>
+                ) : filteredExistingTests.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                    <Search size={32} className="text-gray-600 mb-3" />
+                    <p className="text-gray-500 text-sm">No matching test cases</p>
+                    <p className="text-gray-600 text-xs mt-1">Try adjusting your search or filter criteria.</p>
+                  </div>
                 ) : (
                   <div className="divide-y divide-[#1f1f28]">
-                    {existingTests.map((test) => {
+                    {filteredExistingTests.map((test) => {
                       const api = apis.find((item) => item.id === test.apiId);
                       const isExpanded = expandedTestId === test.id;
                       const isEditing = editingExistingTestId === test.id;
@@ -1576,7 +1644,7 @@ export function TestCaseGenerationPage() {
         </main>
 
         {/* Right Side Panel */}
-        {rightPanelMode !== 'hidden' && (
+        {(rightPanelMode === 'comparison' || rightPanelMode === 'generated') && (
           <aside className="bg-[#0a0a0f] border-l border-[#1f1f28] flex flex-col h-full overflow-hidden">
             <div className="p-5 border-b border-[#1f1f28] flex items-center justify-between">
               <h3 className="text-white font-semibold">
