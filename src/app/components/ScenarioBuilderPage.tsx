@@ -487,6 +487,7 @@ export function ScenarioBuilderPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [savingStepIds, setSavingStepIds] = useState<Set<string>>(new Set());
   const [savedStepIds, setSavedStepIds] = useState<Set<string>>(new Set());
+  const [saveToast, setSaveToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
 
@@ -957,8 +958,13 @@ export function ScenarioBuilderPage() {
         active: true,
       });
       setSavedStepIds((prev) => new Set(prev).add(step.id));
+      setSaveToast({ type: 'success', message: `"${v2.title}" saved to test cases.` });
+      setTimeout(() => setSaveToast(null), 3000);
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Failed to save test case.');
+      const msg = err instanceof Error ? err.message : 'Failed to save test case.';
+      setApiError(msg);
+      setSaveToast({ type: 'error', message: msg });
+      setTimeout(() => setSaveToast(null), 4000);
     } finally {
       setSavingStepIds((prev) => {
         const next = new Set(prev);
@@ -1122,6 +1128,21 @@ export function ScenarioBuilderPage() {
 
   return (
     <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
+      {/* Save Toast */}
+      {saveToast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border px-5 py-3 shadow-2xl text-sm font-medium transition-all ${
+          saveToast.type === 'success'
+            ? 'bg-[#0d1f14] border-green-500/30 text-green-300'
+            : 'bg-[#1f0d0d] border-red-500/30 text-red-300'
+        }`}>
+          {saveToast.type === 'success' ? (
+            <Check size={16} className="text-green-400 flex-shrink-0" />
+          ) : (
+            <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
+          )}
+          {saveToast.message}
+        </div>
+      )}
       {/* Custom Prompt Modal */}
       {showCustomPromptModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">

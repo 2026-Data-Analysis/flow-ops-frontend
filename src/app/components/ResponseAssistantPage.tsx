@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router';
-import { 
+import {
   MessageSquare,
   Copy,
   Save,
@@ -8,12 +8,14 @@ import {
   Sparkles,
   Users,
   Mail,
-  CheckCircle2
+  CheckCircle2,
+  Globe,
 } from 'lucide-react';
 import { flowOpsApi, getDefaultAppId } from '../api/flowOpsClient';
 
 type AudienceType = 'internal' | 'customer' | 'cs';
 type MessageType = 'report' | 'message' | 'fix-guide' | 'escalation';
+type AiTab = 'internal' | 'external';
 
 interface IncidentOption {
   id: string;
@@ -403,8 +405,10 @@ export function ResponseAssistantPage() {
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [aiTab, setAiTab] = useState<AiTab>('internal');
   const analysisReference = (location.state as any)?.analysis;
   const incidentAnalysis = (location.state as any)?.incidentAnalysis as import('../api/flowOpsClient').IncidentAnalyzeResponse | undefined;
+  const hasAiReport = !!incidentAnalysis?.data;
 
   const buildContent = (
     nextAudience: AudienceType,
@@ -475,6 +479,7 @@ export function ResponseAssistantPage() {
       setContent(incidentAnalysis.data.internal_report);
       setAudience('internal');
       setMessageType('report');
+      setAiTab('internal');
     }
   }, [incidentAnalysis]);
 
@@ -595,126 +600,175 @@ export function ResponseAssistantPage() {
           {/* Selectors */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 space-y-4">
             {/* Incident Selector */}
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Select Incident</label>
-              <select 
-                value={selectedIncident}
-                onChange={(e) => {
-                  setSelectedIncident(e.target.value);
-                  refreshTemplateContent(audience, messageType, e.target.value);
-                }}
-                className="w-full px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
-              >
-                {incidents.map((incident) => (
-                  <option key={incident.id} value={incident.id}>{incident.title}</option>
-                ))}
-              </select>
-            </div>
+            {!hasAiReport && (
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-2">Select Incident</label>
+                <select
+                  value={selectedIncident}
+                  onChange={(e) => {
+                    setSelectedIncident(e.target.value);
+                    refreshTemplateContent(audience, messageType, e.target.value);
+                  }}
+                  className="w-full px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
+                >
+                  {incidents.map((incident) => (
+                    <option key={incident.id} value={incident.id}>{incident.title}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Audience Selector */}
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-3">Target Audience</label>
-              <div className="grid grid-cols-3 gap-3">
-                <button
-                  onClick={() => handleAudienceChange('internal')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'internal'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
-                >
-                  <Users size={24} className={audience === 'internal' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    Internal Team
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Engineering & DevOps</div>
-                </button>
+              {hasAiReport ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => {
+                      setAiTab('internal');
+                      setContent(incidentAnalysis!.data.internal_report ?? '');
+                    }}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      aiTab === 'internal'
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
+                    }`}
+                  >
+                    <Users size={24} className={`mb-2 ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-500'}`} />
+                    <div className={`font-medium ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>
+                      Internal Team
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Engineering & DevOps</div>
+                  </button>
 
-                <button
-                  onClick={() => handleAudienceChange('customer')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'customer'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
-                >
-                  <Mail size={24} className={audience === 'customer' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'customer' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    Customer
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">External users</div>
-                </button>
+                  <button
+                    onClick={() => {
+                      setAiTab('external');
+                      setContent(incidentAnalysis!.data.external_notice ?? '');
+                    }}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      aiTab === 'external'
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
+                    }`}
+                  >
+                    <Globe size={24} className={`mb-2 ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-500'}`} />
+                    <div className={`font-medium ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-300'}`}>
+                      External Team
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Customers & Partners</div>
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => handleAudienceChange('internal')}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      audience === 'internal'
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
+                    }`}
+                  >
+                    <Users size={24} className={audience === 'internal' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
+                    <div className={`font-medium ${audience === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>
+                      Internal Team
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Engineering & DevOps</div>
+                  </button>
 
-                <button
-                  onClick={() => handleAudienceChange('cs')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'cs'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
-                >
-                  <MessageSquare size={24} className={audience === 'cs' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'cs' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    CS Team
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Support staff</div>
-                </button>
-              </div>
+                  <button
+                    onClick={() => handleAudienceChange('customer')}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      audience === 'customer'
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
+                    }`}
+                  >
+                    <Mail size={24} className={audience === 'customer' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
+                    <div className={`font-medium ${audience === 'customer' ? 'text-blue-400' : 'text-gray-300'}`}>
+                      Customer
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">External users</div>
+                  </button>
+
+                  <button
+                    onClick={() => handleAudienceChange('cs')}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      audience === 'cs'
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
+                    }`}
+                  >
+                    <MessageSquare size={24} className={audience === 'cs' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
+                    <div className={`font-medium ${audience === 'cs' ? 'text-blue-400' : 'text-gray-300'}`}>
+                      CS Team
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Support staff</div>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Message Type Tabs */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl">
-            <div className="border-b border-[#1f1f28] px-6">
-              <div className="flex gap-1 -mb-px">
-                <button
-                  onClick={() => handleMessageTypeChange('report')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'report'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  Internal Report
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('message')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'message'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  {audience === 'customer' ? 'Customer Message' : 'Team Update'}
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('fix-guide')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'fix-guide'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  {audience === 'customer' ? 'Troubleshooting' : 'Fix Guide'}
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('escalation')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'escalation'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  Escalation Note
-                </button>
+            {!hasAiReport && (
+              <div className="border-b border-[#1f1f28] px-6">
+                <div className="flex gap-1 -mb-px">
+                  <button
+                    onClick={() => handleMessageTypeChange('report')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      messageType === 'report'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
+                    }`}
+                  >
+                    Internal Report
+                  </button>
+                  <button
+                    onClick={() => handleMessageTypeChange('message')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      messageType === 'message'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
+                    }`}
+                  >
+                    {audience === 'customer' ? 'Customer Message' : 'Team Update'}
+                  </button>
+                  <button
+                    onClick={() => handleMessageTypeChange('fix-guide')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      messageType === 'fix-guide'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
+                    }`}
+                  >
+                    {audience === 'customer' ? 'Troubleshooting' : 'Fix Guide'}
+                  </button>
+                  <button
+                    onClick={() => handleMessageTypeChange('escalation')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      messageType === 'escalation'
+                        ? 'border-blue-500 text-blue-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
+                    }`}
+                  >
+                    Escalation Note
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Content Editor */}
             <div className="p-6">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles size={16} className="text-blue-400" />
                 <span className="text-sm font-medium text-blue-400">AI Generated Content</span>
+                {hasAiReport && (
+                  <span className="ml-auto text-xs text-gray-500">
+                    {aiTab === 'internal' ? 'Internal report for engineering team' : 'External notice for customers & partners'}
+                  </span>
+                )}
               </div>
               <textarea
                 value={content}
