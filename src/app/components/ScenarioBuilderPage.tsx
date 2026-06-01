@@ -1008,10 +1008,6 @@ export function ScenarioBuilderPage() {
 
   const handleDeleteSelected = async () => {
     if (selectedScenarioIds.length === 0 || isDeletingScenarios) return;
-    if (!window.confirm(`Delete ${selectedScenarioIds.length} selected scenario${selectedScenarioIds.length !== 1 ? 's' : ''}?`)) {
-      return;
-    }
-
     setIsDeletingScenarios(true);
     setApiError(null);
 
@@ -1366,18 +1362,19 @@ export function ScenarioBuilderPage() {
             {selectedScenarioIds.length > 0 && !isRunning && (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleDeleteSelected}
-                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-4 py-2.5 rounded-lg transition-colors text-sm"
+                  onClick={handleRunSelected}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg transition-colors text-sm font-medium"
                 >
-                  <Trash2 size={16} />
-                  Delete ({selectedScenarioIds.length})
+                  <Play size={16} />
+                  Run ({selectedScenarioIds.length})
                 </button>
                 <button
-                  onClick={handleRunSelected}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors"
+                  onClick={handleDeleteSelected}
+                  disabled={isDeletingScenarios}
+                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-5 py-2.5 rounded-lg transition-colors text-sm disabled:opacity-50"
                 >
-                  <Play size={18} />
-                  Run Selected ({selectedScenarioIds.length})
+                  {isDeletingScenarios ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                  Delete ({selectedScenarioIds.length})
                 </button>
               </div>
             )}
@@ -1425,6 +1422,41 @@ export function ScenarioBuilderPage() {
 
         {/* Scenario List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          {/* Select Visible row */}
+          {!isLoading && filteredScenarios.length > 0 && (
+            <div className="flex items-center justify-between mb-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleIds = filteredScenarios.map((s) => s.id);
+                  const allSelected = visibleIds.every((id) => selectedScenarioIds.includes(id));
+                  setSelectedScenarioIds((prev) =>
+                    allSelected
+                      ? prev.filter((id) => !visibleIds.includes(id))
+                      : Array.from(new Set([...prev, ...visibleIds])),
+                  );
+                }}
+                className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
+              >
+                <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                  filteredScenarios.every((s) => selectedScenarioIds.includes(s.id))
+                    ? 'bg-blue-500 border-blue-500'
+                    : 'border-gray-500'
+                }`}>
+                  {filteredScenarios.every((s) => selectedScenarioIds.includes(s.id)) && (
+                    <Check size={12} className="text-white" />
+                  )}
+                </span>
+                Select visible
+              </button>
+              <span className="text-xs text-gray-500">
+                {selectedScenarioIds.length > 0
+                  ? `${selectedScenarioIds.length} selected · `
+                  : ''}
+                {filteredScenarios.length} of {scenarios.filter(isPresent).length} scenarios
+              </span>
+            </div>
+          )}
           <div className="space-y-2">
             {isLoading ? (
               <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
@@ -1541,6 +1573,7 @@ export function ScenarioBuilderPage() {
               );
             })}
           </div>
+          {/* end space-y-2 */}
         </div>
       </main>
 
