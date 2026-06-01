@@ -125,17 +125,17 @@ export function LogDetailPage() {
   const [expandedCauseIdx, setExpandedCauseIdx] = useState<number | null>(0);
 
   const [incidentAnalysis, setIncidentAnalysis] = useState<IncidentAnalyzeResponse | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(true);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   const failedSteps = steps.filter((s) => s.status === 'failed');
 
   useEffect(() => {
-    if (failedSteps.length === 0) return;
+    if (failedSteps.length === 0) {
+      setIsAnalyzing(false);
+      return;
+    }
     const firstFailed = failedSteps[0];
-
-    setIsAnalyzing(true);
-    setAnalyzeError(null);
 
     flowOpsApi
       .analyzeIncident({
