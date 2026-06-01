@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import {
   Search,
   Filter,
@@ -154,21 +154,35 @@ const buildRequestDefaults = (schema: unknown) => {
 
 export function ApiManagementPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const routeState = location.state as { selectedApiId?: string | number; inventoryId?: string | number; searchQuery?: string } | null;
   const { activeApplication, setSelectedAPIs } = useTestContext();
   const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
   const [apiDetails, setApiDetails] = useState<Record<string, ApiInventoryResponse>>({});
   const [projectId, setProjectId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(routeState?.searchQuery || '');
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
   const [testLevelFilter, setTestLevelFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'auto' | 'edited'>('all');
   const [selectedDomain, setSelectedDomain] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [selectedApiId, setSelectedApiId] = useState<string | null>(null);
+  const [selectedApiId, setSelectedApiId] = useState<string | null>(
+    routeState?.selectedApiId || routeState?.inventoryId ? String(routeState.selectedApiId || routeState.inventoryId) : null,
+  );
   const [selectedApiIds, setSelectedApiIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (routeState?.searchQuery !== undefined) {
+      setSearchQuery(routeState.searchQuery);
+    }
+    const routedApiId = routeState?.selectedApiId || routeState?.inventoryId;
+    if (routedApiId !== undefined && routedApiId !== null) {
+      setSelectedApiId(String(routedApiId));
+    }
+  }, [routeState?.inventoryId, routeState?.searchQuery, routeState?.selectedApiId]);
 
   useEffect(() => {
     let active = true;
@@ -191,7 +205,9 @@ export function ApiManagementPage() {
 
     setSelectedDomain('all');
     setSelectedEnvironment('all');
-    setSelectedApiId(null);
+    setSelectedApiId(
+      routeState?.selectedApiId || routeState?.inventoryId ? String(routeState.selectedApiId || routeState.inventoryId) : null,
+    );
     setSelectedApiIds([]);
     setApiDetails({});
 

@@ -281,6 +281,15 @@ const rememberRegisteredRepository = (repository: {
 
 const routeFromAction = (result: AiOrchestratorResult) => result.action?.route || result.route;
 
+const isApiInventoryPrompt = (prompt: string) =>
+  /api|endpoint|inventory|명세|상세|상세조회|조회/i.test(prompt);
+
+const extractKeywordFromPrompt = (prompt: string) =>
+  prompt
+    .replace(/api/gi, '')
+    .replace(/상세조회|상세|조회|명세|보여줘|알려줘/g, '')
+    .trim();
+
 const messageFromResult = (result: AiOrchestratorResult) => {
   if (result.message) return result.message;
   if (result.status === 'collect_input') return '필요한 정보를 입력해 주세요.';
@@ -386,10 +395,85 @@ export function AIAssistant() {
     return { appId: app.id, title, projectId: project.id, repositoryId: repository.id };
   };
 
+  const routeApiInventory = async (values: Record<string, unknown>, prompt = '') => {
+    const projectIdFromPayload = Number(values.projectId || values.project_id);
+    const inventoryId = values.inventoryId || values.inventory_id || values.apiInventoryId;
+    const rawKeyword =
+      values.keyword ||
+      values.searchKeyword ||
+      values.searchQuery ||
+      values.query ||
+      values.endpointPath ||
+      extractKeywordFromPrompt(prompt);
+    const keyword = String(rawKeyword || '').trim();
+
+    if (inventoryId) {
+      navigate('/qc/api', {
+        state: {
+          projectId: Number.isFinite(projectIdFromPayload) ? projectIdFromPayload : undefined,
+          inventoryId: String(inventoryId),
+          selectedApiId: String(inventoryId),
+          searchQuery: keyword,
+        },
+      });
+      appendAiMessage('Opening the saved API inventory detail.');
+      return;
+    }
+
+    if (!keyword) {
+      navigate('/qc/api');
+      appendAiMessage('I need an inventoryId for a direct detail view. Opening the API inventory list instead.');
+      return;
+    }
+
+    const project =
+      Number.isFinite(projectIdFromPayload)
+        ? { id: projectIdFromPayload }
+        : await flowOpsApi.ensureProject();
+    const inventory = await flowOpsApi.listInventories(project.id, { keyword }).catch(() => ({ items: [] }));
+    const normalizedKeyword = keyword.toLowerCase();
+    const matches = inventory.items.filter((item) =>
+      [item.endpointPath, item.operationId, item.summary, item.domainTag]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedKeyword)),
+    );
+
+    if (matches.length === 1) {
+      navigate('/qc/api', {
+        state: {
+          projectId: project.id,
+          inventoryId: matches[0].id,
+          selectedApiId: matches[0].id,
+          searchQuery: keyword,
+        },
+      });
+      appendAiMessage(`Opening API inventory detail for ${matches[0].endpointPath}.`);
+      return;
+    }
+
+    navigate('/qc/api', { state: { projectId: project.id, searchQuery: keyword } });
+    appendAiMessage(
+      matches.length > 1
+        ? `I found ${matches.length} matching APIs. Please select one from the filtered inventory list.`
+        : 'I could not find an exact API match. Opening the inventory list with your search keyword.',
+    );
+  };
+
   const executeApplicationAction = async (result: AiOrchestratorResult) => {
     const action = result.action;
     const actionType = action?.type;
     const payload = { ...(result.payload || {}), ...(action?.payload || {}) };
+    const resourceType = action?.resourceType || result.resourceType || payload.resourceType;
+
+    if (
+      resourceType === 'api_inventory' ||
+      actionType === 'view_api_inventory' ||
+      actionType === 'open_api_inventory_detail' ||
+      actionType === 'search_api_inventory'
+    ) {
+      await routeApiInventory(payload);
+      return;
+    }
 
     if (actionType === 'open_form') {
       const fields = action?.form?.fields?.length ? action.form.fields : DEFAULT_APPLICATION_FORM_FIELDS;
@@ -483,6 +567,11 @@ export function AIAssistant() {
       await handleOrchestratorResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI orchestrator request failed.';
+      if (message.includes('no actionable result') && isApiInventoryPrompt(userPrompt)) {
+        await routeApiInventory({ keyword: extractKeywordFromPrompt(userPrompt) }, userPrompt);
+        setActionError(null);
+        return;
+      }
       appendAiMessage(message);
       setActionError(message);
     } finally {

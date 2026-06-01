@@ -534,6 +534,7 @@ export interface AiOrchestratorFormField {
 
 export interface AiOrchestratorAction {
   type?: string;
+  resourceType?: 'application' | 'api_inventory' | string;
   route?: string;
   payload?: Record<string, unknown>;
   form?: {
@@ -544,6 +545,7 @@ export interface AiOrchestratorAction {
 
 export interface AiOrchestratorResult {
   status: 'collect_input' | 'redirect' | 'ready' | 'need_validation' | string;
+  resourceType?: 'application' | 'api_inventory' | string;
   action?: AiOrchestratorAction;
   payload?: Record<string, unknown>;
   route?: string;

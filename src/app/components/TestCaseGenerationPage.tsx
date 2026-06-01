@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router';
 import {
   Search,
   X,
+  Filter,
   CheckCircle2,
   TrendingUp,
   Check,
@@ -53,6 +54,9 @@ interface TestCase {
   backendType?: string;
   testLevel?: TestLevel;
   apiId: string;
+  apiMethod?: ApiEndpoint['method'];
+  apiPath?: string;
+  apiDomain?: string;
   role?: string;
   stateCondition?: string;
   dataVariant?: string;
@@ -94,6 +98,13 @@ const typeColors = {
   error: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'Error' },
 };
 
+const testLevelColors = {
+  SMOKE: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'Smoke' },
+  SANITY: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Sanity' },
+  REGRESSION: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Regression' },
+  FULL: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', label: 'Full' },
+};
+
 const formatRelativeTime = (value?: string) => {
   if (!value) return 'Never';
   const time = new Date(value).getTime();
@@ -128,6 +139,17 @@ const generationStillRunning = (status?: string | null) => {
 };
 
 const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain ? 'Unassigned' : domain);
+
+const normalizeTestLevel = (value?: TestLevel | string) => String(value || '').toUpperCase();
+
+const resolveTestApiMeta = (test: TestCase, apis: ApiEndpoint[]) => {
+  const api = apis.find((item) => item.id === test.apiId);
+  return {
+    method: api?.method || test.apiMethod,
+    path: api?.path || test.apiPath || 'Unlinked API',
+    domain: api?.domain || test.apiDomain || '',
+  };
+};
 
 type StoredRegisteredRepository = RepositoryResponse & {
   title?: string;
@@ -180,6 +202,11 @@ const normalizeTestCase = (testCase: TestCaseResponse): TestCase => ({
   backendType: testCase.type,
   testLevel: testCase.testLevel,
   apiId: String(testCase.apiId || testCase.apiInventoryId || testCase.selectedEndpoint?.id || ''),
+  apiMethod: testCase.selectedEndpoint?.method && testCase.selectedEndpoint.method !== 'TRACE'
+    ? testCase.selectedEndpoint.method as ApiEndpoint['method']
+    : undefined,
+  apiPath: testCase.selectedEndpoint?.path,
+  apiDomain: testCase.selectedEndpoint?.domainTag?.trim() || undefined,
   role: testCase.userRole || testCase.role,
   stateCondition: testCase.stateCondition,
   dataVariant: testCase.dataVariant,
@@ -266,6 +293,12 @@ export function TestCaseGenerationPage() {
   const [isDeletingTests, setIsDeletingTests] = useState(false);
   const [isLoadingExistingTests, setIsLoadingExistingTests] = useState(false);
   const [editingExistingTestId, setEditingExistingTestId] = useState<string | null>(null);
+  const [existingSearchQuery, setExistingSearchQuery] = useState('');
+  const [existingDomainFilter, setExistingDomainFilter] = useState('all');
+  const [existingMethodFilter, setExistingMethodFilter] = useState('all');
+  const [existingTestLevelFilter, setExistingTestLevelFilter] = useState('all');
+  const [existingTypeFilter, setExistingTypeFilter] = useState('all');
+  const [showExistingFilters, setShowExistingFilters] = useState(false);
 
   // Panel State
   const [rightPanelMode, setRightPanelMode] = useState<'existing' | 'comparison' | 'generated' | 'hidden'>('hidden');
@@ -353,6 +386,8 @@ export function TestCaseGenerationPage() {
     setSelectedGeneratedTestIds([]);
     setExpandedGeneratedApiIds([]);
     setSelectedDomain('all');
+    setExistingDomainFilter('all');
+    setSelectedExistingTestIds([]);
     const scopedRepositoryId = selectedEnvironment?.repositoryId ?? activeRepositoryId;
     if (!scopedRepositoryId) {
       setApis([]);
@@ -412,6 +447,18 @@ export function TestCaseGenerationPage() {
     ...Array.from(new Set(apis.map((api) => api.domain).filter(Boolean))),
     ...(hasEmptyDomain ? ['__empty__'] : []),
   ];
+  const hasEmptyExistingDomain = existingTests.some((test) => !resolveTestApiMeta(test, apis).domain);
+  const existingDomains = [
+    'all',
+    ...Array.from(
+      new Set(
+        existingTests
+          .map((test) => resolveTestApiMeta(test, apis).domain)
+          .filter(Boolean),
+      ),
+    ),
+    ...(hasEmptyExistingDomain ? ['__empty__'] : []),
+  ];
   const selectedEnvironment = selectedEnvironmentId === 'all'
     ? null
     : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
@@ -430,6 +477,28 @@ export function TestCaseGenerationPage() {
   const filteredApisForModal = apis.filter((api) => filterApi(api, searchQuery));
 
   const filteredApisForBrowse = apis.filter((api) => filterApi(api, apiSearchQuery));
+
+  const filteredExistingTests = existingTests.filter((test) => {
+    const apiMeta = resolveTestApiMeta(test, apis);
+    const query = existingSearchQuery.trim().toLowerCase();
+    const apiDomain = apiMeta.domain;
+    const matchesSearch =
+      !query ||
+      test.name.toLowerCase().includes(query) ||
+      (test.description || '').toLowerCase().includes(query) ||
+      (test.backendType || test.type).toLowerCase().includes(query) ||
+      apiMeta.path.toLowerCase().includes(query) ||
+      apiDomain.toLowerCase().includes(query);
+    const matchesDomain =
+      existingDomainFilter === 'all' ||
+      (existingDomainFilter === '__empty__' ? !apiDomain : apiDomain === existingDomainFilter);
+    const matchesMethod = existingMethodFilter === 'all' || apiMeta.method === existingMethodFilter;
+    const matchesTestLevel =
+      existingTestLevelFilter === 'all' ||
+      normalizeTestLevel(test.testLevel) === existingTestLevelFilter;
+    const matchesType = existingTypeFilter === 'all' || test.type === existingTypeFilter;
+    return matchesSearch && matchesDomain && matchesMethod && matchesTestLevel && matchesType;
+  });
 
   const toggleApiSelectionForGeneration = (apiId: string) => {
     setPendingApiIdsForGeneration(prev =>
@@ -743,7 +812,9 @@ export function TestCaseGenerationPage() {
   const existingCount = existingTests.filter(t => selectedApiIdsForGeneration.includes(t.apiId)).length;
   const newCount = generatedTests.filter(t => t.status === 'new').length;
   const duplicateCount = generatedTests.filter(t => t.status === 'duplicate').length;
-  const allExistingTestsSelected = existingTests.length > 0 && selectedExistingTestIds.length === existingTests.length;
+  const allExistingTestsSelected =
+    filteredExistingTests.length > 0 &&
+    filteredExistingTests.every((test) => selectedExistingTestIds.includes(test.id));
   const currentCoverage = selectedApiIdsForGeneration.length > 0
     ? Math.round(apis.filter(a => selectedApiIdsForGeneration.includes(a.id)).reduce((sum, a) => sum + a.coverage, 0) / selectedApiIdsForGeneration.length)
     : 0;
@@ -1172,29 +1243,129 @@ export function TestCaseGenerationPage() {
 
             {!isGenerating && generatedTests.length === 0 && (
               <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl overflow-hidden">
-                <div className="p-5 border-b border-[#1f1f28] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h3 className="text-white font-semibold">Previously saved test cases for this App</h3>
-                    <p className="text-gray-500 text-sm">
-                      API list source: {selectedEnvironment ? `${selectedEnvironment.branchName ? `${selectedEnvironment.branchName} / ` : ''}${selectedEnvironment.name}` : 'All API inventory sources'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {existingTests.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedExistingTestIds(allExistingTestsSelected ? [] : existingTests.map(t => t.id))}
-                        className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
-                      >
-                        <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                          allExistingTestsSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
-                        }`}>
-                          {allExistingTestsSelected && <Check size={14} className="text-white" />}
+                <div className="border-b border-[#1f1f28]">
+                  <div className="p-5">
+                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 className="text-white font-semibold">Previously saved test cases for this App</h3>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        {filteredExistingTests.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedExistingTestIds((prev) =>
+                                allExistingTestsSelected
+                                  ? prev.filter((id) => !filteredExistingTests.some((test) => test.id === id))
+                                  : Array.from(new Set([...prev, ...filteredExistingTests.map((test) => test.id)])),
+                              )
+                            }
+                            className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
+                          >
+                            <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                              allExistingTestsSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 hover:border-blue-500'
+                            }`}>
+                              {allExistingTestsSelected && <Check size={14} className="text-white" />}
+                            </span>
+                            Select visible
+                          </button>
+                        )}
+                        <span className="text-xs text-gray-500">
+                          {filteredExistingTests.length} of {existingTests.length} test cases
                         </span>
-                        Select all
-                      </button>
-                    )}
-                    <span className="text-xs text-gray-500">{existingTests.length} test cases</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                        <input
+                          type="text"
+                          placeholder="Search test cases, endpoints, domains..."
+                          value={existingSearchQuery}
+                          onChange={(e) => setExistingSearchQuery(e.target.value)}
+                          className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/30"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowExistingFilters(!showExistingFilters)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+                            showExistingFilters
+                              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                              : 'bg-[#13131a] border border-[#1f1f28] text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          <Filter size={14} />
+                          Filters
+                        </button>
+
+                        {showExistingFilters && (
+                          <>
+                            <select
+                              value={existingMethodFilter}
+                              onChange={(e) => setExistingMethodFilter(e.target.value)}
+                              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+                            >
+                              <option value="all">All Methods</option>
+                              <option value="GET">GET</option>
+                              <option value="POST">POST</option>
+                              <option value="PUT">PUT</option>
+                              <option value="DELETE">DELETE</option>
+                              <option value="PATCH">PATCH</option>
+                            </select>
+                            <select
+                              value={existingTestLevelFilter}
+                              onChange={(e) => setExistingTestLevelFilter(e.target.value)}
+                              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+                            >
+                              <option value="all">All Test Levels</option>
+                              <option value="SMOKE">Smoke</option>
+                              <option value="SANITY">Sanity</option>
+                              <option value="REGRESSION">Regression</option>
+                              <option value="FULL">Full</option>
+                            </select>
+                            <select
+                              value={existingTypeFilter}
+                              onChange={(e) => setExistingTypeFilter(e.target.value)}
+                              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
+                            >
+                              <option value="all">All Types</option>
+                              <option value="success">Success</option>
+                              <option value="validation">Validation</option>
+                              <option value="auth">Authorization</option>
+                              <option value="performance">Performance</option>
+                              <option value="edge">Edge</option>
+                              <option value="error">Error</option>
+                            </select>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[#1f1f28] px-5 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {existingDomains.map((domain) => (
+                        <button
+                          key={domain}
+                          type="button"
+                          onClick={() => setExistingDomainFilter(domain)}
+                          title={domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                          className={`max-w-full px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+                            existingDomainFilter === domain
+                              ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                              : 'text-gray-400 hover:text-white hover:bg-[#13131a]'
+                          }`}
+                        >
+                          <span className="block max-w-[12rem] truncate">
+                            {domain === 'all' ? 'All Domains' : formatDomainLabel(domain)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -1229,13 +1400,21 @@ export function TestCaseGenerationPage() {
                     <p className="text-gray-500 text-sm">No saved test cases yet</p>
                     <p className="text-gray-600 text-xs mt-1">Use Generate Test Cases to create and save new tests.</p>
                   </div>
+                ) : filteredExistingTests.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                    <FileText size={32} className="text-gray-600 mb-3" />
+                    <p className="text-gray-500 text-sm">No matching test cases</p>
+                    <p className="text-gray-600 text-xs mt-1">Try adjusting the search, domain, or filters.</p>
+                  </div>
                 ) : (
                   <div className="divide-y divide-[#1f1f28]">
-                    {existingTests.map((test) => {
-                      const api = apis.find((item) => item.id === test.apiId);
+                    {filteredExistingTests.map((test) => {
                       const isExpanded = expandedTestId === test.id;
                       const isEditing = editingExistingTestId === test.id;
                       const isSelected = selectedExistingTestIds.includes(test.id);
+                      const testLevel = normalizeTestLevel(test.testLevel);
+                      const levelColor = testLevelColors[testLevel as keyof typeof testLevelColors];
+                      const apiMeta = resolveTestApiMeta(test, apis);
                       return (
                         <div key={test.id} className={`bg-[#0a0a0f] overflow-hidden transition-colors ${isSelected ? 'bg-blue-500/5' : ''}`}>
                           <div className="w-full p-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between hover:bg-[#0d0d12] transition-colors">
@@ -1263,14 +1442,25 @@ export function TestCaseGenerationPage() {
                                 <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
                                   {typeColors[test.type].label}
                                 </span>
-                                {api && (
-                                  <span className={`${methodColors[api.method].bg} ${methodColors[api.method].text} ${methodColors[api.method].border} border px-2 py-0.5 rounded text-xs font-semibold font-mono`}>
-                                    {api.method}
+                                {apiMeta.method && (
+                                  <span className={`${methodColors[apiMeta.method].bg} ${methodColors[apiMeta.method].text} ${methodColors[apiMeta.method].border} border px-2 py-0.5 rounded text-xs font-semibold font-mono`}>
+                                    {apiMeta.method}
                                   </span>
                                 )}
+                                {levelColor && (
+                                  <span className={`text-xs px-2 py-1 rounded border ${levelColor.bg} ${levelColor.text} ${levelColor.border}`}>
+                                    {levelColor.label}
+                                  </span>
+                                )}
+                                <span
+                                  title={formatDomainLabel(apiMeta.domain)}
+                                  className="max-w-[12rem] truncate px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs rounded"
+                                >
+                                  {formatDomainLabel(apiMeta.domain)}
+                                </span>
                               </div>
                               <div className="text-white text-sm font-medium">{test.name}</div>
-                              <div className="mt-1 text-xs text-gray-500 font-mono">{api?.path || 'Unlinked API'}</div>
+                              <div className="mt-1 text-xs text-gray-500 font-mono">{apiMeta.path}</div>
                             </button>
                             <div className="flex items-center gap-3 flex-shrink-0">
                               <button type="button" onClick={() => toggleTestEdit(test.id)}>
