@@ -35,6 +35,7 @@ import {
   type ScenarioDetailResponse,
   type ScenarioV2,
   type ScenarioV2Step,
+  type ScenarioV2GenerateResponse,
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
 import { useTestContext } from '../contexts/TestContext';
@@ -872,18 +873,16 @@ export function ScenarioBuilderPage() {
     const resolvedProjectId = String(projectId || getDefaultAppId());
 
     try {
-      const response = await flowOpsApi.generateScenarioV2({
-        project_id: resolvedProjectId,
-        mode: 'NATURAL_LANGUAGE',
-        user_intent: customScenarioInput.trim(),
-        api_inventory: toScenarioV2ApiInventory(resolvedProjectId, inventoryApis),
-        existing_test_cases: [],
-        max_scenarios: 3,
-        max_steps_per_scenario: 8,
+      const appId = mainApplicationId ?? getDefaultAppId();
+      const raw = await flowOpsApi.generateScenarioV2({
+        appId,
+        goal: customScenarioInput.trim(),
+        requestedBy: DEFAULT_REQUESTER,
       });
 
-      if (!response.success || !response.data?.scenarios?.length) {
-        throw new Error(response.error_message || 'Failed to generate scenario.');
+      const response = raw?.data ?? (raw as unknown as ScenarioV2GenerateResponse);
+      if (!response?.success || !response.data?.scenarios?.length) {
+        throw new Error(response?.error_message || 'Failed to generate scenario.');
       }
 
       const newScenarios = response.data.scenarios.map((s) =>

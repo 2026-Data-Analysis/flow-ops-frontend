@@ -670,6 +670,84 @@ async function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
   return response.data ?? (response as T);
 }
 
+// ── Scenario V2 (AI scenario builder with full step spec) ──────────────────
+
+export interface ScenarioV2Step {
+  step_id?: string;
+  ref?: string;
+  order?: number;
+  chained_variables?: Array<{ name: string; source_step: string; json_path: string }> | unknown;
+  apiId?: string;
+  title?: string;
+  name?: string;
+  description?: string | null;
+  type?: string;
+  test_case_type?: string | null;
+  userRole?: string | null;
+  stateCondition?: string | null;
+  dataVariant?: string | null;
+  requestSpec?: {
+    method?: string;
+    pathParams?: Record<string, unknown>;
+    queryParams?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  expectedSpec?: {
+    statusCode?: number;
+    body?: unknown;
+    errorMessage?: string | null;
+    [key: string]: unknown;
+  } | null;
+  assertionSpec?: {
+    statusCode?: number;
+    bodyContains?: unknown[];
+    bodyEquals?: Record<string, unknown>;
+    headerContains?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  duplicate?: boolean;
+  static_payload?: unknown;
+  static_params?: unknown;
+  expected_status_code?: number | null;
+  expected_assertions?: string[] | null;
+}
+
+export interface ScenarioV2Meta {
+  rationale?: string;
+  coverage_gap?: string;
+  estimated_risk?: string;
+}
+
+export interface ScenarioV2 {
+  scenario_id?: string;
+  name?: string;
+  description?: string | null;
+  steps?: ScenarioV2Step[];
+  meta?: ScenarioV2Meta;
+}
+
+export interface ScenarioV2GenerateRequest {
+  appId: number;
+  goal?: string;
+  scenarioType?: string;
+  testLevel?: string;
+  businessDomain?: string;
+  requestedBy?: string;
+  apiIds?: number[];
+}
+
+export interface ScenarioV2GenerateResponse {
+  success: boolean;
+  data?: {
+    scenarios?: ScenarioV2[];
+    used_endpoint_ids?: string[];
+  };
+  error_code?: string;
+  error_message?: string;
+  trace_id?: string;
+}
+
 export const flowOpsApi = {
   listProjects: () => unwrap(request<ApiResponse<ProjectResponse[]>>('/projects')),
 
@@ -1118,6 +1196,12 @@ export const flowOpsApi = {
 
   getExecution: (executionId: number) =>
     unwrap(request<ApiResponse<ExecutionDetailResponse>>(`/executions/${executionId}`)),
+
+  generateScenarioV2: (body: ScenarioV2GenerateRequest) =>
+    request<ApiResponse<ScenarioV2GenerateResponse>>('/scenarios/v2/generate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
 
 export function rememberAppId(appId: number) {
