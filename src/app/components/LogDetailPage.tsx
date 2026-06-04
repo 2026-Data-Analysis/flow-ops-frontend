@@ -13,10 +13,10 @@ import {
   FileJson,
   Loader2,
   AlertTriangle,
-  ChevronRight,
   ShieldAlert,
 } from 'lucide-react';
 import { flowOpsApi, getDefaultAppId, type IncidentAnalyzeResponse } from '../api/flowOpsClient';
+import { IncidentRootCauseList } from './IncidentRootCauseList';
 
 interface ExecutionStep {
   id: string;
@@ -106,15 +106,6 @@ const methodColors = {
   PUT: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20' },
   DELETE: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
   PATCH: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
-};
-
-const severityStyle = (severity: string) => {
-  switch (severity?.toUpperCase()) {
-    case 'CRITICAL': return 'bg-red-500/20 text-red-400 border-red-500/30';
-    case 'HIGH': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
-    case 'MEDIUM': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
-    default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
-  }
 };
 
 export function LogDetailPage() {
@@ -268,50 +259,11 @@ export function LogDetailPage() {
                 )}
 
                 {!isAnalyzing && incidentAnalysis?.data?.root_causes?.length > 0 && (
-                  <div className="space-y-2">
-                    {incidentAnalysis.data.root_causes.map((cause, i) => (
-                      <div key={i} className="rounded-lg border border-[#1f1f28] bg-[#13131a] overflow-hidden">
-                        <button
-                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[#1f1f28] transition-colors"
-                          onClick={() => setExpandedCauseIdx(expandedCauseIdx === i ? null : i)}
-                        >
-                          <span className={`text-xs px-2 py-0.5 rounded border font-semibold flex-shrink-0 ${severityStyle(cause.severity)}`}>
-                            {cause.severity}
-                          </span>
-                          <span className="flex-1 text-sm text-white font-medium">{cause.summary}</span>
-                          {expandedCauseIdx === i ? (
-                            <ChevronUp size={15} className="text-gray-500 flex-shrink-0" />
-                          ) : (
-                            <ChevronRight size={15} className="text-gray-500 flex-shrink-0" />
-                          )}
-                        </button>
-
-                        {expandedCauseIdx === i && (
-                          <div className="px-4 pb-4 space-y-3 border-t border-[#1f1f28] pt-3">
-                            {cause.suggested_fix && (
-                              <div>
-                                <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Suggested Fix</div>
-                                <p className="text-sm text-gray-300">{cause.suggested_fix}</p>
-                              </div>
-                            )}
-                            {cause.evidence?.length > 0 && (
-                              <div>
-                                <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Evidence</div>
-                                <ul className="space-y-1">
-                                  {cause.evidence.map((e, j) => (
-                                    <li key={j} className="text-xs text-gray-400 flex items-start gap-2">
-                                      <span className="text-orange-500 mt-0.5 flex-shrink-0">•</span>
-                                      <span>{e}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <IncidentRootCauseList
+                    causes={incidentAnalysis.data.root_causes}
+                    expandedIndex={expandedCauseIdx}
+                    onToggle={(index) => setExpandedCauseIdx(expandedCauseIdx === index ? null : index)}
+                  />
                 )}
 
                 {!isAnalyzing && !analyzeError && !incidentAnalysis && (

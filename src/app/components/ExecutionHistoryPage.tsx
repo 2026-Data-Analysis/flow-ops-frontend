@@ -33,6 +33,7 @@ import {
   type IncidentAnalyzeResponse,
 } from '../api/flowOpsClient';
 import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
+import { parseMaybeJson } from '../utils/incidentAnalysis';
 
 interface ExecutionRecord {
   id: string;
@@ -294,8 +295,8 @@ export function ExecutionHistoryPage() {
           endpoint: `${firstFailed.apiMethod} ${firstFailed.apiPath}`,
           expected_status: 200,
           actual_status: firstFailed.response.statusCode,
-          request_body: firstFailed.request.body ? JSON.parse(firstFailed.request.body) : undefined,
-          response_body: firstFailed.response.body ? JSON.parse(firstFailed.response.body) : undefined,
+          request_body: parseMaybeJson(firstFailed.request.body),
+          response_body: parseMaybeJson(firstFailed.response.body),
           error_message: firstFailed.errorMessage,
         } : undefined,
       });

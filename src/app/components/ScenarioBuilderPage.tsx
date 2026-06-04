@@ -54,6 +54,7 @@ interface ScenarioTemplate {
   apiMappingFailed?: boolean;
   lastUpdated?: string;
   estimatedRisk?: string;
+  isEdited?: boolean;
 }
 
 interface ScenarioStep {
@@ -488,7 +489,7 @@ export function ScenarioBuilderPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [savingStepIds, setSavingStepIds] = useState<Set<string>>(new Set());
   const [savedStepIds, setSavedStepIds] = useState<Set<string>>(new Set());
-  const [saveToast, setSaveToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [saveToast, setSaveToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
 
@@ -935,13 +936,14 @@ export function ScenarioBuilderPage() {
   const handleSaveStepAsTestCase = async (step: ScenarioStep) => {
     const appId = mainApplicationId ?? getDefaultAppId();
     const v2 = step.rawV2Step;
-    const stepName = v2?.title || step.name || step.endpoint;
+    const stepName = v2?.title || v2?.name || step.label || step.apiEndpoint || 'Scenario step test case';
 
+    setSaveToast({ type: 'info', message: `Saving "${stepName}" to test cases...` });
     setSavingStepIds((prev) => new Set(prev).add(step.id));
     try {
       const apiInventoryItem = v2?.apiId
         ? inventoryApis.find((api) => `${api.method}:${api.endpointPath}` === v2.apiId)
-        : inventoryApis.find((api) => api.method === step.method && api.endpointPath === step.endpoint);
+        : inventoryApis.find((api) => api.method === step.method && api.endpointPath === step.apiEndpoint);
       await flowOpsApi.createTestCase(appId, {
         apiInventoryId: apiInventoryItem ? (hasNumericId(apiInventoryItem) ? apiInventoryItem.id : undefined) : undefined,
         name: stepName,
@@ -1057,7 +1059,7 @@ export function ScenarioBuilderPage() {
   const updateScenario = (updates: Partial<ScenarioTemplate>) => {
     if (!selectedScenarioId) return;
     setScenarios(prev =>
-      prev.filter(isPresent).map(s => s.id === selectedScenarioId ? { ...s, ...updates } : s)
+      prev.filter(isPresent).map(s => s.id === selectedScenarioId ? { ...s, ...updates, isEdited: true } : s)
     );
   };
 
@@ -1128,10 +1130,14 @@ export function ScenarioBuilderPage() {
         <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border px-5 py-3 shadow-2xl text-sm font-medium transition-all ${
           saveToast.type === 'success'
             ? 'bg-[#0d1f14] border-green-500/30 text-green-300'
-            : 'bg-[#1f0d0d] border-red-500/30 text-red-300'
+            : saveToast.type === 'error'
+            ? 'bg-[#1f0d0d] border-red-500/30 text-red-300'
+            : 'bg-[#101827] border-blue-500/30 text-blue-200'
         }`}>
           {saveToast.type === 'success' ? (
             <Check size={16} className="text-green-400 flex-shrink-0" />
+          ) : saveToast.type === 'info' ? (
+            <Loader2 size={16} className="animate-spin text-blue-300 flex-shrink-0" />
           ) : (
             <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
           )}
@@ -1418,13 +1424,8 @@ export function ScenarioBuilderPage() {
               className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/30"
             />
           </div>
-        </div>
-
-        {/* Scenario List */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          {/* Select Visible row */}
           {!isLoading && filteredScenarios.length > 0 && (
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between">
               <button
                 type="button"
                 onClick={() => {
@@ -1441,22 +1442,23 @@ export function ScenarioBuilderPage() {
                 <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
                   filteredScenarios.every((s) => selectedScenarioIds.includes(s.id))
                     ? 'bg-blue-500 border-blue-500'
-                    : 'border-gray-500'
+                    : 'border-gray-500 hover:border-blue-500'
                 }`}>
                   {filteredScenarios.every((s) => selectedScenarioIds.includes(s.id)) && (
-                    <Check size={12} className="text-white" />
+                    <Check size={14} className="text-white" />
                   )}
                 </span>
                 Select visible
               </button>
               <span className="text-xs text-gray-500">
-                {selectedScenarioIds.length > 0
-                  ? `${selectedScenarioIds.length} selected · `
-                  : ''}
                 {filteredScenarios.length} of {scenarios.filter(isPresent).length} scenarios
               </span>
             </div>
           )}
+        </div>
+
+        {/* Scenario List */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
             {isLoading ? (
               <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
@@ -1631,9 +1633,11 @@ export function ScenarioBuilderPage() {
                 </span>
               )}
 
-              <div className="flex items-center gap-1.5 text-xs text-green-400 ml-auto">
-                <Save size={12} />
-                Auto-saved
+              <div className={`flex items-center gap-1.5 text-xs ml-auto ${
+                selectedScenario.isEdited ? 'text-yellow-400' : 'text-green-400'
+              }`}>
+                {selectedScenario.isEdited ? <Edit3 size={12} /> : <Save size={12} />}
+                {selectedScenario.isEdited ? 'Edited' : 'Auto-saved'}
               </div>
             </div>
           </div>
@@ -1690,12 +1694,20 @@ export function ScenarioBuilderPage() {
 
                         {step.duplicate !== true && (
                           <span className={`flex items-center gap-1 px-2 py-1 text-xs rounded border flex-shrink-0 ${
-                            savedStepIds.has(step.id)
+                            savingStepIds.has(step.id)
+                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+                              : savedStepIds.has(step.id)
                               ? 'bg-green-500/10 text-green-400 border-green-500/20'
                               : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                           }`}>
-                            {savedStepIds.has(step.id) ? <Check size={11} /> : <Save size={11} />}
-                            {savedStepIds.has(step.id) ? 'Saved' : 'New'}
+                            {savingStepIds.has(step.id) ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : savedStepIds.has(step.id) ? (
+                              <Check size={11} />
+                            ) : (
+                              <Save size={11} />
+                            )}
+                            {savingStepIds.has(step.id) ? 'Saving' : savedStepIds.has(step.id) ? 'Saved' : 'New'}
                           </span>
                         )}
 
