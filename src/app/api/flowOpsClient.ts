@@ -201,6 +201,7 @@ export interface ExecutionDetailResponse {
   appId: number;
   environmentId: number;
   environmentName?: string;
+  tearDownMode?: boolean;
   executionType?: 'API' | 'API_BATCH' | 'TEST_CASE' | 'SCENARIO';
   targetId?: number;
   testLevel?: TestLevel;
@@ -929,6 +930,7 @@ export const flowOpsApi = {
     apiIds: number[];
     executionMode: 'RUN_EXISTING' | 'GENERATE_AND_RUN';
     testLevel?: TestLevel;
+    tearDownMode?: boolean;
     createdBy: string;
   }) =>
     unwrap(
@@ -944,6 +946,7 @@ export const flowOpsApi = {
     apiIds?: number[];
     testCaseIds?: number[];
     testLevel?: TestLevel;
+    tearDownMode?: boolean;
     createdBy: string;
   }) =>
     unwrap(
@@ -1078,7 +1081,7 @@ export const flowOpsApi = {
     return result;
   },
 
-  runQuickTest: (environmentId: number, body: { domainTags?: string[]; createdBy: string }) =>
+  runQuickTest: (environmentId: number, body: { domainTags?: string[]; tearDownMode?: boolean; createdBy: string }) =>
     unwrap(
       request<ApiResponse<ExecutionDetailResponse>>(`/environments/${environmentId}/quick-test`, {
         method: 'POST',
@@ -1164,6 +1167,7 @@ export const flowOpsApi = {
     environmentId: number;
     testCaseIds?: number[];
     testLevel?: TestLevel;
+    tearDownMode?: boolean;
     createdBy: string;
   }) =>
     unwrap(
@@ -1179,6 +1183,7 @@ export const flowOpsApi = {
     scenarioId?: number;
     scenarioIds?: number[];
     testLevel?: TestLevel;
+    tearDownMode?: boolean;
     createdBy: string;
   }) =>
     unwrap(
