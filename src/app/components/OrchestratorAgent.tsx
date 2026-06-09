@@ -580,8 +580,9 @@ const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
 
 const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
   const methodEndpoint = [draft.executionMethod, draft.executionEndpoint].filter(Boolean).join(' ');
+  const requestEndpoint = [draft.request?.method, draft.request?.endpoint].filter(Boolean).join(' ');
   const selectedEndpoint = [draft.selectedEndpoint?.method, draft.selectedEndpoint?.path].filter(Boolean).join(' ');
-  return draft.endpointName || methodEndpoint || selectedEndpoint || `API #${draft.apiId}`;
+  return draft.endpointName || methodEndpoint || requestEndpoint || selectedEndpoint || `API #${draft.apiId}`;
 };
 
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
@@ -727,26 +728,51 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
   const handleSave = async () => {
     const toSave = data.drafts.filter((_, i) => selected.has(i));
     if (!toSave.length || isSaving) return;
+    const generationId = Number(data.generationId);
+    const appId = activeApplication.appId || DEFAULT_APP_ID;
     setIsSaving(true);
     setSaveError(null);
     try {
-      await Promise.all(
-        toSave.map((draft) =>
-          flowOpsApi.createTestCase(DEFAULT_APP_ID, {
-            apiInventoryId: Number(draft.selectedEndpoint?.id ?? draft.apiId),
-            name: draft.title,
-            title: draft.title,
+      const backendDrafts = toSave
+        .map((draft) => ({ draft, draftId: Number(draft.draftId ?? draft.id) }))
+        .filter((item) => Number.isFinite(item.draftId) && item.draftId > 0);
+
+      if (Number.isFinite(generationId) && generationId > 0 && backendDrafts.length === toSave.length) {
+        await flowOpsApi.saveTestGenerationDrafts(generationId, {
+          appId,
+          testCases: backendDrafts.map(({ draft, draftId }) => ({
+            draftId,
+            name: draft.title.trim(),
             description: draft.description,
             type: draft.type,
+            userRole: draft.userRole ?? undefined,
+            stateCondition: draft.stateCondition ?? undefined,
+            dataVariant: draft.dataVariant ?? undefined,
             requestSpec: JSON.stringify(draftRequestSpec(draft)),
             expectedResult: JSON.stringify(draftExpected(draft)),
+            expectedSpec: JSON.stringify(draftExpected(draft)),
             assertionSpec: JSON.stringify(draftAssertion(draft)),
-            ...(draft.userRole ? { userRole: draft.userRole } : {}),
-            ...(draft.stateCondition ? { stateCondition: draft.stateCondition } : {}),
-            ...(draft.dataVariant ? { dataVariant: draft.dataVariant } : {}),
-          }),
-        ),
-      );
+          })),
+        });
+      } else {
+        await Promise.all(
+          toSave.map((draft) =>
+            flowOpsApi.createTestCase(appId, {
+              apiInventoryId: Number(draft.selectedEndpoint?.id ?? draft.apiId),
+              name: draft.title,
+              title: draft.title,
+              description: draft.description,
+              type: draft.type,
+              requestSpec: JSON.stringify(draftRequestSpec(draft)),
+              expectedResult: JSON.stringify(draftExpected(draft)),
+              assertionSpec: JSON.stringify(draftAssertion(draft)),
+              ...(draft.userRole ? { userRole: draft.userRole } : {}),
+              ...(draft.stateCondition ? { stateCondition: draft.stateCondition } : {}),
+              ...(draft.dataVariant ? { dataVariant: draft.dataVariant } : {}),
+            }),
+          ),
+        );
+      }
       navigate('/qc/testcase');
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.');

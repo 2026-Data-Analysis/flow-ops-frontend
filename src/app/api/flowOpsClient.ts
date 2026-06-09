@@ -783,6 +783,8 @@ export interface OrchestratorTestRequest {
 }
 
 export interface OrchestratorTestCaseDraft {
+  id?: number;
+  draftId?: number;
   apiId: string;
   endpointName?: string;
   selectedEndpoint?: {
