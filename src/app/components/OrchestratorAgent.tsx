@@ -21,6 +21,7 @@ import {
 import {
   flowOpsApi,
   DEFAULT_APP_ID,
+  getApiServerUrl,
   type IncidentAgentData,
   type RootCause,
   type OrchestratorTestCaseData,
@@ -1135,6 +1136,11 @@ export function OrchestratorAgent() {
       const res = await flowOpsApi.chatOrchestrator({
         project_id: String(DEFAULT_APP_ID),
         user_prompt: text,
+        context: {
+          api_server_url: getApiServerUrl(),
+          base_url: getApiServerUrl(),
+          env_name: 'local',
+        },
       });
       const results = res.data?.agent_results ?? [];
       const summary = res.data?.summary;

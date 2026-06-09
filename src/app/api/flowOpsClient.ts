@@ -12,6 +12,14 @@ export function getDefaultAppId() {
   return Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
 }
 
+// 오케스트레이터가 테스트케이스/시나리오를 생성할 때 대상 API 서버를 알 수 있도록
+// 절대 URL을 돌려준다. (dev에서 API_BASE_URL이 상대경로면 현재 origin으로 보정)
+export function getApiServerUrl() {
+  if (/^https?:\/\//i.test(API_BASE_URL)) return API_BASE_URL;
+  if (typeof window !== 'undefined') return `${window.location.origin}${API_BASE_URL}`;
+  return API_BASE_URL;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   code?: string;
