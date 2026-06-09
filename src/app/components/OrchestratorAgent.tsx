@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import {
   Bot,
   X,
@@ -15,9 +16,11 @@ import {
   GitBranch,
   Plus,
   Trash2,
+  Save,
 } from 'lucide-react';
 import {
   flowOpsApi,
+  DEFAULT_APP_ID,
   type IncidentAgentData,
   type RootCause,
   type OrchestratorTestCaseData,
@@ -544,14 +547,34 @@ const CASE_TYPE_STYLE: Record<string, string> = {
   EXCEPTION: 'bg-red-500/10 text-red-400',
   BOUNDARY: 'bg-amber-500/10 text-amber-400',
 };
+const TC_METHOD_COLOR: Record<string, string> = {
+  GET: 'bg-green-500/20 text-green-400',
+  POST: 'bg-blue-500/20 text-blue-400',
+  PUT: 'bg-amber-500/20 text-amber-400',
+  PATCH: 'bg-yellow-500/20 text-yellow-400',
+  DELETE: 'bg-red-500/20 text-red-400',
+};
 
-function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft; index: number }) {
+function TestCaseDraftRow({
+  draft, index, checked, onToggle,
+}: {
+  draft: OrchestratorTestCaseDraft;
+  index: number;
+  checked: boolean;
+  onToggle: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
   const caseStyle = CASE_TYPE_STYLE[draft.test_case_type] ?? 'bg-gray-500/10 text-gray-500';
   return (
     <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="mt-0.5 shrink-0 accent-indigo-500 cursor-pointer"
+        />
         <span className="text-[10px] text-gray-600 shrink-0 mt-0.5 font-mono">TC-{String(index + 1).padStart(3, '0')}</span>
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-200 leading-snug">{draft.title}</p>
@@ -567,7 +590,7 @@ function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft;
         </button>
       </div>
       {expanded && (
-        <div className="mt-2 pt-2 border-t border-[#2a2a35] space-y-2 text-xs">
+        <div className="mt-2 pt-2 border-t border-[#2a2a35] space-y-2 text-xs ml-6">
           <p className="text-gray-400 leading-relaxed">{draft.description}</p>
           {draft.requestSpec.body !== null && draft.requestSpec.body !== undefined && (
             <div>
@@ -587,7 +610,82 @@ function TestCaseDraftCard({ draft, index }: { draft: OrchestratorTestCaseDraft;
 }
 
 function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
+  const navigate = useNavigate();
+
+  const groups = useMemo(() => {
+    const map = new Map<string, { draft: OrchestratorTestCaseDraft; globalIdx: number }[]>();
+    data.drafts.forEach((d, i) => {
+      if (!map.has(d.apiId)) map.set(d.apiId, []);
+      map.get(d.apiId)!.push({ draft: d, globalIdx: i });
+    });
+    return Array.from(map.entries());
+  }, [data.drafts]);
+
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(data.drafts.map((_, i) => i)),
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(groups.map(([key]) => key)),
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const toggleDraft = (idx: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+
+  const toggleGroup = (items: { globalIdx: number }[]) => {
+    const allSel = items.every(({ globalIdx }) => selected.has(globalIdx));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      items.forEach(({ globalIdx }) => (allSel ? next.delete(globalIdx) : next.add(globalIdx)));
+      return next;
+    });
+  };
+
+  const toggleExpand = (key: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+
+  const handleSave = async () => {
+    const toSave = data.drafts.filter((_, i) => selected.has(i));
+    if (!toSave.length || isSaving) return;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await Promise.all(
+        toSave.map((draft) =>
+          flowOpsApi.createTestCase(DEFAULT_APP_ID, {
+            apiInventoryId: Number(draft.apiId),
+            name: draft.title,
+            title: draft.title,
+            description: draft.description,
+            type: draft.type,
+            requestSpec: JSON.stringify(draft.requestSpec),
+            expectedResult: JSON.stringify(draft.expectedSpec),
+            assertionSpec: JSON.stringify(draft.assertionSpec),
+            ...(draft.userRole ? { userRole: draft.userRole } : {}),
+            ...(draft.stateCondition ? { stateCondition: draft.stateCondition } : {}),
+            ...(draft.dataVariant ? { dataVariant: draft.dataVariant } : {}),
+          }),
+        ),
+      );
+      navigate('/qc/testcase');
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.');
+      setIsSaving(false);
+    }
+  };
+
   const unique = data.drafts.filter((d) => !d.duplicate).length;
+  const selectedCount = selected.size;
+
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -595,10 +693,62 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
         {data.drafts.some((d) => d.duplicate) && (
           <span className="text-amber-400">({data.drafts.length - unique}개 중복)</span>
         )}
+        <span className="ml-auto text-indigo-400 font-medium">{selectedCount}개 선택됨</span>
       </div>
-      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
-        {data.drafts.map((d, i) => <TestCaseDraftCard key={i} draft={d} index={i} />)}
+
+      <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
+        {groups.map(([apiId, items]) => {
+          const method = items[0]?.draft.requestSpec.method?.toUpperCase() ?? 'API';
+          const isExpanded = expandedGroups.has(apiId);
+          const allSel = items.every(({ globalIdx }) => selected.has(globalIdx));
+          const partialSel = !allSel && items.some(({ globalIdx }) => selected.has(globalIdx));
+          return (
+            <div key={apiId} className="border border-[#2a2a35] rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 px-2.5 py-2 bg-[#13131a]">
+                <input
+                  type="checkbox"
+                  checked={allSel}
+                  ref={(el) => { if (el) el.indeterminate = partialSel; }}
+                  onChange={() => toggleGroup(items)}
+                  className="shrink-0 accent-indigo-500 cursor-pointer"
+                />
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${TC_METHOD_COLOR[method] ?? 'bg-gray-500/20 text-gray-400'}`}>
+                  {method}
+                </span>
+                <span className="text-xs text-gray-300 font-mono flex-1 truncate">API #{apiId}</span>
+                <span className="text-[10px] text-gray-500 shrink-0">{items.length}개</span>
+                <button onClick={() => toggleExpand(apiId)} className="text-gray-500 hover:text-gray-300 shrink-0">
+                  {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+              </div>
+              {isExpanded && (
+                <div className="p-2 space-y-1.5">
+                  {items.map(({ draft, globalIdx }) => (
+                    <TestCaseDraftRow
+                      key={globalIdx}
+                      draft={draft}
+                      index={globalIdx}
+                      checked={selected.has(globalIdx)}
+                      onToggle={() => toggleDraft(globalIdx)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {saveError && <p className="text-xs text-red-400">{saveError}</p>}
+      <button
+        onClick={handleSave}
+        disabled={selectedCount === 0 || isSaving}
+        className="w-full mt-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+      >
+        {isSaving
+          ? <><Loader2 size={12} className="animate-spin" /> 저장 중...</>
+          : <><Save size={12} /> 저장하기 ({selectedCount}개)</>}
+      </button>
     </div>
   );
 }
