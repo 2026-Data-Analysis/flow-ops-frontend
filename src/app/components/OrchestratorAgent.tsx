@@ -570,17 +570,16 @@ const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
   String(draft.request?.method || draft.executionMethod || draft.requestSpec?.method || draft.selectedEndpoint?.method || 'API').toUpperCase();
 
-const draftRequestBody = (draft: OrchestratorTestCaseDraft) =>
-  draft.request?.body ?? draft.requestSpec?.body;
-
 const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
-  draft.requestSpec ?? {
-    method: draft.request?.method,
-    endpoint: draft.request?.endpoint,
-    pathParams: draft.request?.pathParams ?? {},
-    queryParams: draft.request?.queryParams ?? {},
-    body: draft.request?.body,
-  };
+  ({
+    ...draft.requestSpec,
+    method: draft.request?.method ?? draft.requestSpec?.method,
+    endpoint: draft.request?.endpoint ?? draft.requestSpec?.endpoint,
+    headers: draft.request?.headers,
+    pathParams: draft.request?.pathParams ?? draft.requestSpec?.pathParams ?? {},
+    queryParams: draft.request?.queryParams ?? draft.requestSpec?.queryParams ?? {},
+    body: draft.request?.body ?? draft.requestSpec?.body,
+  });
 
 function TestCaseDraftRow({
   draft, index, checked, onToggle,
@@ -593,7 +592,7 @@ function TestCaseDraftRow({
   const [expanded, setExpanded] = useState(false);
   const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
   const caseStyle = CASE_TYPE_STYLE[draft.test_case_type] ?? 'bg-gray-500/10 text-gray-500';
-  const requestBody = draftRequestBody(draft);
+  const requestSpec = draftRequestSpec(draft);
   return (
     <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
@@ -620,11 +619,11 @@ function TestCaseDraftRow({
       {expanded && (
         <div className="mt-2 pt-2 border-t border-[#2a2a35] space-y-2 text-xs ml-6">
           <p className="text-gray-400 leading-relaxed">{draft.description}</p>
-          {requestBody !== null && requestBody !== undefined && (
+          {requestSpec !== null && requestSpec !== undefined && (
             <div>
               <p className="text-[10px] text-gray-500 mb-1">요청 바디</p>
               <pre className="bg-[#060609] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
-                {JSON.stringify(requestBody, null, 2)}
+                {JSON.stringify(requestSpec, null, 2)}
               </pre>
             </div>
           )}
