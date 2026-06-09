@@ -413,6 +413,7 @@ export interface TestGenerationDraftResponse {
   title?: string;
   description?: string;
   type?: string;
+  risk_level?: string;
   testLevel?: TestLevel;
   userRole?: string;
   role?: string;
@@ -430,6 +431,8 @@ export interface TestGenerationDraftResponse {
     body?: unknown;
   };
   requestPreview?: unknown;
+  expected?: unknown;
+  assertion?: unknown;
   expectedResult?: string;
   expectedSpec?: string;
   assertionSpec?: string;
@@ -790,7 +793,8 @@ export interface OrchestratorTestCaseDraft {
   title: string;
   description: string;
   type: string;
-  test_case_type: string;
+  risk_level?: string;
+  test_case_type?: string;
   userRole: string | null;
   stateCondition: string | null;
   dataVariant: string | null;
@@ -811,6 +815,16 @@ export interface OrchestratorTestCaseDraft {
   };
   executionMethod?: string;
   executionEndpoint?: string;
+  expected?: {
+    statusCode?: number;
+    body?: unknown;
+    errorMessage?: string | null;
+  };
+  assertion?: {
+    statusCode?: number;
+    bodyContains?: string[];
+    headerContains?: Record<string, string>;
+  };
   expectedSpec: {
     statusCode: number;
     body: unknown;

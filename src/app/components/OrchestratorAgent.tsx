@@ -557,6 +557,23 @@ const TC_METHOD_COLOR: Record<string, string> = {
   PATCH: 'bg-yellow-500/20 text-yellow-400',
   DELETE: 'bg-red-500/20 text-red-400',
 };
+const RISK_LEVEL_STYLE: Record<string, string> = {
+  HIGH: 'bg-red-500/20 text-red-400',
+  MEDIUM: 'bg-amber-500/20 text-amber-400',
+  LOW: 'bg-green-500/20 text-green-400',
+};
+
+const parseJsonObject = (value: unknown): Record<string, unknown> | undefined => {
+  if (!value) return undefined;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
   String(draft.selectedEndpoint?.id ?? draft.apiId);
@@ -570,6 +587,11 @@ const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
   String(draft.request?.method || draft.executionMethod || draft.requestSpec?.method || draft.selectedEndpoint?.method || 'API').toUpperCase();
 
+const draftRequestBody = (draft: OrchestratorTestCaseDraft) => {
+  const parsedRequestSpec = parseJsonObject(draft.requestSpec);
+  return draft.request?.body ?? parsedRequestSpec?.body ?? draft.requestSpec?.body ?? {};
+};
+
 const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
   ({
     ...draft.requestSpec,
@@ -578,8 +600,14 @@ const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
     headers: draft.request?.headers,
     pathParams: draft.request?.pathParams ?? draft.requestSpec?.pathParams ?? {},
     queryParams: draft.request?.queryParams ?? draft.requestSpec?.queryParams ?? {},
-    body: draft.request?.body ?? draft.requestSpec?.body,
+    body: draftRequestBody(draft),
   });
+
+const draftExpected = (draft: OrchestratorTestCaseDraft) =>
+  draft.expected ?? draft.expectedSpec ?? {};
+
+const draftAssertion = (draft: OrchestratorTestCaseDraft) =>
+  draft.assertion ?? draft.assertionSpec ?? {};
 
 function TestCaseDraftRow({
   draft, index, checked, onToggle,
@@ -591,8 +619,11 @@ function TestCaseDraftRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
-  const caseStyle = CASE_TYPE_STYLE[draft.test_case_type] ?? 'bg-gray-500/10 text-gray-500';
-  const requestSpec = draftRequestSpec(draft);
+  const riskStyle = RISK_LEVEL_STYLE[draft.risk_level || ''] ?? 'bg-gray-500/10 text-gray-500';
+  const requestBody = draftRequestBody(draft);
+  const expected = draftExpected(draft);
+  const assertion = draftAssertion(draft);
+  const statusCode = expected.statusCode ?? assertion.statusCode;
   return (
     <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
@@ -607,8 +638,8 @@ function TestCaseDraftRow({
           <p className="text-xs text-gray-200 leading-snug">{draft.title}</p>
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${typeStyle}`}>{draft.type}</span>
-            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${caseStyle}`}>{draft.test_case_type}</span>
-            <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded">{draft.expectedSpec.statusCode}</span>
+            {draft.risk_level && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${riskStyle}`}>{draft.risk_level}</span>}
+            {statusCode !== undefined && <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded">{statusCode}</span>}
             {draft.duplicate && <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">중복</span>}
           </div>
         </div>
@@ -619,15 +650,27 @@ function TestCaseDraftRow({
       {expanded && (
         <div className="mt-2 pt-2 border-t border-[#2a2a35] space-y-2 text-xs ml-6">
           <p className="text-gray-400 leading-relaxed">{draft.description}</p>
-          {requestSpec !== null && requestSpec !== undefined && (
+          {requestBody !== null && requestBody !== undefined && (
             <div>
               <p className="text-[10px] text-gray-500 mb-1">요청 바디</p>
               <pre className="bg-[#060609] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
-                {JSON.stringify(requestSpec, null, 2)}
+                {JSON.stringify(requestBody, null, 2)}
               </pre>
             </div>
           )}
-          {draft.assertionSpec.bodyContains.length > 0 && (
+          <div>
+            <p className="text-[10px] text-gray-500 mb-1">Expected</p>
+            <pre className="bg-[#060609] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
+              {JSON.stringify(expected, null, 2)}
+            </pre>
+          </div>
+          <div>
+            <p className="text-[10px] text-gray-500 mb-1">Assertion</p>
+            <pre className="bg-[#060609] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
+              {JSON.stringify(assertion, null, 2)}
+            </pre>
+          </div>
+          {false && draft.assertionSpec.bodyContains.length > 0 && (
             <p className="text-[10px] text-gray-500">검증: {draft.assertionSpec.bodyContains.join(', ')}</p>
           )}
         </div>
@@ -696,8 +739,8 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
             description: draft.description,
             type: draft.type,
             requestSpec: JSON.stringify(draftRequestSpec(draft)),
-            expectedResult: JSON.stringify(draft.expectedSpec),
-            assertionSpec: JSON.stringify(draft.assertionSpec),
+            expectedResult: JSON.stringify(draftExpected(draft)),
+            assertionSpec: JSON.stringify(draftAssertion(draft)),
             ...(draft.userRole ? { userRole: draft.userRole } : {}),
             ...(draft.stateCondition ? { stateCondition: draft.stateCondition } : {}),
             ...(draft.dataVariant ? { dataVariant: draft.dataVariant } : {}),

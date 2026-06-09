@@ -52,6 +52,7 @@ interface TestCase {
   name: string;
   type: 'success' | 'validation' | 'auth' | 'performance' | 'edge' | 'error';
   backendType?: string;
+  riskLevel?: string;
   testLevel?: TestLevel;
   apiId: string;
   endpointName?: string;
@@ -109,6 +110,12 @@ const testLevelColors = {
   SANITY: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Sanity' },
   REGRESSION: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Regression' },
   FULL: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', label: 'Full' },
+};
+
+const riskLevelColors = {
+  HIGH: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'High risk' },
+  MEDIUM: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Medium risk' },
+  LOW: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', label: 'Low risk' },
 };
 
 const formatRelativeTime = (value?: string) => {
@@ -276,7 +283,8 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     ? draft.edgeStates.join(', ')
     : draft.stateCondition || draft.edgeState || draft.edgeStates;
   const requestSpec = draft.requestSpec || stringifySpec(draft.request) || stringifySpec(draft.requestPreview);
-  const assertionSpec = draft.assertionSpec || (Array.isArray(draft.validationRules)
+  const expectedSpec = draft.expectedResult || draft.expectedSpec || stringifySpec(draft.expected);
+  const assertionSpec = draft.assertionSpec || stringifySpec(draft.assertion) || (Array.isArray(draft.validationRules)
     ? JSON.stringify({ assertions: draft.validationRules }, null, 2)
     : stringifySpec(draft.validationRules));
 
@@ -286,6 +294,7 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     name: draft.name || draft.title || `AI Draft #${Number.isFinite(draftId) ? draftId : ''}`.trim(),
     type: mapBackendType(draft.type),
     backendType: draft.type,
+    riskLevel: draft.risk_level,
     testLevel: draft.testLevel,
     apiId: String(draft.selectedEndpoint?.id || draft.apiId || draft.apiInventoryId || ''),
     endpointName: draft.endpointName,
@@ -301,7 +310,7 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     dataVariant: draft.dataVariant,
     status: draft.duplicate ? 'duplicate' : 'new',
     description: draft.description,
-    expectedResult: draft.expectedResult || draft.expectedSpec,
+    expectedResult: expectedSpec,
     requestPreview: requestSpec,
     requestSpec,
     assertionSpec,
@@ -1243,6 +1252,11 @@ export function TestCaseGenerationPage() {
                                   <div>
                                     <div className="flex items-center gap-2 mb-2">
                                       <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>{typeColors[test.type].label}</span>
+                                      {test.riskLevel && riskLevelColors[test.riskLevel as keyof typeof riskLevelColors] && (
+                                        <span className={`text-xs px-2 py-1 rounded ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].bg} ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].text} ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].border} border`}>
+                                          {riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].label}
+                                        </span>
+                                      )}
                                       {test.isEdited && <span className="text-xs px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded">Edited</span>}
                                     </div>
                                     <div className="text-white text-sm font-medium">{test.name}</div>
