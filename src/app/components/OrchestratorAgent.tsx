@@ -22,6 +22,7 @@ import {
   flowOpsApi,
   DEFAULT_APP_ID,
   getApiServerUrl,
+  getStoredProjectIdForApp,
   type IncidentAgentData,
   type RootCause,
   type OrchestratorTestCaseData,
@@ -30,6 +31,7 @@ import {
   type OrchestratorScenario,
   type OrchestratorScenarioStep,
 } from '../api/flowOpsClient';
+import { useTestContext } from '../contexts/TestContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -947,6 +949,7 @@ const INIT_MESSAGE: Message = {
 };
 
 export function OrchestratorAgent() {
+  const { activeApplication } = useTestContext();
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([INIT_MESSAGE]);
@@ -959,6 +962,13 @@ export function OrchestratorAgent() {
   useEffect(() => { if (isOpen && !isMinimized) setTimeout(() => inputRef.current?.focus(), 50); }, [isOpen, isMinimized]);
 
   const hasActiveForm = messages.some((m) => m.formType !== undefined);
+
+  const resolveCurrentProjectId = async () => {
+    const storedProjectId = getStoredProjectIdForApp(activeApplication.appId);
+    if (storedProjectId) return String(storedProjectId);
+    const project = await flowOpsApi.ensureProject();
+    return String(project.id);
+  };
 
   const updateTask = (msgId: string, type: AgentTask['type'], updates: Partial<AgentTask>) =>
     setMessages((prev) =>
@@ -984,12 +994,13 @@ export function OrchestratorAgent() {
   };
 
   const handleLogFormSubmit = async (formData: LogFormData, formMsgId: string) => {
+    const projectId = formData.project_id || await resolveCurrentProjectId();
     const taskMsgId = replaceFormWithTasks(formMsgId,
       `로그 분석 요청: [${formData.service_name}] ${formData.user_prompt}`,
       [{ type: 'log-analysis', status: 'running' }]);
     try {
       const res = await flowOpsApi.dispatchOrchestrator({
-        project_id: formData.project_id || 'default',
+        project_id: projectId,
         user_prompt: formData.user_prompt,
         context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
       });
@@ -1005,18 +1016,19 @@ export function OrchestratorAgent() {
   };
 
   const handleTestFormSubmit = async (formData: TestFormData, formMsgId: string) => {
+    const projectId = formData.project_id || await resolveCurrentProjectId();
     const endpointId = `${formData.method}:${formData.path}`;
     const taskMsgId = replaceFormWithTasks(formMsgId,
       `테스트 케이스 생성 요청: [${formData.method} ${formData.path}] ${formData.user_prompt}`,
       [{ type: 'test-generation', status: 'running' }]);
     try {
       const res = await flowOpsApi.dispatchOrchestratorTest({
-        project_id: formData.project_id || 'default',
+        project_id: projectId,
         user_prompt: formData.user_prompt,
         context: {
           base_url: formData.base_url, env_name: formData.env_name,
           api_inventory: {
-            project_id: formData.project_id || 'default',
+            project_id: projectId,
             endpoints: [{
               endpoint_id: endpointId, path: formData.path, method: formData.method,
               ...(formData.summary ? { summary: formData.summary } : {}),
@@ -1039,16 +1051,17 @@ export function OrchestratorAgent() {
   };
 
   const handleScenarioFormSubmit = async (formData: ScenarioFormData, formMsgId: string) => {
+    const projectId = formData.project_id || await resolveCurrentProjectId();
     const taskMsgId = replaceFormWithTasks(formMsgId,
       `시나리오 생성 요청: ${formData.user_prompt}`,
       [{ type: 'scenario-generation', status: 'running' }]);
     try {
       const res = await flowOpsApi.dispatchOrchestratorScenario({
-        project_id: formData.project_id || 'default',
+        project_id: projectId,
         user_prompt: formData.user_prompt,
         context: {
           api_inventory: {
-            project_id: formData.project_id || 'default',
+            project_id: projectId,
             endpoints: formData.endpoints
               .filter((e) => e.path.trim())
               .map((e) => ({
@@ -1073,12 +1086,13 @@ export function OrchestratorAgent() {
   };
 
   const handleBothFormSubmit = async (formData: BothFormData, formMsgId: string) => {
+    const projectId = formData.project_id || await resolveCurrentProjectId();
     const taskMsgId = replaceFormWithTasks(formMsgId,
       `동시 실행: 로그 분석 [${formData.service_name}] + 테스트 케이스 [${formData.method} ${formData.path}]`,
       [{ type: 'log-analysis', status: 'running' }, { type: 'test-generation', status: 'running' }]);
 
     const runLog = flowOpsApi.dispatchOrchestrator({
-      project_id: formData.project_id || 'default',
+      project_id: projectId,
       user_prompt: formData.log_user_prompt,
       context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
     }).then((res) => {
@@ -1088,12 +1102,12 @@ export function OrchestratorAgent() {
     }).catch((e: unknown) => updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
     const runTest = flowOpsApi.dispatchOrchestratorTest({
-      project_id: formData.project_id || 'default',
+      project_id: projectId,
       user_prompt: formData.test_user_prompt,
       context: {
         base_url: formData.base_url, env_name: formData.env_name,
         api_inventory: {
-          project_id: formData.project_id || 'default',
+          project_id: projectId,
           endpoints: [{ endpoint_id: `${formData.method}:${formData.path}`, path: formData.path, method: formData.method, ...(formData.summary ? { summary: formData.summary } : {}), auth: { type: 'bearer' } }],
         },
       },
@@ -1133,8 +1147,9 @@ export function OrchestratorAgent() {
     ]);
     setIsProcessing(true);
     try {
+      const projectId = await resolveCurrentProjectId();
       const res = await flowOpsApi.chatOrchestrator({
-        project_id: String(DEFAULT_APP_ID),
+        project_id: projectId,
         user_prompt: text,
         context: {
           api_server_url: getApiServerUrl(),

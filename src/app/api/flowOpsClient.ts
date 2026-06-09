@@ -12,6 +12,23 @@ export function getDefaultAppId() {
   return Number(import.meta.env.VITE_FLOW_OPS_APP_ID || localStorage.getItem('flowOps.appId') || 1);
 }
 
+export function getStoredProjectIdForApp(appId = getDefaultAppId()) {
+  try {
+    const repositories = JSON.parse(localStorage.getItem('flowOps.registeredRepositories') || '[]');
+    if (Array.isArray(repositories)) {
+      const repository = repositories.find((item) => Number(item?.appId) === appId && Number(item?.projectId) > 0);
+      if (repository) {
+        return Number(repository.projectId);
+      }
+    }
+  } catch {
+    // Ignore malformed local storage and fall back to the remembered project below.
+  }
+
+  const rememberedProjectId = Number(localStorage.getItem('flowOps.projectId'));
+  return Number.isFinite(rememberedProjectId) && rememberedProjectId > 0 ? rememberedProjectId : null;
+}
+
 // 오케스트레이터가 테스트케이스/시나리오를 생성할 때 대상 API 서버를 알 수 있도록
 // 절대 URL을 돌려준다. (dev에서 API_BASE_URL이 상대경로면 현재 origin으로 보정)
 export function getApiServerUrl() {
@@ -1575,4 +1592,5 @@ export function rememberAppTitle(title: string) {
 
 export function rememberProjectId(projectId: number) {
   localStorage.setItem('flowOps.projectId', String(projectId));
+  window.dispatchEvent(new Event('flowOps.projectChanged'));
 }

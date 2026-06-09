@@ -5,6 +5,7 @@ import {
   flowOpsApi,
   rememberAppId,
   rememberAppTitle,
+  rememberProjectId,
   type RepositoryResponse,
 } from '../api/flowOpsClient';
 
@@ -138,6 +139,9 @@ export function TopBar({ theme, onToggleTheme }: TopBarProps) {
       );
     } finally {
       rememberAppId(application.appId);
+      if (application.projectId) {
+        rememberProjectId(application.projectId);
+      }
       rememberAppTitle(application.title);
       setActiveApplication({ appId: application.appId, title: application.title });
       setIsAppMenuOpen(false);
