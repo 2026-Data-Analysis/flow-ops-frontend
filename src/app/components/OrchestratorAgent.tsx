@@ -558,6 +558,30 @@ const TC_METHOD_COLOR: Record<string, string> = {
   DELETE: 'bg-red-500/20 text-red-400',
 };
 
+const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
+  String(draft.selectedEndpoint?.id ?? draft.apiId);
+
+const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
+  const methodEndpoint = [draft.executionMethod, draft.executionEndpoint].filter(Boolean).join(' ');
+  const selectedEndpoint = [draft.selectedEndpoint?.method, draft.selectedEndpoint?.path].filter(Boolean).join(' ');
+  return draft.endpointName || methodEndpoint || selectedEndpoint || `API #${draft.apiId}`;
+};
+
+const draftMethod = (draft: OrchestratorTestCaseDraft) =>
+  String(draft.request?.method || draft.executionMethod || draft.requestSpec?.method || draft.selectedEndpoint?.method || 'API').toUpperCase();
+
+const draftRequestBody = (draft: OrchestratorTestCaseDraft) =>
+  draft.request?.body ?? draft.requestSpec?.body;
+
+const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
+  draft.requestSpec ?? {
+    method: draft.request?.method,
+    endpoint: draft.request?.endpoint,
+    pathParams: draft.request?.pathParams ?? {},
+    queryParams: draft.request?.queryParams ?? {},
+    body: draft.request?.body,
+  };
+
 function TestCaseDraftRow({
   draft, index, checked, onToggle,
 }: {
@@ -569,6 +593,7 @@ function TestCaseDraftRow({
   const [expanded, setExpanded] = useState(false);
   const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
   const caseStyle = CASE_TYPE_STYLE[draft.test_case_type] ?? 'bg-gray-500/10 text-gray-500';
+  const requestBody = draftRequestBody(draft);
   return (
     <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
@@ -595,11 +620,11 @@ function TestCaseDraftRow({
       {expanded && (
         <div className="mt-2 pt-2 border-t border-[#2a2a35] space-y-2 text-xs ml-6">
           <p className="text-gray-400 leading-relaxed">{draft.description}</p>
-          {draft.requestSpec.body !== null && draft.requestSpec.body !== undefined && (
+          {requestBody !== null && requestBody !== undefined && (
             <div>
               <p className="text-[10px] text-gray-500 mb-1">요청 바디</p>
               <pre className="bg-[#060609] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
-                {JSON.stringify(draft.requestSpec.body, null, 2)}
+                {JSON.stringify(requestBody, null, 2)}
               </pre>
             </div>
           )}
@@ -618,8 +643,9 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
   const groups = useMemo(() => {
     const map = new Map<string, { draft: OrchestratorTestCaseDraft; globalIdx: number }[]>();
     data.drafts.forEach((d, i) => {
-      if (!map.has(d.apiId)) map.set(d.apiId, []);
-      map.get(d.apiId)!.push({ draft: d, globalIdx: i });
+      const key = draftGroupKey(d);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push({ draft: d, globalIdx: i });
     });
     return Array.from(map.entries());
   }, [data.drafts]);
@@ -665,12 +691,12 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
       await Promise.all(
         toSave.map((draft) =>
           flowOpsApi.createTestCase(DEFAULT_APP_ID, {
-            apiInventoryId: Number(draft.apiId),
+            apiInventoryId: Number(draft.selectedEndpoint?.id ?? draft.apiId),
             name: draft.title,
             title: draft.title,
             description: draft.description,
             type: draft.type,
-            requestSpec: JSON.stringify(draft.requestSpec),
+            requestSpec: JSON.stringify(draftRequestSpec(draft)),
             expectedResult: JSON.stringify(draft.expectedSpec),
             assertionSpec: JSON.stringify(draft.assertionSpec),
             ...(draft.userRole ? { userRole: draft.userRole } : {}),
@@ -701,7 +727,9 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
 
       <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
         {groups.map(([apiId, items]) => {
-          const method = items[0]?.draft.requestSpec.method?.toUpperCase() ?? 'API';
+          const firstDraft = items[0]?.draft;
+          const method = firstDraft ? draftMethod(firstDraft) : 'API';
+          const endpointLabel = firstDraft ? draftEndpointLabel(firstDraft) : `API #${apiId}`;
           const isExpanded = expandedGroups.has(apiId);
           const allSel = items.every(({ globalIdx }) => selected.has(globalIdx));
           const partialSel = !allSel && items.some(({ globalIdx }) => selected.has(globalIdx));
@@ -718,7 +746,7 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${TC_METHOD_COLOR[method] ?? 'bg-gray-500/20 text-gray-400'}`}>
                   {method}
                 </span>
-                <span className="text-xs text-gray-300 font-mono flex-1 truncate">API #{apiId}</span>
+                <span className="text-xs text-gray-300 font-mono flex-1 truncate">{endpointLabel}</span>
                 <span className="text-[10px] text-gray-500 shrink-0">{items.length}개</span>
                 <button onClick={() => toggleExpand(apiId)} className="text-gray-500 hover:text-gray-300 shrink-0">
                   {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}

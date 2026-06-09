@@ -54,6 +54,7 @@ interface TestCase {
   backendType?: string;
   testLevel?: TestLevel;
   apiId: string;
+  endpointName?: string;
   apiMethod?: ApiEndpoint['method'];
   apiPath?: string;
   apiDomain?: string;
@@ -274,7 +275,7 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
   const stateCondition = Array.isArray(draft.edgeStates)
     ? draft.edgeStates.join(', ')
     : draft.stateCondition || draft.edgeState || draft.edgeStates;
-  const requestSpec = draft.requestSpec || stringifySpec(draft.requestPreview);
+  const requestSpec = draft.requestSpec || stringifySpec(draft.request) || stringifySpec(draft.requestPreview);
   const assertionSpec = draft.assertionSpec || (Array.isArray(draft.validationRules)
     ? JSON.stringify({ assertions: draft.validationRules }, null, 2)
     : stringifySpec(draft.validationRules));
@@ -286,7 +287,15 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     type: mapBackendType(draft.type),
     backendType: draft.type,
     testLevel: draft.testLevel,
-    apiId: String(draft.apiId || draft.apiInventoryId || ''),
+    apiId: String(draft.selectedEndpoint?.id || draft.apiId || draft.apiInventoryId || ''),
+    endpointName: draft.endpointName,
+    apiMethod: draft.selectedEndpoint?.method && draft.selectedEndpoint.method !== 'TRACE'
+      ? draft.selectedEndpoint.method as ApiEndpoint['method']
+      : draft.request?.method && draft.request.method !== 'TRACE'
+        ? draft.request.method as ApiEndpoint['method']
+        : undefined,
+    apiPath: draft.selectedEndpoint?.path || draft.request?.endpoint,
+    apiDomain: draft.selectedEndpoint?.domainTag?.trim() || undefined,
     role: draft.userRole || draft.role,
     stateCondition,
     dataVariant: draft.dataVariant,
@@ -302,8 +311,8 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     expectedStatusCodes: normalizeNumberList(draft.expectedStatusCodes),
     errorStatusCodes: normalizeNumberList(draft.errorStatusCodes),
     errorCodes: normalizeStringList(draft.errorCodes),
-    executionMethod: draft.executionMethod,
-    executionEndpoint: draft.executionEndpoint,
+    executionMethod: draft.executionMethod || (draft.request?.method && draft.request.method !== 'TRACE' ? draft.request.method as ApiEndpoint['method'] : undefined),
+    executionEndpoint: draft.executionEndpoint || draft.request?.endpoint,
   };
 };
 

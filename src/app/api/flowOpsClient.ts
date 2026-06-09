@@ -408,6 +408,7 @@ export interface TestGenerationDraftResponse {
   draftId?: number;
   apiId?: number;
   apiInventoryId?: number;
+  endpointName?: string;
   name?: string;
   title?: string;
   description?: string;
@@ -420,6 +421,14 @@ export interface TestGenerationDraftResponse {
   edgeStates?: string[] | string;
   dataVariant?: string;
   requestSpec?: string;
+  request?: {
+    method?: HttpMethod | string;
+    endpoint?: string;
+    headers?: Record<string, unknown>;
+    pathParams?: Record<string, unknown>;
+    queryParams?: Record<string, unknown>;
+    body?: unknown;
+  };
   requestPreview?: unknown;
   expectedResult?: string;
   expectedSpec?: string;
@@ -430,6 +439,13 @@ export interface TestGenerationDraftResponse {
   errorCodes?: string[];
   executionMethod?: HttpMethod;
   executionEndpoint?: string;
+  selectedEndpoint?: {
+    id?: number;
+    method?: HttpMethod | string;
+    path?: string;
+    domainTag?: string;
+    controllerName?: string;
+  };
   duplicate?: boolean;
 }
 
@@ -763,6 +779,14 @@ export interface OrchestratorTestRequest {
 
 export interface OrchestratorTestCaseDraft {
   apiId: string;
+  endpointName?: string;
+  selectedEndpoint?: {
+    id?: number;
+    method?: string;
+    path?: string;
+    domainTag?: string;
+    controllerName?: string;
+  };
   title: string;
   description: string;
   type: string;
@@ -772,10 +796,21 @@ export interface OrchestratorTestCaseDraft {
   dataVariant: string | null;
   requestSpec: {
     method: string;
+    endpoint?: string;
     pathParams: Record<string, unknown>;
     queryParams: Record<string, unknown>;
     body: unknown;
   };
+  request?: {
+    method?: string;
+    endpoint?: string;
+    headers?: Record<string, unknown>;
+    pathParams?: Record<string, unknown>;
+    queryParams?: Record<string, unknown>;
+    body?: unknown;
+  };
+  executionMethod?: string;
+  executionEndpoint?: string;
   expectedSpec: {
     statusCode: number;
     body: unknown;
