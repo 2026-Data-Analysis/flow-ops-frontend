@@ -813,42 +813,15 @@ export function ScenarioBuilderPage() {
     (scenario) => scenario.isSelected && scenario.steps.some((step) => !step.apiId),
   );
 
-  const buildRecommendationRequest = (
-    goal: string | null,
-    apis = inventoryApis,
-    options: { maxScenarios?: number | null; maxStepsPerScenario?: number | null } = {},
-  ) => {
-    const businessDomains = Array.from(
-      new Set(apis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
-    );
-
-    return {
-      appId: mainApplicationId ?? activeApplication.appId,
-      environmentId: selectedEnvironment?.id ?? null,
-      goal: toNullableString(goal ?? undefined),
-      scenarioType: null,
-      testLevel: selectedEnvironment?.defaultTestLevel ?? null,
-      businessDomain: businessDomains.length === 1 ? businessDomains[0] : null,
-      requestedBy: DEFAULT_REQUESTER,
-      apiIds: apis.filter(hasNumericId).map((api) => api.id),
-      maxScenarios: options.maxScenarios ?? null,
-      maxStepsPerScenario: options.maxStepsPerScenario ?? null,
-    };
-  };
-
   const generateV2Scenarios = async (
     goal: string | null,
     apis = inventoryApis,
     options: { maxScenarios?: number | null; maxStepsPerScenario?: number | null } = {},
   ) => {
-    if (!selectedEnvironment?.id) {
-      throw new Error('시나리오 생성에는 environmentId가 필요합니다. 환경을 먼저 선택해주세요.');
-    }
-
+    // environmentId는 백엔드에서 main app의 default 환경을 자동 조회한다.
     const response = normalizeScenarioGenerateResponse(
       await flowOpsApi.generateScenarioV2({
         appId: mainApplicationId ?? activeApplication.appId,
-        environmentId: selectedEnvironment.id,
         apiIds: apis.filter(hasNumericId).map((api) => api.id),
         goal: goal?.trim() || undefined,
         maxScenarios: options.maxScenarios ?? null,

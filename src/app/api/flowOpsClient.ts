@@ -680,6 +680,190 @@ export interface AiOrchestratorChatResponse {
   agent_results?: AiOrchestratorChatDataPayload['agent_results'];
 }
 
+// ─── Orchestrator Dispatch (멀티 에이전트 디스패치) ──────────────────────────────
+
+export interface OrchestratorContext {
+  service_name: string;
+  occurred_at: string;
+  raw_log: string;
+}
+
+export interface OrchestratorRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorContext;
+}
+
+export type RootCauseSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface RootCause {
+  summary: string;
+  evidence: string[];
+  severity: RootCauseSeverity;
+  suggested_fix: string;
+}
+
+export interface IncidentAgentData {
+  root_causes: RootCause[];
+  internal_report: string;
+  external_notice: string;
+}
+
+export interface OrchestratorTestEndpoint {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  auth?: { type: string };
+  request_body_schema?: object;
+  response_schema?: object;
+}
+
+export interface OrchestratorTestApiInventory {
+  project_id: string;
+  endpoints: OrchestratorTestEndpoint[];
+}
+
+export interface OrchestratorTestContext {
+  base_url: string;
+  env_name: string;
+  api_inventory?: OrchestratorTestApiInventory;
+}
+
+export interface OrchestratorTestRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorTestContext;
+}
+
+export interface OrchestratorTestCaseDraft {
+  apiId: string;
+  title: string;
+  description: string;
+  type: string;
+  test_case_type: string;
+  userRole: string | null;
+  stateCondition: string | null;
+  dataVariant: string | null;
+  requestSpec: {
+    method: string;
+    pathParams: Record<string, unknown>;
+    queryParams: Record<string, unknown>;
+    body: unknown;
+  };
+  expectedSpec: {
+    statusCode: number;
+    body: unknown;
+    errorMessage: string | null;
+  };
+  assertionSpec: {
+    statusCode: number;
+    bodyContains: string[];
+    headerContains: Record<string, string>;
+  };
+  duplicate: boolean;
+}
+
+export interface OrchestratorTestCaseData {
+  requestId: string;
+  generationId: string;
+  drafts: OrchestratorTestCaseDraft[];
+}
+
+export interface OrchestratorScenarioEndpoint {
+  endpoint_id: string;
+  path: string;
+  method: string;
+  summary?: string;
+  auth?: { type: string };
+  request_body_schema?: object;
+  response_schema?: object;
+  parameters?: Array<{
+    name: string;
+    location: string;
+    type: string;
+    required: boolean;
+  }>;
+}
+
+export interface OrchestratorScenarioApiInventory {
+  project_id: string;
+  endpoints: OrchestratorScenarioEndpoint[];
+}
+
+export interface OrchestratorScenarioContext {
+  api_inventory: OrchestratorScenarioApiInventory;
+}
+
+export interface OrchestratorScenarioRequest {
+  project_id: string;
+  user_prompt: string;
+  context: OrchestratorScenarioContext;
+}
+
+export interface OrchestratorChainedVariable {
+  name: string;
+  source: string;
+  source_step_ref: string;
+  source_json_path: string;
+  literal_value: string | null;
+  target_location: string;
+  target_field: string;
+  target_template: string | null;
+}
+
+export interface OrchestratorScenarioStep {
+  step_id: string;
+  ref: string;
+  order: number;
+  endpoint_id: string;
+  name: string;
+  description: string | null;
+  static_payload: Record<string, unknown> | null;
+  static_params: Record<string, unknown>;
+  chained_variables: OrchestratorChainedVariable[];
+  expected_status_code: number;
+  expected_assertions: string[];
+}
+
+export interface OrchestratorScenarioMeta {
+  rationale: string;
+  coverage_gap: string | null;
+  estimated_risk: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+
+export interface OrchestratorScenario {
+  scenario_id: string;
+  name: string;
+  description: string | null;
+  steps: OrchestratorScenarioStep[];
+  meta: OrchestratorScenarioMeta;
+}
+
+export interface OrchestratorScenarioData {
+  scenarios: OrchestratorScenario[];
+  used_endpoint_ids: string[];
+}
+
+export interface OrchestratorAgentResult {
+  agent_type: string;
+  success: boolean;
+  data: IncidentAgentData | OrchestratorTestCaseData | OrchestratorScenarioData | null;
+  error_message: string | null;
+}
+
+export interface OrchestratorApiResponse {
+  success: boolean;
+  data: {
+    dispatched_agents: string[];
+    agent_results: OrchestratorAgentResult[];
+    summary: string;
+  };
+  error_code: string | null;
+  error_message: string | null;
+  trace_id: string;
+}
+
 function toQuery(params: Record<string, unknown>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -810,7 +994,7 @@ export interface ScenarioV2 {
 
 export interface ScenarioV2GenerateRequest {
   appId: number;
-  environmentId: number;
+  environmentId?: number | null;
   goal?: string;
   scenarioType?: string;
   testLevel?: string;
@@ -1147,6 +1331,15 @@ export const flowOpsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  dispatchOrchestrator: (body: OrchestratorRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
+
+  dispatchOrchestratorTest: (body: OrchestratorTestRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
+
+  dispatchOrchestratorScenario: (body: OrchestratorScenarioRequest) =>
+    request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
 
   orchestrateChat: async (body: AiOrchestratorChatRequest): Promise<AiOrchestratorResult> => {
     const response = await request<ApiResponse<AiOrchestratorChatResponse> | AiOrchestratorChatResponse>(
