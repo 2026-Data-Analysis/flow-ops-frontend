@@ -1353,7 +1353,7 @@ export const flowOpsApi = {
   // 응답은 dispatch와 동일한 { success, data: { dispatched_agents, agent_results, summary }, ... } 구조.
   chatOrchestrator: async (body: AiOrchestratorChatRequest): Promise<OrchestratorApiResponse> => {
     const response = await request<unknown>(
-      '/v1/agents/orchestrator/chat',
+      '/ai/agents/orchestrator/chat',
       { method: 'POST', body: JSON.stringify(body) },
     );
     // { data: { data: { agent_results } } } 까지 중첩될 수 있어, agent_results를 가진
@@ -1371,7 +1371,7 @@ export const flowOpsApi = {
 
   orchestrateChat: async (body: AiOrchestratorChatRequest): Promise<AiOrchestratorResult> => {
     const response = await request<ApiResponse<AiOrchestratorChatResponse> | AiOrchestratorChatResponse>(
-      '/v1/agents/orchestrator/chat',
+      '/ai/agents/orchestrator/chat',
       {
         method: 'POST',
         body: JSON.stringify(body),
