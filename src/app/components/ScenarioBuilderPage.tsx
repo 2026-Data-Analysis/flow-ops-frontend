@@ -624,7 +624,6 @@ export function ScenarioBuilderPage() {
         inventoryEndpoint: `/projects/${project.id}/api-inventories`,
         recommendEndpoint: '/scenarios/recommend',
         appId: mainApplicationId ?? activeApplication.appId,
-        environmentId: selectedEnvironment?.id,
         repositoryId: inventoryParams.repositoryId as number | undefined,
         branchName: inventoryParams.branchName as string | undefined,
         apiIds: recommendationApis.filter(hasNumericId).map((api) => api.id),
@@ -638,7 +637,6 @@ export function ScenarioBuilderPage() {
       setRecommendationDebug((prev) => ({ ...prev, phase: 'requesting_recommendation' }));
       const recommendations = await flowOpsApi.recommendScenarios({
         appId: mainApplicationId ?? activeApplication.appId,
-        environmentId: selectedEnvironment?.id,
         goal: 'Recommend high-value multi-step API scenarios from the current inventory.',
         scenarioType: 'HAPPY_PATH',
         testLevel: selectedEnvironment?.defaultTestLevel,

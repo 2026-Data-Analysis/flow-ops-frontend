@@ -299,7 +299,6 @@ export interface ScenarioDetailResponse {
 
 export interface ScenarioRecommendationRequest {
   appId: number;
-  environmentId?: number;
   goal: string;
   scenarioType?: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
   testLevel?: TestLevel | string;
