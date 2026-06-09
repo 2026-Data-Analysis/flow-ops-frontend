@@ -993,11 +993,11 @@ export function OrchestratorAgent() {
         user_prompt: formData.user_prompt,
         context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
       });
-      const r = res.data.agent_results.find((x) => x.agent_type === 'incident');
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'incident');
       if (r?.success && r.data) {
-        updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data.summary });
+        updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
       } else {
-        updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '분석 중 오류가 발생했습니다.' });
+        updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '분석 중 오류가 발생했습니다.' });
       }
     } catch (e) {
       updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
@@ -1027,11 +1027,11 @@ export function OrchestratorAgent() {
           },
         },
       });
-      const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
       if (r?.success && r.data) {
-        updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data.summary });
+        updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data?.summary });
       } else {
-        updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? '생성 중 오류가 발생했습니다.' });
+        updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.' });
       }
     } catch (e) {
       updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
@@ -1061,11 +1061,11 @@ export function OrchestratorAgent() {
           },
         },
       });
-      const r = res.data.agent_results.find((x) => x.agent_type === 'scenario');
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'scenario');
       if (r?.success && r.data) {
-        updateTask(taskMsgId, 'scenario-generation', { status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary: res.data.summary });
+        updateTask(taskMsgId, 'scenario-generation', { status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary: res.data?.summary });
       } else {
-        updateTask(taskMsgId, 'scenario-generation', { status: 'error', errorMessage: r?.error_message ?? '생성 중 오류가 발생했습니다.' });
+        updateTask(taskMsgId, 'scenario-generation', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.' });
       }
     } catch (e) {
       updateTask(taskMsgId, 'scenario-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '알 수 없는 오류' });
@@ -1082,8 +1082,8 @@ export function OrchestratorAgent() {
       user_prompt: formData.log_user_prompt,
       context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
     }).then((res) => {
-      const r = res.data.agent_results.find((x) => x.agent_type === 'incident');
-      if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data.summary });
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'incident');
+      if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
       else updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '오류' });
     }).catch((e: unknown) => updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
@@ -1098,8 +1098,8 @@ export function OrchestratorAgent() {
         },
       },
     }).then((res) => {
-      const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
-      if (r?.success && r.data) updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data.summary });
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
+      if (r?.success && r.data) updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data?.summary });
       else updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? '오류' });
     }).catch((e: unknown) => updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
@@ -1142,17 +1142,17 @@ export function OrchestratorAgent() {
           env_name: 'local',
         },
       });
-      const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
+      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
       if (r?.success && r.data) {
         updateTask(taskMsgId, 'test-generation', {
           status: 'done',
           testData: r.data as OrchestratorTestCaseData,
-          summary: res.data.summary,
+          summary: res.data?.summary,
         });
       } else {
         updateTask(taskMsgId, 'test-generation', {
           status: 'error',
-          errorMessage: r?.error_message ?? '생성 중 오류가 발생했습니다.',
+          errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.',
         });
       }
     } catch (e) {
