@@ -68,6 +68,11 @@ interface TestCase {
   requestSpec?: string;
   assertionSpec?: string;
   validationRules?: string[];
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: ApiEndpoint['method'];
+  executionEndpoint?: string;
 }
 
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
@@ -129,6 +134,44 @@ const mapBackendType = (type?: string): TestCase['type'] => {
 const stringifySpec = (value?: unknown) => {
   if (value === undefined || value === null || value === '') return undefined;
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+};
+
+const normalizeNumberList = (value?: unknown) =>
+  Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : undefined;
+
+const normalizeStringList = (value?: unknown) =>
+  Array.isArray(value) ? value.map(String).filter((item) => item.length > 0) : undefined;
+
+const renderStatusMetadata = (test: Pick<TestCase, 'expectedStatusCodes' | 'errorStatusCodes' | 'errorCodes'>) => {
+  const groups = [
+    { label: 'Expected status', values: test.expectedStatusCodes, color: 'text-green-300 border-green-500/20 bg-green-500/10' },
+    { label: 'Error status', values: test.errorStatusCodes, color: 'text-red-300 border-red-500/20 bg-red-500/10' },
+    { label: 'Error codes', values: test.errorCodes, color: 'text-yellow-300 border-yellow-500/20 bg-yellow-500/10' },
+  ];
+  const visibleGroups = groups.filter((group) => group.values !== undefined);
+
+  if (visibleGroups.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {visibleGroups.map((group) => (
+        <div key={group.label} className="rounded-lg border border-[#1f1f28] bg-[#13131a] p-3">
+          <div className="mb-2 text-xs text-gray-500">{group.label}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {group.values && group.values.length > 0 ? (
+              group.values.map((value) => (
+                <span key={`${group.label}-${value}`} className={`rounded border px-2 py-0.5 text-xs font-mono ${group.color}`}>
+                  {value}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-gray-500">None</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -219,6 +262,11 @@ const normalizeTestCase = (testCase: TestCaseResponse): TestCase => ({
   validationRules: Array.isArray(testCase.validationRules)
     ? testCase.validationRules.map(String)
     : undefined,
+  expectedStatusCodes: normalizeNumberList(testCase.expectedStatusCodes),
+  errorStatusCodes: normalizeNumberList(testCase.errorStatusCodes),
+  errorCodes: normalizeStringList(testCase.errorCodes),
+  executionMethod: testCase.executionMethod,
+  executionEndpoint: testCase.executionEndpoint,
 });
 
 const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
@@ -251,6 +299,11 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     validationRules: Array.isArray(draft.validationRules)
       ? draft.validationRules.map(String)
       : undefined,
+    expectedStatusCodes: normalizeNumberList(draft.expectedStatusCodes),
+    errorStatusCodes: normalizeNumberList(draft.errorStatusCodes),
+    errorCodes: normalizeStringList(draft.errorCodes),
+    executionMethod: draft.executionMethod,
+    executionEndpoint: draft.executionEndpoint,
   };
 };
 
@@ -1218,6 +1271,7 @@ export function TestCaseGenerationPage() {
                                       <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
                                       <textarea value={test.expectedResult || ''} onChange={(e) => updateTestCase(test.id, { expectedResult: e.target.value })} rows={5} placeholder={EXPECTED_SPEC_PLACEHOLDER} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none" />
                                     </div>
+                                    {renderStatusMetadata(test)}
                                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                                       <div>
                                         <label className="block text-xs text-gray-500 mb-2">Request Spec</label>
@@ -1512,6 +1566,7 @@ export function TestCaseGenerationPage() {
                                   test.expectedResult && <div className="text-sm text-gray-300">{test.expectedResult}</div>
                                 )}
                               </div>
+                              {renderStatusMetadata(test)}
                               {test.testLevel && (
                               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                                 <div>
@@ -1785,6 +1840,7 @@ export function TestCaseGenerationPage() {
                                 className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                               />
                             </div>
+                            {renderStatusMetadata(test)}
 
                             {test.requestPreview && (
                               <div>
@@ -1933,6 +1989,7 @@ export function TestCaseGenerationPage() {
                             className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500/30 resize-none"
                           />
                         </div>
+                        {renderStatusMetadata(test)}
 
                         {test.requestPreview && (
                           <div>

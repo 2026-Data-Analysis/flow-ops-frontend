@@ -536,7 +536,7 @@ export function ExecutionListPage() {
             </div>
 
             {/* D. Validation / Error */}
-            {(selectedLog.errorMessage || selectedLog.assertions.length > 0) && (
+            {(selectedLog.errorMessage || selectedLog.assertions.length > 0 || selectedLog.status === 'failed') && (
               <div>
                 <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Validation</div>
                 <div className="bg-[#13131a] border border-[#1f1f28] rounded-lg p-4 space-y-3">
@@ -549,6 +549,48 @@ export function ExecutionListPage() {
                           <div className="text-sm text-red-300">{selectedLog.errorMessage}</div>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {selectedLog.status === 'failed' && (
+                    <div className="rounded-lg border border-[#1f1f28] bg-[#0a0a0f] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Sparkles size={16} className="text-purple-400" />
+                          AI Failure Analysis
+                        </div>
+                        {isAnalyzingIncident && (
+                          <span className="flex items-center gap-1.5 text-xs text-orange-400">
+                            <Loader2 size={13} className="animate-spin" />
+                            Analyzing
+                          </span>
+                        )}
+                        {!isAnalyzingIncident && incidentAnalysis && (
+                          <span className="flex items-center gap-1.5 text-xs text-green-400">
+                            <CheckCircle2 size={13} />
+                            Complete
+                          </span>
+                        )}
+                      </div>
+
+                      {isAnalyzingIncident && (
+                        <div className="space-y-2">
+                          <div className="h-4 w-2/3 rounded bg-[#1f1f28] animate-pulse" />
+                          <div className="h-3 w-full rounded bg-[#1f1f28] animate-pulse" />
+                          <div className="h-3 w-4/5 rounded bg-[#1f1f28] animate-pulse" />
+                        </div>
+                      )}
+
+                      {!isAnalyzingIncident && incidentAnalysisError && (
+                        <div className="flex items-center gap-2 text-xs text-red-400">
+                          <AlertCircle size={14} />
+                          {incidentAnalysisError}
+                        </div>
+                      )}
+
+                      {!isAnalyzingIncident && incidentAnalysis?.data?.root_causes?.length > 0 && (
+                        <IncidentRootCauseList causes={incidentAnalysis.data.root_causes} compact />
+                      )}
                     </div>
                   )}
 
@@ -670,62 +712,17 @@ export function ExecutionListPage() {
             </button>
 
             {selectedLog.status === 'failed' && (
-              <>
-                <div className="rounded-lg border border-[#1f1f28] bg-[#13131a] p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <Sparkles size={16} className="text-purple-400" />
-                      AI Failure Analysis
-                    </div>
-                    {isAnalyzingIncident && (
-                      <span className="flex items-center gap-1.5 text-xs text-orange-400">
-                        <Loader2 size={13} className="animate-spin" />
-                        Analyzing
-                      </span>
-                    )}
-                    {!isAnalyzingIncident && incidentAnalysis && (
-                      <span className="flex items-center gap-1.5 text-xs text-green-400">
-                        <CheckCircle2 size={13} />
-                        Complete
-                      </span>
-                    )}
-                  </div>
-
-                  {isAnalyzingIncident && (
-                    <div className="space-y-2">
-                      <div className="h-4 w-2/3 rounded bg-[#1f1f28] animate-pulse" />
-                      <div className="h-3 w-full rounded bg-[#1f1f28] animate-pulse" />
-                      <div className="h-3 w-4/5 rounded bg-[#1f1f28] animate-pulse" />
-                    </div>
-                  )}
-
-                  {!isAnalyzingIncident && incidentAnalysisError && (
-                    <div className="flex items-center gap-2 text-xs text-red-400">
-                      <AlertCircle size={14} />
-                      {incidentAnalysisError}
-                    </div>
-                  )}
-
-                  {!isAnalyzingIncident && incidentAnalysis?.data?.root_causes?.length > 0 && (
-                    <IncidentRootCauseList causes={incidentAnalysis.data.root_causes} compact />
-                  )}
-                </div>
-
-                <button
-                  onClick={() => {
-                    if (incidentAnalysis) {
-                      navigate('/monitoring/response', { state: { incidentAnalysis, executionId: selectedLog.id } });
-                      return;
-                    }
-                    void handleGenerateIncidentReport(true);
-                  }}
-                  disabled={isAnalyzingIncident}
-                  className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 px-4 py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isAnalyzingIncident ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                  {incidentAnalysis ? 'Use in Response Assistant' : 'Generate Incident Report'}
-                </button>
-              </>
+              <button
+                onClick={() => {
+                  if (!incidentAnalysis) return;
+                  navigate('/monitoring/response', { state: { incidentAnalysis, executionId: selectedLog.id } });
+                }}
+                disabled={isAnalyzingIncident || !incidentAnalysis}
+                className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 px-4 py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAnalyzingIncident ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                Generate Response
+              </button>
             )}
           </div>
         </aside>

@@ -15,6 +15,10 @@ export function getDefaultAppId() {
 export interface ApiResponse<T> {
   success: boolean;
   code?: string;
+  errorCode?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  trace_id?: string | null;
   message?: string;
   data: T;
 }
@@ -244,6 +248,11 @@ export interface TestCaseResponse {
   requestSpec?: string;
   assertionSpec?: string;
   validationRules?: string[] | unknown;
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: HttpMethod;
+  executionEndpoint?: string;
   role?: string;
   userRole?: string;
   stateCondition?: string;
@@ -280,19 +289,36 @@ export interface ScenarioDetailResponse {
   lastExecutedAt?: string;
   steps?: Array<{
     id: number;
+    stepId?: string;
+    ref?: string;
     stepOrder: number;
     apiId?: number;
     endpoint?: {
       id?: number;
-      method?: HttpMethod;
+      method?: HttpMethod | string;
       path?: string;
       domainTag?: string;
       controllerName?: string;
     };
     label?: string;
-    requestConfig?: string;
-    extractRules?: string;
-    validationRules?: string;
+    chainedVariables?: Array<{ name?: string; sourceStep?: string; source_step?: string; jsonPath?: string; json_path?: string }> | unknown[];
+    type?: string | null;
+    testLevel?: TestLevel | string | null;
+    userRole?: string | null;
+    stateCondition?: string | null;
+    dataVariant?: string | null;
+    requestSpec?: Record<string, unknown> | string | null;
+    expectedSpec?: Record<string, unknown> | string | null;
+    assertionSpec?: Record<string, unknown> | string | null;
+    duplicate?: boolean;
+    requestConfig?: string | null;
+    extractRules?: string | null;
+    validationRules?: string | null;
+    expectedStatusCodes?: number[];
+    errorStatusCodes?: number[];
+    errorCodes?: string[];
+    executionMethod?: HttpMethod;
+    executionEndpoint?: string;
   }>;
   createdAt?: string;
   updatedAt?: string;
@@ -300,26 +326,42 @@ export interface ScenarioDetailResponse {
 
 export interface ScenarioRecommendationRequest {
   appId: number;
-  environmentId?: number;
-  goal: string;
-  scenarioType?: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
-  testLevel?: TestLevel | string;
-  businessDomain?: string;
+  environmentId?: number | null;
+  goal?: string | null;
+  scenarioType?: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string | null;
+  testLevel?: TestLevel | string | null;
+  businessDomain?: string | null;
   requestedBy: string;
-  apiIds: number[];
+  apiIds?: number[] | null;
+  maxScenarios?: number | null;
+  maxStepsPerScenario?: number | null;
 }
 
 export interface ScenarioRecommendationResponse {
   name: string;
+  description?: string | null;
   type: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
-  recommendationReason?: string;
+  recommendationReason?: string | null;
   steps?: Array<{
+    order?: number;
     stepOrder?: number;
-    apiId?: number | null;
+    apiId?: number | string | null;
+    aiApiId?: string | null;
+    method?: HttpMethod | string | null;
+    path?: string | null;
+    title?: string;
+    description?: string | null;
+    type?: string | null;
+    userRole?: string | null;
+    stateCondition?: string | null;
+    dataVariant?: string | null;
     label?: string;
-    requestConfig?: string;
-    extractRules?: string;
-    validationRules?: string;
+    requestConfig?: string | null;
+    extractRules?: string | null;
+    validationRules?: string | null;
+    requestSpec?: string | null;
+    expectedSpec?: string | null;
+    assertionSpec?: string | null;
   }>;
 }
 
@@ -358,6 +400,11 @@ export interface TestGenerationDraftResponse {
   expectedSpec?: string;
   assertionSpec?: string;
   validationRules?: string[] | unknown;
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: HttpMethod;
+  executionEndpoint?: string;
   duplicate?: boolean;
 }
 
@@ -448,6 +495,11 @@ export interface AiTestCaseDraftResponse {
   requestSpec: string;
   expectedSpec: string;
   assertionSpec: string;
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: HttpMethod;
+  executionEndpoint?: string;
   duplicate: boolean;
   testLevel?: TestLevel;
 }
@@ -665,8 +717,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 async function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
   const response = await promise;
+  if (response == null) {
+    return response as T;
+  }
   if (response.success === false) {
-    throw new Error(response.message || response.code || 'API request failed');
+    throw new Error(response.message || response.error_message || response.errorCode || response.error_code || response.code || 'API request failed');
   }
   return response.data ?? (response as T);
 }
@@ -675,15 +730,20 @@ async function unwrap<T>(promise: Promise<ApiResponse<T>>): Promise<T> {
 
 export interface ScenarioV2Step {
   step_id?: string;
+  stepId?: string;
   ref?: string;
   order?: number;
+  stepOrder?: number;
   chained_variables?: Array<{ name: string; source_step: string; json_path: string }> | unknown;
-  apiId?: string;
+  chainedVariables?: unknown[];
+  apiId?: number | string;
   title?: string;
   name?: string;
+  label?: string;
   description?: string | null;
   type?: string;
   test_case_type?: string | null;
+  testLevel?: TestLevel | string | null;
   userRole?: string | null;
   stateCondition?: string | null;
   dataVariant?: string | null;
@@ -712,6 +772,11 @@ export interface ScenarioV2Step {
   static_params?: unknown;
   expected_status_code?: number | null;
   expected_assertions?: string[] | null;
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: HttpMethod;
+  executionEndpoint?: string;
 }
 
 export interface ScenarioV2Meta {
@@ -730,12 +795,15 @@ export interface ScenarioV2 {
 
 export interface ScenarioV2GenerateRequest {
   appId: number;
+  environmentId: number;
   goal?: string;
   scenarioType?: string;
   testLevel?: string;
   businessDomain?: string;
   requestedBy?: string;
   apiIds?: number[];
+  maxScenarios?: number | null;
+  maxStepsPerScenario?: number | null;
 }
 
 export interface ScenarioV2GenerateResponse {
@@ -1111,6 +1179,18 @@ export const flowOpsApi = {
       stepOrder: number;
       apiId: number;
       label: string;
+      stepId?: string;
+      ref?: string;
+      chainedVariables?: unknown[] | null;
+      type?: string | null;
+      testLevel?: TestLevel | string | null;
+      userRole?: string | null;
+      stateCondition?: string | null;
+      dataVariant?: string | null;
+      requestSpec?: unknown;
+      expectedSpec?: unknown;
+      assertionSpec?: unknown;
+      duplicate?: boolean;
       requestConfig?: string | null;
       extractRules?: string | null;
       validationRules?: string | null;
@@ -1124,14 +1204,18 @@ export const flowOpsApi = {
     ),
 
   recommendScenarios: async (body: ScenarioRecommendationRequest) => {
-    const response = await request<ApiResponse<ScenarioRecommendationResponse[]> | ScenarioRecommendationResponse[]>(
+    const response = await request<(ApiResponse<ScenarioRecommendationResponse[]> & { errorCode?: string | null }) | ScenarioRecommendationResponse[]>(
       '/scenarios/recommend',
       {
         method: 'POST',
         body: JSON.stringify(body),
       },
     );
-    return Array.isArray(response) ? response : response.data;
+    if (Array.isArray(response)) return response;
+    if (response.success === false) {
+      throw new Error(response.message || response.errorCode || response.code || 'Scenario recommendation failed');
+    }
+    return response.data || [];
   },
 
   getScenario: (scenarioId: number) =>
