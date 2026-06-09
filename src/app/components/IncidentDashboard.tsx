@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -11,7 +11,9 @@ import {
   ChevronDown,
   CheckCircle2,
   XCircle,
-  RefreshCw
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { LineChart, Line, PieChart, Pie, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { useNavigate } from 'react-router';
@@ -31,6 +33,18 @@ const statusColors = {
   unresolved: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
 };
 
+interface Incident {
+  id: string;
+  title: string;
+  severity: keyof typeof severityColors;
+  status: keyof typeof statusColors;
+  api: string;
+  time: string;
+  recurring: boolean;
+}
+
+const incidentPageSizeOptions = [5, 10, 20];
+
 export function IncidentDashboard() {
   const navigate = useNavigate();
   const { executionResults } = useTestContext();
@@ -45,6 +59,8 @@ export function IncidentDashboard() {
   const [dashboardTopFailingApis, setDashboardTopFailingApis] = useState<{ id: string; api: string; failures: number; percentage: number }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [incidentPage, setIncidentPage] = useState(1);
+  const [incidentPageSize, setIncidentPageSize] = useState(10);
 
   const handleIncidentClick = (incidentId: string) => {
     navigate(`/monitoring/logs?incident=${incidentId}`);
@@ -128,6 +144,28 @@ export function IncidentDashboard() {
   const totalPassed = latestTrend.passed;
   const totalFailed = latestTrend.failed;
   const successRate = totalTests > 0 ? ((totalPassed / totalTests) * 100).toFixed(1) : '0.0';
+  const filteredIncidents = useMemo(
+    () =>
+      severityFilter === 'all'
+        ? incidents
+        : incidents.filter((incident) => incident.severity === severityFilter),
+    [incidents, severityFilter],
+  );
+  const incidentTotalPages = Math.max(1, Math.ceil(filteredIncidents.length / incidentPageSize));
+  const normalizedIncidentPage = Math.min(incidentPage, incidentTotalPages);
+  const incidentStartIndex = (normalizedIncidentPage - 1) * incidentPageSize;
+  const incidentEndIndex = Math.min(incidentStartIndex + incidentPageSize, filteredIncidents.length);
+  const paginatedIncidents = filteredIncidents.slice(incidentStartIndex, incidentEndIndex);
+
+  useEffect(() => {
+    setIncidentPage(1);
+  }, [severityFilter, incidentPageSize]);
+
+  useEffect(() => {
+    if (incidentPage > incidentTotalPages) {
+      setIncidentPage(incidentTotalPages);
+    }
+  }, [incidentPage, incidentTotalPages]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#060609]">
@@ -459,7 +497,24 @@ export function IncidentDashboard() {
 
         {/* Recent Incidents Table */}
         <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 hover:border-[#2f2f38] transition-all">
-          <h3 className="text-lg font-semibold text-white mb-4">Recent Incidents</h3>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-lg font-semibold text-white">Recent Incidents</h3>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500">
+                {filteredIncidents.length === 0 ? '0 incidents' : `${incidentStartIndex + 1}-${incidentEndIndex} of ${filteredIncidents.length}`}
+              </span>
+              <select
+                value={incidentPageSize}
+                onChange={(event) => setIncidentPageSize(Number(event.target.value))}
+                className="rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs font-medium text-gray-300 transition-colors hover:bg-[#1a1a22]"
+                aria-label="Incidents per page"
+              >
+                {incidentPageSizeOptions.map((size) => (
+                  <option key={size} value={size}>{size} / page</option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -473,7 +528,7 @@ export function IncidentDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {incidents.map((incident) => (
+                {paginatedIncidents.map((incident) => (
                   <tr 
                     key={incident.id} 
                     onClick={() => handleIncidentClick(incident.id)}
@@ -512,13 +567,43 @@ export function IncidentDashboard() {
                     </td>
                   </tr>
                 ))}
+                {!isLoading && paginatedIncidents.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-500">
+                      No incidents found
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
+          </div>
+          <div className="mt-4 flex flex-col gap-3 border-t border-[#1f1f28] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs text-gray-500">
+              Page {normalizedIncidentPage} of {incidentTotalPages}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIncidentPage((page) => Math.max(1, page - 1))}
+                disabled={normalizedIncidentPage === 1}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 text-xs font-medium text-gray-300 transition-colors hover:bg-[#1a1a22] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronLeft size={14} />
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setIncidentPage((page) => Math.min(incidentTotalPages, page + 1))}
+                disabled={normalizedIncidentPage === incidentTotalPages}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 text-xs font-medium text-gray-300 transition-colors hover:bg-[#1a1a22] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-

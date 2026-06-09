@@ -33,6 +33,9 @@ import {
   type RepositoryResponse,
   type ScenarioRecommendationResponse,
   type ScenarioDetailResponse,
+  type ScenarioV2,
+  type ScenarioV2Step,
+  type ScenarioV2GenerateResponse,
 } from '../api/flowOpsClient';
 import { allowMockData } from '../config/runtime';
 import { useTestContext } from '../contexts/TestContext';
@@ -50,20 +53,43 @@ interface ScenarioTemplate {
   isSelected?: boolean;
   apiMappingFailed?: boolean;
   lastUpdated?: string;
+  estimatedRisk?: string;
+  isEdited?: boolean;
 }
 
 interface ScenarioStep {
   id: string;
   order: number;
   apiId?: number;
+  aiApiId?: string;
+  ref?: string;
   label: string;
+  description?: string;
   apiEndpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   requestConfig?: string;
   extractRules?: string;
   extractedVars: ExtractedVariable[];
   validationRules?: string[];
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
+  executionMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
+  executionEndpoint?: string;
   stopOnFail: boolean;
+  duplicate?: boolean;
+  rawV2Step?: ScenarioV2Step;
+  // Test case fields (from PDF spec / draft fields)
+  type?: string;
+  testCaseType?: string;
+  testLevel?: string;
+  userRole?: string;
+  stateCondition?: string;
+  dataVariant?: string;
+  requestSpec?: string;
+  expectedSpec?: string;
+  assertionSpec?: string;
+  chainedVariables?: unknown[];
 }
 
 interface ExtractedVariable {
@@ -105,6 +131,58 @@ const formatRelativeTime = (value?: string) => {
 
 const toScenarioMethod = (method: ApiInventoryResponse['method']): ScenarioStep['method'] =>
   (method === 'TRACE' || method === 'OPTIONS' || method === 'HEAD' ? 'GET' : method) as ScenarioStep['method'];
+
+const normalizeNumberList = (value?: unknown) =>
+  Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : undefined;
+
+const normalizeStringList = (value?: unknown) =>
+  Array.isArray(value) ? value.map(String).filter((item) => item.length > 0) : undefined;
+
+const normalizeChainedVariables = (value?: unknown): ExtractedVariable[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const variable = item as any;
+    const name = variable?.name || variable?.sourceStep || variable?.source_step || `var_${index + 1}`;
+    const jsonPath = variable?.jsonPath || variable?.json_path || variable?.path || stringifySpec(item) || '';
+    return {
+      id: `chain-${index + 1}-${name}`,
+      name: String(name),
+      jsonPath: String(jsonPath),
+    };
+  });
+};
+
+const renderStatusMetadata = (step: Pick<ScenarioStep, 'expectedStatusCodes' | 'errorStatusCodes' | 'errorCodes'>) => {
+  const groups = [
+    { label: 'Expected status', values: step.expectedStatusCodes, color: 'text-green-300 border-green-500/20 bg-green-500/10' },
+    { label: 'Error status', values: step.errorStatusCodes, color: 'text-red-300 border-red-500/20 bg-red-500/10' },
+    { label: 'Error codes', values: step.errorCodes, color: 'text-yellow-300 border-yellow-500/20 bg-yellow-500/10' },
+  ];
+  const visibleGroups = groups.filter((group) => group.values !== undefined);
+
+  if (visibleGroups.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {visibleGroups.map((group) => (
+        <div key={group.label} className="rounded-lg border border-[#1f1f28] bg-[#13131a] p-3">
+          <div className="mb-2 text-xs text-gray-500">{group.label}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {group.values && group.values.length > 0 ? (
+              group.values.map((value) => (
+                <span key={`${group.label}-${value}`} className={`rounded border px-2 py-0.5 text-xs font-mono ${group.color}`}>
+                  {value}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-gray-500">None</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 const createStep = (
   id: string,
@@ -148,21 +226,43 @@ const normalizeScenarioDetail = (scenario: ScenarioDetailResponse, lastExecutedA
   recommendationReason: 'Saved scenario',
   reasonType: 'coverage',
   lastUpdated: formatRelativeTime(lastExecutedAt || scenario.lastExecutedAt),
-  steps: (scenario.steps || []).filter(isPresent).map((step, index) =>
-    createStep(
-      step.id ? String(step.id) : `${scenario.id}-step-${index + 1}`,
+  steps: (scenario.steps || []).filter(isPresent).map((step, index) => {
+    const requestSpec = stringifySpec(step.requestSpec ?? step.requestConfig);
+    const expectedSpec = stringifySpec(step.expectedSpec);
+    const assertionSpec = stringifySpec(step.assertionSpec ?? step.validationRules);
+    const chainedVariables = normalizeChainedVariables(step.chainedVariables);
+
+    return createStep(
+      step.id ? String(step.id) : step.stepId || `${scenario.id}-step-${index + 1}`,
       step.stepOrder || index + 1,
-      step.label || step.endpoint?.path || `Step ${index + 1}`,
-      toScenarioMethod(step.endpoint?.method || 'GET'),
-      step.endpoint?.path || (step.apiId ? `API #${step.apiId}` : 'Unlinked API'),
+      step.label || step.executionEndpoint || step.endpoint?.path || `Step ${index + 1}`,
+      toScenarioMethod((step.executionMethod || step.endpoint?.method || 'GET') as ApiInventoryResponse['method']),
+      step.executionEndpoint || step.endpoint?.path || (step.apiId ? `API #${step.apiId}` : 'Unlinked API'),
       {
         apiId: step.apiId,
-        requestConfig: step.requestConfig,
-        extractRules: step.extractRules,
+        ref: step.ref,
+        requestConfig: requestSpec,
+        extractRules: step.extractRules || (step.chainedVariables ? stringifySpec(step.chainedVariables) : undefined),
         validationRules: step.validationRules ? [step.validationRules] : [],
+        extractedVars: chainedVariables,
+        expectedStatusCodes: normalizeNumberList(step.expectedStatusCodes),
+        errorStatusCodes: normalizeNumberList(step.errorStatusCodes),
+        errorCodes: normalizeStringList(step.errorCodes),
+        executionMethod: step.executionMethod,
+        executionEndpoint: step.executionEndpoint,
+        duplicate: step.duplicate,
+        type: step.type || undefined,
+        testLevel: step.testLevel || undefined,
+        userRole: step.userRole || undefined,
+        stateCondition: step.stateCondition || undefined,
+        dataVariant: step.dataVariant || undefined,
+        requestSpec,
+        expectedSpec,
+        assertionSpec,
+        chainedVariables: step.chainedVariables,
       },
-    ),
-  ),
+    );
+  }),
 });
 
 const normalizeAiScenario = (
@@ -221,26 +321,42 @@ const normalizeScenarioRecommendation = (
 ): ScenarioTemplate => {
   const id = `${idPrefix}-${crypto.randomUUID()}`;
   const apiById = new Map(items.filter(isPresent).filter(hasNumericId).map((api) => [api.id, api]));
-  const steps = (scenario.steps || []).filter(isPresent).map((step, index) =>
-    createStep(
+  const apiByPath = new Map(items.filter(isPresent).map((api) => [api.endpointPath, api]));
+  const steps = (scenario.steps || []).filter(isPresent).map((step, index) => {
+    const numericApiId = typeof step.apiId === 'number' ? step.apiId : Number(step.apiId);
+    const linkedApi = Number.isFinite(numericApiId) ? apiById.get(numericApiId) : undefined;
+    const pathLinkedApi = step.path ? apiByPath.get(step.path) : undefined;
+    const api = linkedApi || pathLinkedApi;
+    const rawMethod = (step.method || api?.method || 'GET') as ApiInventoryResponse['method'];
+
+    return createStep(
       `${id}-step-${index + 1}`,
-      step.stepOrder || index + 1,
-      step.label || `Step ${index + 1}`,
-      toScenarioMethod(apiById.get(Number(step.apiId))?.method || 'GET'),
-      apiById.get(Number(step.apiId))?.endpointPath || (step.apiId ? `API #${step.apiId}` : 'API mapping failed'),
+      step.order || step.stepOrder || index + 1,
+      step.title || step.label || step.path || `Step ${index + 1}`,
+      toScenarioMethod(rawMethod),
+      step.path || api?.endpointPath || (step.apiId ? `API #${step.apiId}` : 'API mapping failed'),
       {
-        apiId: step.apiId ?? undefined,
-        requestConfig: step.requestConfig,
+        apiId: api ? (hasNumericId(api) ? api.id : undefined) : Number.isFinite(numericApiId) ? numericApiId : undefined,
+        aiApiId: step.aiApiId || undefined,
+        description: step.description || undefined,
+        requestConfig: stringifySpec(step.requestSpec ?? step.requestConfig),
         extractRules: step.extractRules,
         validationRules: step.validationRules ? [step.validationRules] : [],
+        type: step.type || undefined,
+        userRole: step.userRole || undefined,
+        stateCondition: step.stateCondition || undefined,
+        dataVariant: step.dataVariant || undefined,
+        requestSpec: stringifySpec(step.requestSpec ?? step.requestConfig),
+        expectedSpec: stringifySpec(step.expectedSpec),
+        assertionSpec: stringifySpec(step.assertionSpec),
       },
-    ),
-  );
+    );
+  });
 
   return {
     id,
     title: scenario.name,
-    description: scenario.recommendationReason || 'AI-recommended scenario',
+    description: scenario.description || scenario.recommendationReason || 'AI-recommended scenario',
     type:
       scenario.type === 'EDGE_CASE'
         ? 'edge-case'
@@ -264,6 +380,95 @@ const toAiScenarioApis = (items: ApiInventoryResponse[]) =>
     request_body_schema: api.requestSchema && typeof api.requestSchema === 'object' ? api.requestSchema as object : undefined,
     response_schema: api.responseSchema && typeof api.responseSchema === 'object' ? api.responseSchema as object : undefined,
   }));
+
+const toScenarioV2ApiInventory = (projectId: string, items: ApiInventoryResponse[]) => ({
+  project_id: projectId,
+  endpoints: items.filter(isPresent).map((api) => ({
+    endpoint_id: `${api.method}:${api.endpointPath}`,
+    path: api.endpointPath,
+    method: api.method,
+    summary: api.summary,
+    request_body_schema: api.requestSchema && typeof api.requestSchema === 'object' ? api.requestSchema as object : undefined,
+    response_schema: api.responseSchema && typeof api.responseSchema === 'object' ? api.responseSchema as object : undefined,
+    auth: api.authRequired ? { type: 'bearer' } : { type: 'none' },
+    tags: api.domainTag ? [api.domainTag] : undefined,
+  })),
+});
+
+const normalizeV2Scenario = (
+  scenario: ScenarioV2,
+  items: ApiInventoryResponse[],
+  idPrefix = 'v2',
+): ScenarioTemplate => {
+  const apiByEndpointId = new Map(items.filter(isPresent).map((api) => [`${api.method}:${api.endpointPath}`, api]));
+  const apiById = new Map(items.filter(isPresent).filter(hasNumericId).map((api) => [api.id, api]));
+  const apiByPath = new Map(items.filter(isPresent).map((api) => [api.endpointPath, api]));
+
+  const steps = (scenario.steps || []).filter(isPresent).map((step, index) => {
+    const numericApiId = typeof step.apiId === 'number' ? step.apiId : Number(step.apiId);
+    const api =
+      (Number.isFinite(numericApiId) ? apiById.get(numericApiId) : undefined) ||
+      apiByEndpointId.get(String(step.apiId)) ||
+      apiByPath.get(String(step.apiId).split(':').slice(1).join(':') || '');
+    const method = (step.requestSpec?.method || api?.method || 'GET') as ScenarioStep['method'];
+    const chainedVariables = step.chainedVariables ?? step.chained_variables;
+
+    const safeMethod = (method === 'TRACE' || method === 'OPTIONS' || method === 'HEAD' ? 'GET' : method) as ScenarioStep['method'];
+    return createStep(
+      `${idPrefix}-${scenario.scenario_id}-step-${index + 1}`,
+      step.stepOrder || step.order || index + 1,
+      step.label || step.title || step.name || String(step.apiId || `Step ${index + 1}`),
+      safeMethod,
+      api?.endpointPath || String(step.apiId || 'Unlinked API'),
+      {
+        apiId: api ? (hasNumericId(api) ? api.id : undefined) : Number.isFinite(numericApiId) ? numericApiId : undefined,
+        ref: step.ref,
+        requestConfig: step.requestSpec ? JSON.stringify(step.requestSpec) : undefined,
+        extractRules: Array.isArray(chainedVariables) && chainedVariables.length
+          ? JSON.stringify(chainedVariables)
+          : undefined,
+        extractedVars: normalizeChainedVariables(chainedVariables),
+        validationRules: [],
+        duplicate: step.duplicate,
+        rawV2Step: step,
+        type: step.type || undefined,
+        testCaseType: step.test_case_type || undefined,
+        testLevel: step.testLevel || undefined,
+        userRole: step.userRole || undefined,
+        stateCondition: step.stateCondition || undefined,
+        dataVariant: step.dataVariant || undefined,
+        requestSpec: step.requestSpec ? JSON.stringify(step.requestSpec, null, 2) : undefined,
+        expectedSpec: step.expectedSpec ? JSON.stringify(step.expectedSpec, null, 2) : undefined,
+        assertionSpec: step.assertionSpec ? JSON.stringify(step.assertionSpec, null, 2) : undefined,
+        chainedVariables: Array.isArray(chainedVariables) ? chainedVariables : undefined,
+        expectedStatusCodes: normalizeNumberList(step.expectedStatusCodes),
+        errorStatusCodes: normalizeNumberList(step.errorStatusCodes),
+        errorCodes: normalizeStringList(step.errorCodes),
+        executionMethod: step.executionMethod,
+        executionEndpoint: step.executionEndpoint,
+      },
+    );
+  });
+
+  const type = scenario.steps?.some((s) => s.type === 'EDGE_CASE' || s.type === 'VALIDATION')
+    ? 'edge-case'
+    : scenario.steps?.some((s) => s.type === 'FAILURE_HANDLING')
+    ? 'failure-recovery'
+    : 'happy-path';
+
+  return {
+    id: `${idPrefix}-${scenario.scenario_id}`,
+    title: scenario.name,
+    description: scenario.description || scenario.meta?.rationale || 'AI-generated scenario',
+    type,
+    reason: scenario.meta?.rationale || 'Generated by AI from selected API inventory',
+    recommendationReason: scenario.meta?.rationale || 'Generated by AI from selected API inventory',
+    reasonType: type === 'edge-case' ? 'risk' : 'coverage',
+    lastUpdated: 'Just now',
+    estimatedRisk: scenario.meta?.estimated_risk,
+    steps,
+  };
+};
 
 const sampleForSchema = (schema: any): any => {
   if (!schema) return undefined;
@@ -303,10 +508,49 @@ const toPayloadText = (value: unknown) => {
 
 const stringifyStepRules = (rules?: string[]) => (rules && rules.length > 0 ? rules.join('\n') : undefined);
 
+const stringifySpec = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+};
+
+const parseEditableSpec = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const toNullableString = (value: string | undefined) => {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+};
+
 const hasNumericId = <T extends { id?: unknown }>(item: T | null | undefined): item is T & { id: number } =>
   typeof item?.id === 'number';
 
 const isPresent = <T,>(item: T | null | undefined): item is T => item !== null && item !== undefined;
+
+const normalizeScenarioGenerateResponse = (raw: unknown): ScenarioV2GenerateResponse => {
+  const value = raw as any;
+  const nested = value?.data;
+
+  if (nested?.success !== undefined || nested?.error_code || nested?.error_message) {
+    return nested as ScenarioV2GenerateResponse;
+  }
+
+  if (value?.success !== undefined || value?.error_code || value?.error_message) {
+    return value as ScenarioV2GenerateResponse;
+  }
+
+  if (nested?.scenarios) {
+    return { success: true, data: nested };
+  }
+
+  return { success: false, error_message: 'Scenario generator returned an unexpected response.' };
+};
 
 type RecommendationStatus = 'idle' | 'waiting_inventory' | 'requesting' | 'empty' | 'error';
 interface RecommendationDebugInfo {
@@ -396,6 +640,9 @@ export function ScenarioBuilderPage() {
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [savingStepIds, setSavingStepIds] = useState<Set<string>>(new Set());
+  const [savedStepIds, setSavedStepIds] = useState<Set<string>>(new Set());
+  const [saveToast, setSaveToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const selectedScenario = selectedScenarioId ? scenarios.find(s => s.id === selectedScenarioId) : null;
 
@@ -566,6 +813,79 @@ export function ScenarioBuilderPage() {
     (scenario) => scenario.isSelected && scenario.steps.some((step) => !step.apiId),
   );
 
+  const buildRecommendationRequest = (
+    goal: string | null,
+    apis = inventoryApis,
+    options: { maxScenarios?: number | null; maxStepsPerScenario?: number | null } = {},
+  ) => {
+    const businessDomains = Array.from(
+      new Set(apis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
+    );
+
+    return {
+      appId: mainApplicationId ?? activeApplication.appId,
+      environmentId: selectedEnvironment?.id ?? null,
+      goal: toNullableString(goal ?? undefined),
+      scenarioType: null,
+      testLevel: selectedEnvironment?.defaultTestLevel ?? null,
+      businessDomain: businessDomains.length === 1 ? businessDomains[0] : null,
+      requestedBy: DEFAULT_REQUESTER,
+      apiIds: apis.filter(hasNumericId).map((api) => api.id),
+      maxScenarios: options.maxScenarios ?? null,
+      maxStepsPerScenario: options.maxStepsPerScenario ?? null,
+    };
+  };
+
+  const generateV2Scenarios = async (
+    goal: string | null,
+    apis = inventoryApis,
+    options: { maxScenarios?: number | null; maxStepsPerScenario?: number | null } = {},
+  ) => {
+    if (!selectedEnvironment?.id) {
+      throw new Error('시나리오 생성에는 environmentId가 필요합니다. 환경을 먼저 선택해주세요.');
+    }
+
+    const response = normalizeScenarioGenerateResponse(
+      await flowOpsApi.generateScenarioV2({
+        appId: mainApplicationId ?? activeApplication.appId,
+        environmentId: selectedEnvironment.id,
+        apiIds: apis.filter(hasNumericId).map((api) => api.id),
+        goal: goal?.trim() || undefined,
+        maxScenarios: options.maxScenarios ?? null,
+        maxStepsPerScenario: options.maxStepsPerScenario ?? null,
+      }),
+    );
+
+    if (response.success === false) {
+      throw new Error(response.error_message || response.error_code || 'Scenario V2 generation failed');
+    }
+
+    return response.data?.scenarios || [];
+  };
+
+  const toScenarioV2SaveStep = (step: ScenarioStep, index: number) => {
+    const raw = step.rawV2Step;
+    const chainedVariables = raw?.chainedVariables ?? raw?.chained_variables ?? step.chainedVariables ?? [];
+
+    return {
+      stepOrder: raw?.stepOrder || raw?.order || step.order || index + 1,
+      apiId: step.apiId as number,
+      label: step.label,
+      stepId: raw?.stepId || raw?.step_id || undefined,
+      ref: step.ref || raw?.ref || undefined,
+      chainedVariables: Array.isArray(chainedVariables) ? chainedVariables : [],
+      type: step.type || raw?.type || null,
+      testLevel: step.testLevel || raw?.testLevel || null,
+      userRole: step.userRole || raw?.userRole || null,
+      stateCondition: step.stateCondition || raw?.stateCondition || null,
+      dataVariant: step.dataVariant || raw?.dataVariant || null,
+      requestSpec: raw?.requestSpec ?? parseEditableSpec(step.requestSpec) ?? parseEditableSpec(step.requestConfig) ?? {},
+      expectedSpec: raw?.expectedSpec ?? parseEditableSpec(step.expectedSpec) ?? {},
+      assertionSpec: raw?.assertionSpec ?? parseEditableSpec(step.assertionSpec) ?? {},
+      duplicate: step.duplicate ?? raw?.duplicate ?? false,
+    };
+  };
+
   const toggleScenarioSelection = (scenarioId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     setSelectedScenarioIds(prev =>
@@ -584,7 +904,7 @@ export function ScenarioBuilderPage() {
 
     setRecommendationDebug({
       phase: 'start',
-      recommendEndpoint: '/scenarios/recommend',
+      recommendEndpoint: '/scenarios/v2/generate',
       appId: mainApplicationId ?? activeApplication.appId,
       environmentId: selectedEnvironment?.id,
       apiIds: [],
@@ -622,30 +942,18 @@ export function ScenarioBuilderPage() {
         ...prev,
         phase: 'inventory_loaded',
         inventoryEndpoint: `/projects/${project.id}/api-inventories`,
-        recommendEndpoint: '/scenarios/recommend',
+        recommendEndpoint: '/scenarios/v2/generate',
         appId: mainApplicationId ?? activeApplication.appId,
         repositoryId: inventoryParams.repositoryId as number | undefined,
         branchName: inventoryParams.branchName as string | undefined,
         apiIds: recommendationApis.filter(hasNumericId).map((api) => api.id),
       }));
 
-      const businessDomains = Array.from(
-        new Set(recommendationApis.map((api) => api.domainTag).filter((domain): domain is string => Boolean(domain))),
-      );
-
       setRecommendationStatus('requesting');
       setRecommendationDebug((prev) => ({ ...prev, phase: 'requesting_recommendation' }));
-      const recommendations = await flowOpsApi.recommendScenarios({
-        appId: mainApplicationId ?? activeApplication.appId,
-        goal: 'Recommend high-value multi-step API scenarios from the current inventory.',
-        scenarioType: 'HAPPY_PATH',
-        testLevel: selectedEnvironment?.defaultTestLevel,
-        businessDomain: businessDomains.join(', ') || undefined,
-        requestedBy: DEFAULT_REQUESTER,
-        apiIds: recommendationApis.filter(hasNumericId).map((api) => api.id),
-      });
+      const recommendations = await generateV2Scenarios(null, recommendationApis, { maxScenarios: 3 });
 
-      setAiScenarios(recommendations.filter(isPresent).map((scenario) => normalizeScenarioRecommendation(scenario, recommendationApis)));
+      setAiScenarios(recommendations.filter(isPresent).map((scenario) => normalizeV2Scenario(scenario, recommendationApis)));
       setRecommendationStatus(recommendations.length > 0 ? 'idle' : 'empty');
       setApiError(null);
     } catch (error) {
@@ -699,14 +1007,7 @@ export function ScenarioBuilderPage() {
             type: toBackendScenarioType(scenario.type),
             recommendationReason: scenario.recommendationReason,
             source: 'AI',
-            steps: scenario.steps.filter(isPresent).map((step, index) => ({
-              stepOrder: step.order || index + 1,
-              apiId: step.apiId as number,
-              label: step.label,
-              requestConfig: toPayloadText(step.requestConfig),
-              extractRules: toPayloadText(step.extractRules),
-              validationRules: toPayloadText(stringifyStepRules(step.validationRules)),
-            })),
+            steps: scenario.steps.filter(isPresent).map(toScenarioV2SaveStep),
           }),
         })),
       );
@@ -775,57 +1076,29 @@ export function ScenarioBuilderPage() {
   const handleAiCustomScenarioCreate = async () => {
     if (!customScenarioInput.trim()) return;
     setIsRecommendationLoading(true);
-    const selectedEnvironment =
-      selectedEnvironmentId === 'all'
-        ? null
-        : environments.find((environment) => String(environment.id) === selectedEnvironmentId) || null;
+    setRecommendationStatus('requesting');
+    setApiError(null);
 
     try {
-      const scenario = await flowOpsApi.buildAiScenario({
-        agent: 'SCENARIO_BUILDER',
-        requestId: crypto.randomUUID(),
-        requestedBy: DEFAULT_REQUESTER,
-        project: { projectId: projectId || undefined, appId: getDefaultAppId() },
-        environment: selectedEnvironment
-          ? {
-              environmentId: selectedEnvironment.id,
-              name: selectedEnvironment.name,
-              baseUrl: selectedEnvironment.baseUrl,
-              defaultTestLevel: selectedEnvironment.defaultTestLevel,
-            }
-          : undefined,
-        metadata: { createdAt: new Date().toISOString(), source: 'MANUAL', language: 'ko' },
-        scenarioContext: {
-          appId: getDefaultAppId(),
-          user_intent: customScenarioInput.trim(),
-          mode: 'NATURAL_LANGUAGE',
-          testLevel: selectedEnvironment?.defaultTestLevel,
-        },
-        apis: toAiScenarioApis(inventoryApis),
-        existingScenarios: scenarios.map((item) => ({ name: item.title, type: item.type })),
+      const recommendations = await generateV2Scenarios(customScenarioInput.trim(), inventoryApis, {
+        maxScenarios: 2,
+        maxStepsPerScenario: 5,
       });
-      const newScenario = normalizeAiScenario(scenario, inventoryApis, 'custom');
-      setScenarios([...scenarios, newScenario]);
-      setSelectedScenarioId(newScenario.id);
-      setApiError(null);
+
+      const newScenarios = recommendations
+        .filter(isPresent)
+        .map((scenario) => ({
+          ...normalizeV2Scenario(scenario, inventoryApis, 'custom'),
+          isSelected: true,
+        }));
+
+      setAiScenarios(newScenarios);
+      setShowAiModal(true);
+      setRecommendationStatus(newScenarios.length > 0 ? 'idle' : 'empty');
+      setApiError(newScenarios.length > 0 ? null : 'No custom scenarios returned for the current prompt.');
     } catch (error) {
-      if (allowMockData) {
-        const newScenario: ScenarioTemplate = {
-          id: `custom-${Date.now()}`,
-          title: 'Custom Scenario',
-          description: customScenarioInput,
-          type: 'happy-path',
-          reason: 'Custom user-defined scenario',
-          reasonType: 'coverage',
-          lastUpdated: 'Just now',
-          steps: [],
-        };
-        setScenarios([...scenarios, newScenario]);
-        setSelectedScenarioId(newScenario.id);
-        setApiError(error instanceof Error ? `${error.message} Created a local scenario draft.` : 'Failed to generate custom scenario.');
-      } else {
-        setApiError(error instanceof Error ? error.message : 'Failed to generate custom scenario.');
-      }
+      setRecommendationStatus('error');
+      setApiError(error instanceof Error ? error.message : 'Failed to generate custom scenario.');
     } finally {
       setShowCustomPromptModal(false);
       setCustomScenarioInput('');
@@ -848,6 +1121,48 @@ export function ScenarioBuilderPage() {
     setSelectedScenarioId(newScenario.id);
   };
 
+  const handleSaveStepAsTestCase = async (step: ScenarioStep) => {
+    const appId = mainApplicationId ?? getDefaultAppId();
+    const v2 = step.rawV2Step;
+    const stepName = v2?.title || v2?.name || step.label || step.apiEndpoint || 'Scenario step test case';
+
+    setSaveToast({ type: 'info', message: `Saving "${stepName}" to test cases...` });
+    setSavingStepIds((prev) => new Set(prev).add(step.id));
+    try {
+      const apiInventoryItem = v2?.apiId
+        ? inventoryApis.find((api) => `${api.method}:${api.endpointPath}` === v2.apiId)
+        : inventoryApis.find((api) => api.method === step.method && api.endpointPath === step.apiEndpoint);
+      await flowOpsApi.createTestCase(appId, {
+        apiInventoryId: apiInventoryItem ? (hasNumericId(apiInventoryItem) ? apiInventoryItem.id : undefined) : undefined,
+        name: stepName,
+        title: stepName,
+        description: v2?.description || undefined,
+        type: v2?.type || 'POSITIVE',
+        userRole: v2?.userRole || step.userRole || undefined,
+        stateCondition: v2?.stateCondition || step.stateCondition || undefined,
+        dataVariant: v2?.dataVariant || step.dataVariant || undefined,
+        requestSpec: v2?.requestSpec ? JSON.stringify(v2.requestSpec) : step.requestConfig || undefined,
+        expectedSpec: v2?.expectedSpec ? JSON.stringify(v2.expectedSpec) : step.expectedSpec || undefined,
+        assertionSpec: v2?.assertionSpec ? JSON.stringify(v2.assertionSpec) : step.assertionSpec || undefined,
+        active: true,
+      });
+      setSavedStepIds((prev) => new Set(prev).add(step.id));
+      setSaveToast({ type: 'success', message: `"${stepName}" saved to test cases.` });
+      setTimeout(() => setSaveToast(null), 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save test case.';
+      setApiError(msg);
+      setSaveToast({ type: 'error', message: msg });
+      setTimeout(() => setSaveToast(null), 4000);
+    } finally {
+      setSavingStepIds((prev) => {
+        const next = new Set(prev);
+        next.delete(step.id);
+        return next;
+      });
+    }
+  };
+
   const runScenariosDirectly = async (ids: string[]) => {
     const numericIds = ids.map(Number).filter(Number.isFinite);
     if (numericIds.length === 0) {
@@ -865,7 +1180,7 @@ export function ScenarioBuilderPage() {
       });
       navigate('/monitoring/history');
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+      setRunError(error instanceof Error ? error.message : 'Failed to run scenario.');
     } finally {
       setIsRunning(false);
     }
@@ -882,24 +1197,10 @@ export function ScenarioBuilderPage() {
   };
 
   const handleDeleteSelected = async () => {
-    if (selectedScenarioIds.length === 0) return;
-    const backendIds = selectedScenarioIds.map(Number).filter(Number.isFinite);
-    await Promise.all(backendIds.map((id) => flowOpsApi.deleteScenario(id).catch(() => null)));
-    setScenarios((prev) => prev.filter((s) => !selectedScenarioIds.includes(s.id)));
-    setSelectedScenarioIds([]);
-    if (selectedScenarioId && selectedScenarioIds.includes(selectedScenarioId)) {
-      setSelectedScenarioId(null);
-    }
-  };
-
-  const handleDeleteSelected = async () => {
     if (selectedScenarioIds.length === 0 || isDeletingScenarios) return;
-    if (!window.confirm(`Delete ${selectedScenarioIds.length} selected scenario${selectedScenarioIds.length !== 1 ? 's' : ''}?`)) {
-      return;
-    }
-
     setIsDeletingScenarios(true);
     setApiError(null);
+    setSaveToast(null);
 
     const backendIds = selectedScenarioIds
       .map((id) => Number(id))
@@ -937,6 +1238,14 @@ export function ScenarioBuilderPage() {
       }
 
       setSelectedScenarioIds([]);
+      if (backendIds.length > 0) {
+        await loadSavedScenarios();
+      }
+      setSaveToast({
+        type: 'success',
+        message: `${deletedIds.size} scenario${deletedIds.size !== 1 ? 's' : ''} deleted.`,
+      });
+      setTimeout(() => setSaveToast(null), 3000);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Failed to delete selected scenarios.');
     } finally {
@@ -947,7 +1256,7 @@ export function ScenarioBuilderPage() {
   const updateScenario = (updates: Partial<ScenarioTemplate>) => {
     if (!selectedScenarioId) return;
     setScenarios(prev =>
-      prev.filter(isPresent).map(s => s.id === selectedScenarioId ? { ...s, ...updates } : s)
+      prev.filter(isPresent).map(s => s.id === selectedScenarioId ? { ...s, ...updates, isEdited: true } : s)
     );
   };
 
@@ -1013,6 +1322,25 @@ export function ScenarioBuilderPage() {
 
   return (
     <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
+      {/* Save Toast */}
+      {saveToast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border px-5 py-3 shadow-2xl text-sm font-medium transition-all ${
+          saveToast.type === 'success'
+            ? 'bg-[#0d1f14] border-green-500/30 text-green-300'
+            : saveToast.type === 'error'
+            ? 'bg-[#1f0d0d] border-red-500/30 text-red-300'
+            : 'bg-[#101827] border-blue-500/30 text-blue-200'
+        }`}>
+          {saveToast.type === 'success' ? (
+            <Check size={16} className="text-green-400 flex-shrink-0" />
+          ) : saveToast.type === 'info' ? (
+            <Loader2 size={16} className="animate-spin text-blue-300 flex-shrink-0" />
+          ) : (
+            <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
+          )}
+          {saveToast.message}
+        </div>
+      )}
       {/* Custom Prompt Modal */}
       {showCustomPromptModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -1024,6 +1352,7 @@ export function ScenarioBuilderPage() {
               </div>
               <button
                 onClick={() => setShowCustomPromptModal(false)}
+                disabled={isRecommendationLoading}
                 className="p-2 hover:bg-[#1f1f28] rounded-lg text-gray-400 hover:text-white transition-colors"
               >
                 <X size={20} />
@@ -1043,20 +1372,20 @@ export function ScenarioBuilderPage() {
               <div className="flex justify-end gap-3">
                 <button
                   onClick={() => setShowCustomPromptModal(false)}
+                  disabled={isRecommendationLoading}
                   className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => {
-                    setShowCustomPromptModal(false);
                     void handleAiCustomScenarioCreate();
                   }}
-                  disabled={!customScenarioInput.trim()}
+                  disabled={!customScenarioInput.trim() || isRecommendationLoading}
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                 >
-                  <Sparkles size={16} />
-                  Generate Custom Scenario
+                  {isRecommendationLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  {isRecommendationLoading ? 'Generating...' : 'Generate Custom Scenario'}
                 </button>
               </div>
             </div>
@@ -1126,7 +1455,7 @@ export function ScenarioBuilderPage() {
                       <div className="mb-2 font-semibold text-red-100">Temporary request debug</div>
                       <div>phase: {recommendationDebug.phase || 'unknown'}</div>
                       <div>inventory: {recommendationDebug.inventoryEndpoint || 'not started'}</div>
-                      <div>recommend: {recommendationDebug.recommendEndpoint || '/scenarios/recommend'}</div>
+                      <div>recommend: {recommendationDebug.recommendEndpoint || '/scenarios/v2/generate'}</div>
                       <div>appId: {recommendationDebug.appId ?? 'none'}</div>
                       <div>environmentId: {recommendationDebug.environmentId ?? 'none'}</div>
                       <div>repositoryId: {recommendationDebug.repositoryId ?? 'none'}</div>
@@ -1228,7 +1557,7 @@ export function ScenarioBuilderPage() {
             {isRunning && (
               <div className="flex items-center gap-2 text-blue-400 text-sm">
                 <Loader2 size={16} className="animate-spin" />
-                실행 중...
+                Running...
               </div>
             )}
             {runError && (
@@ -1237,18 +1566,19 @@ export function ScenarioBuilderPage() {
             {selectedScenarioIds.length > 0 && !isRunning && (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleDeleteSelected}
-                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-4 py-2.5 rounded-lg transition-colors text-sm"
+                  onClick={handleRunSelected}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg transition-colors text-sm font-medium"
                 >
-                  <Trash2 size={16} />
-                  Delete ({selectedScenarioIds.length})
+                  <Play size={16} />
+                  Run ({selectedScenarioIds.length})
                 </button>
                 <button
-                  onClick={handleRunSelected}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-colors"
+                  onClick={handleDeleteSelected}
+                  disabled={isDeletingScenarios}
+                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-5 py-2.5 rounded-lg transition-colors text-sm disabled:opacity-50"
                 >
-                  <Play size={18} />
-                  Run Selected ({selectedScenarioIds.length})
+                  {isDeletingScenarios ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                  Delete ({selectedScenarioIds.length})
                 </button>
               </div>
             )}
@@ -1281,6 +1611,12 @@ export function ScenarioBuilderPage() {
             </button>
           </div>
 
+          {apiError && (
+            <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {apiError}
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -1292,15 +1628,65 @@ export function ScenarioBuilderPage() {
               className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/30"
             />
           </div>
+          {!isLoading && filteredScenarios.length > 0 && (
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleIds = filteredScenarios.map((s) => s.id);
+                  const allSelected = visibleIds.every((id) => selectedScenarioIds.includes(id));
+                  setSelectedScenarioIds((prev) =>
+                    allSelected
+                      ? prev.filter((id) => !visibleIds.includes(id))
+                      : Array.from(new Set([...prev, ...visibleIds])),
+                  );
+                }}
+                className="flex items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-2 text-xs text-gray-400 transition-all hover:border-blue-500/30 hover:text-white"
+              >
+                <span className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                  filteredScenarios.every((s) => selectedScenarioIds.includes(s.id))
+                    ? 'bg-blue-500 border-blue-500'
+                    : 'border-gray-500 hover:border-blue-500'
+                }`}>
+                  {filteredScenarios.every((s) => selectedScenarioIds.includes(s.id)) && (
+                    <Check size={14} className="text-white" />
+                  )}
+                </span>
+                Select visible
+              </button>
+              <span className="text-xs text-gray-500">
+                {filteredScenarios.length} of {scenarios.filter(isPresent).length} scenarios
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Scenario List */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="space-y-2">
             {isLoading ? (
-              <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f]">
-                <Loader2 size={32} className="mb-3 text-blue-400 animate-spin" />
-                <p className="text-gray-500 text-sm">시나리오 목록을 불러오는 중...</p>
+              <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
+                  <Loader2 size={24} className="animate-spin text-blue-400" />
+                </div>
+                <h3 className="mb-2 text-white font-semibold">Loading Scenarios</h3>
+                <p className="mb-8 max-w-md text-center text-sm text-gray-500">
+                  Fetching your saved scenarios...
+                </p>
+                <div className="w-full max-w-3xl space-y-3">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="rounded-xl border border-[#1f1f28] bg-[#13131a] p-5">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="h-4 w-4 rounded border border-[#2f2f38] bg-[#1f1f28]" />
+                        <div className="h-5 w-40 rounded bg-[#1f1f28]" />
+                        <div className="h-5 w-20 rounded bg-[#1f1f28]" />
+                        <div className="h-4 w-16 rounded bg-[#1f1f28]" />
+                      </div>
+                      <div className="mb-3 h-3 w-3/4 rounded bg-[#1f1f28]" />
+                      <div className="h-3 w-1/2 rounded bg-[#1f1f28]" />
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : filteredScenarios.length === 0 ? (
               <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12 text-center">
@@ -1361,6 +1747,11 @@ export function ScenarioBuilderPage() {
                           <ReasonIcon size={12} />
                           {scenario.reason}
                         </div>
+                        {scenario.estimatedRisk && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 uppercase">
+                            {scenario.estimatedRisk}
+                          </span>
+                        )}
                         {scenario.lastUpdated && (
                           <span className="text-xs text-gray-500 flex items-center gap-1">
                             <Clock size={12} />
@@ -1388,6 +1779,7 @@ export function ScenarioBuilderPage() {
               );
             })}
           </div>
+          {/* end space-y-2 */}
         </div>
       </main>
 
@@ -1439,9 +1831,17 @@ export function ScenarioBuilderPage() {
                 {selectedScenarioSteps.length} steps
               </div>
 
-              <div className="flex items-center gap-1.5 text-xs text-green-400 ml-auto">
-                <Save size={12} />
-                Auto-saved
+              {selectedScenario.estimatedRisk && (
+                <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 uppercase">
+                  {selectedScenario.estimatedRisk}
+                </span>
+              )}
+
+              <div className={`flex items-center gap-1.5 text-xs ml-auto ${
+                selectedScenario.isEdited ? 'text-yellow-400' : 'text-green-400'
+              }`}>
+                {selectedScenario.isEdited ? <Edit3 size={12} /> : <Save size={12} />}
+                {selectedScenario.isEdited ? 'Edited' : 'Auto-saved'}
               </div>
             </div>
           </div>
@@ -1479,12 +1879,47 @@ export function ScenarioBuilderPage() {
                               {step.method}
                             </span>
                             <span className="text-white text-sm font-medium">{step.label}</span>
+                            {step.duplicate === true && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">
+                                Duplicate
+                              </span>
+                            )}
+                            {(step.type || step.rawV2Step?.type) && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                {step.type || step.rawV2Step?.type}
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-gray-500 font-mono truncate">{step.apiEndpoint}</div>
+                          {step.description && (
+                            <div className="mt-1 text-xs text-gray-500 line-clamp-2">{step.description}</div>
+                          )}
                           {step.apiId && (
                             <div className="mt-1 text-xs text-gray-600">apiId: {step.apiId}</div>
                           )}
+                          {!step.apiId && step.aiApiId && (
+                            <div className="mt-1 text-xs text-yellow-500">aiApiId: {step.aiApiId}</div>
+                          )}
                         </div>
+
+                        {step.duplicate !== true && (
+                          <span className={`flex items-center gap-1 px-2 py-1 text-xs rounded border flex-shrink-0 ${
+                            savingStepIds.has(step.id)
+                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+                              : savedStepIds.has(step.id)
+                              ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                              : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                          }`}>
+                            {savingStepIds.has(step.id) ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : savedStepIds.has(step.id) ? (
+                              <Check size={11} />
+                            ) : (
+                              <Save size={11} />
+                            )}
+                            {savingStepIds.has(step.id) ? 'Saving' : savedStepIds.has(step.id) ? 'Saved' : 'New'}
+                          </span>
+                        )}
 
                         <button
                           onClick={() => setExpandedStepId(expandedStepId === step.id ? null : step.id)}
@@ -1505,8 +1940,10 @@ export function ScenarioBuilderPage() {
                     {/* Expanded Step Editor */}
                     {expandedStepId === step.id && (
                       <div className="border-t border-[#1f1f28] p-4 bg-[#0d0d12] space-y-4">
+
+                        {/* ── 기본 식별 필드 ── */}
                         <div>
-                          <label className="block text-xs text-gray-500 mb-2">Label</label>
+                          <label className="block text-xs text-gray-500 mb-2">Test Case Name</label>
                           <input
                             type="text"
                             value={step.label}
@@ -1515,87 +1952,194 @@ export function ScenarioBuilderPage() {
                           />
                         </div>
 
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-2">Description</label>
+                          <textarea
+                            value={step.description || ''}
+                            onChange={(e) => updateStep(step.id, { description: e.target.value || undefined })}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 resize-none"
+                            rows={3}
+                          />
+                        </div>
+
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs text-gray-500 mb-2">Method</label>
+                            <label className="block text-xs text-gray-500 mb-2">Type</label>
+                            <input
+                              type="text"
+                              value={step.type || step.testCaseType || ''}
+                              onChange={(e) => updateStep(step.id, { type: e.target.value })}
+                              placeholder="HAPPY_PATH"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Test Level</label>
                             <select
-                              value={step.method}
-                              onChange={(e) => updateStep(step.id, { method: e.target.value as any })}
+                              value={step.testLevel || ''}
+                              onChange={(e) => updateStep(step.id, { testLevel: e.target.value || undefined })}
                               className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
                             >
-                              <option value="GET">GET</option>
-                              <option value="POST">POST</option>
-                              <option value="PUT">PUT</option>
-                              <option value="DELETE">DELETE</option>
-                              <option value="PATCH">PATCH</option>
+                              <option value="">Source default</option>
+                              <option value="SMOKE">SMOKE</option>
+                              <option value="SANITY">SANITY</option>
+                              <option value="REGRESSION">REGRESSION</option>
+                              <option value="FULL">FULL</option>
                             </select>
                           </div>
+                        </div>
 
+                        <div className="grid grid-cols-3 gap-3">
                           <div>
-                            <label className="block text-xs text-gray-500 mb-2">Stop on Fail</label>
-                            <div className="flex items-center h-full">
-                              <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={step.stopOnFail}
-                                  onChange={(e) => updateStep(step.id, { stopOnFail: e.target.checked })}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-11 h-6 bg-[#1f1f28] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">API Endpoint</label>
-                          <input
-                            type="text"
-                            value={step.apiEndpoint}
-                            onChange={(e) => updateStep(step.id, { apiEndpoint: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">Request Config</label>
-                          <textarea
-                            value={step.requestConfig || ''}
-                            onChange={(e) => updateStep(step.id, { requestConfig: e.target.value })}
-                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
-                            rows={4}
-                            placeholder='{"pathParams":{},"queryParams":{},"headers":{},"body":{}}'
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-2">Extract Variables</label>
-                          <div className="space-y-2">
-                            {step.extractedVars.map((v) => (
-                              <div key={v.id} className="flex items-center gap-2 text-xs">
-                                <span className="text-white font-mono">{v.name}</span>
-                                <span className="text-gray-500">-</span>
-                                <span className="text-gray-400 font-mono">{v.jsonPath}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {step.validationRules && step.validationRules.length > 0 && (
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-2">Validation Rules</label>
-                            <textarea
-                              value={step.validationRules.join('\n')}
-                              onChange={(e) => updateStep(step.id, { validationRules: e.target.value.split('\n').filter(Boolean) })}
-                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30 resize-none"
-                              rows={3}
-                              placeholder='{"status": 201, "body": {"status": "created"}}'
+                            <label className="block text-xs text-gray-500 mb-2">User Role</label>
+                            <input
+                              type="text"
+                              value={step.userRole || ''}
+                              onChange={(e) => updateStep(step.id, { userRole: e.target.value || undefined })}
+                              placeholder="Admin"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
                             />
-                            <div className="mt-1 text-xs text-gray-500">
-                              Body rules are matched as contained JSON fields, not full-response equality.
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">State Condition</label>
+                            <input
+                              type="text"
+                              value={step.stateCondition || ''}
+                              onChange={(e) => updateStep(step.id, { stateCondition: e.target.value || undefined })}
+                              placeholder="Logged In"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Data Variant</label>
+                            <input
+                              type="text"
+                              value={step.dataVariant || ''}
+                              onChange={(e) => updateStep(step.id, { dataVariant: e.target.value || undefined })}
+                              placeholder="Valid Input"
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+                        </div>
+
+                        {/* ── 스펙 필드 ── */}
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-2">Request Spec</label>
+                          <textarea
+                            value={step.requestSpec || step.requestConfig || ''}
+                            onChange={(e) => updateStep(step.id, { requestSpec: e.target.value, requestConfig: e.target.value })}
+                            className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                            rows={5}
+                            placeholder='{"method":"POST","pathParams":{},"queryParams":{},"body":{}}'
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Expected Spec</label>
+                            <textarea
+                              value={step.expectedSpec || ''}
+                              onChange={(e) => updateStep(step.id, { expectedSpec: e.target.value || undefined })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                              rows={5}
+                              placeholder='{"statusCode":201,"body":{"status":"created"},"errorMessage":null}'
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-2">Assertion Spec</label>
+                            <textarea
+                              value={step.assertionSpec || ''}
+                              onChange={(e) => updateStep(step.id, { assertionSpec: e.target.value || undefined })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500/30 resize-none"
+                              rows={5}
+                              placeholder='{"statusCode":201,"bodyContains":[],"bodyEquals":{},"headerContains":{}}'
+                            />
+                          </div>
+                        </div>
+
+                        {renderStatusMetadata(step)}
+
+                        {/* ── Execution Config ── */}
+                        <div className="border-t border-[#1f1f28] pt-4">
+                          <div className="text-xs text-gray-500 mb-3 uppercase tracking-wide">Execution Config</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-2">Method</label>
+                              <select
+                                value={step.method}
+                                onChange={(e) => updateStep(step.id, { method: e.target.value as any })}
+                                className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30"
+                              >
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="PATCH">PATCH</option>
+                              </select>
                             </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-2">Stop on Fail</label>
+                              <div className="flex items-center h-[38px]">
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={step.stopOnFail}
+                                    onChange={(e) => updateStep(step.id, { stopOnFail: e.target.checked })}
+                                    className="sr-only peer"
+                                  />
+                                  <div className="w-11 h-6 bg-[#1f1f28] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3">
+                            <label className="block text-xs text-gray-500 mb-2">API Endpoint</label>
+                            <input
+                              type="text"
+                              value={step.apiEndpoint}
+                              onChange={(e) => updateStep(step.id, { apiEndpoint: e.target.value })}
+                              className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500/30"
+                            />
+                          </div>
+
+                          {step.extractedVars.length > 0 && (
+                            <div className="mt-3">
+                              <label className="block text-xs text-gray-500 mb-2">Chained Variables</label>
+                              <div className="space-y-1">
+                                {step.extractedVars.map((v) => (
+                                  <div key={v.id} className="flex items-center gap-2 text-xs">
+                                    <span className="text-white font-mono">{v.name}</span>
+                                    <span className="text-gray-500">→</span>
+                                    <span className="text-gray-400 font-mono">{v.jsonPath}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Save as Test Case (only when step is not a duplicate) */}
+                        {step.duplicate !== true && (
+                          <div className="border-t border-[#1f1f28] pt-4 flex items-center gap-3">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void handleSaveStepAsTestCase(step); }}
+                              disabled={savingStepIds.has(step.id) || savedStepIds.has(step.id)}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {savingStepIds.has(step.id) ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : savedStepIds.has(step.id) ? (
+                                <Check size={14} />
+                              ) : (
+                                <Save size={14} />
+                              )}
+                              {savedStepIds.has(step.id) ? 'Saved to Test Cases' : 'Save as Test Case'}
+                            </button>
+                            <span className="text-xs text-gray-500">This is a new step not yet in test cases</span>
                           </div>
                         )}
+
                       </div>
                     )}
                   </div>
@@ -1643,7 +2187,7 @@ export function ScenarioBuilderPage() {
               className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg transition-colors font-semibold"
             >
               {isRunning ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} />}
-              {isRunning ? '실행 중...' : 'Run Scenario'}
+              {isRunning ? 'Running...' : 'Run Scenario'}
             </button>
           </div>
         </aside>

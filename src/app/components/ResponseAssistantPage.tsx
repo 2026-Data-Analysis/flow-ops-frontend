@@ -1,19 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
-import { 
-  MessageSquare,
+import {
+  CheckCircle2,
   Copy,
+  Globe,
+  Loader2,
   Save,
   Send,
   Sparkles,
+  AlertTriangle,
   Users,
-  Mail,
-  CheckCircle2
 } from 'lucide-react';
-import { flowOpsApi, getDefaultAppId } from '../api/flowOpsClient';
+import {
+  flowOpsApi,
+  getDefaultAppId,
+  type IncidentAnalyzeResponse,
+} from '../api/flowOpsClient';
 
-type AudienceType = 'internal' | 'customer' | 'cs';
-type MessageType = 'report' | 'message' | 'fix-guide' | 'escalation';
+type AiTab = 'internal' | 'external';
 
 interface IncidentOption {
   id: string;
@@ -23,421 +27,36 @@ interface IncidentOption {
   errorMessage?: string;
 }
 
-const initialContent = {
-  internal: {
-    report: `**Incident Report: Database Connection Timeout**
-
-**Severity:** Critical (P0)
-**Status:** Under Investigation
-**Started:** April 3, 2026 at 14:32 UTC
-**Duration:** 23 minutes (ongoing)
-
-**Summary:**
-Authentication service experiencing database connection pool exhaustion. All available connections are in use or stuck, preventing new authentication requests from processing.
-
-**Impact:**
-- Affected endpoints: 3
-- Failed requests: 1,284
-- Affected users: ~245
-- Services impacted: auth-service, user-service
-
-**Root Cause:**
-Connection pool size (max: 10) insufficient for current load. Slow queries holding connections for extended periods.
-
-**Immediate Actions Taken:**
-1. Alerted on-call engineers
-2. Initiated connection pool monitoring
-3. Prepared rollback plan
-
-**Next Steps:**
-1. Restart auth-service to clear stuck connections
-2. Increase connection pool size to 25
-3. Optimize slow queries
-4. Add connection timeout (30s)
-
-**Team Assignment:**
-- Lead: @john.doe
-- Database: @jane.smith
-- DevOps: @mike.wilson`,
-    
-    message: `**Team Update: Database Incident**
-
-Hi team,
-
-We're currently investigating a critical database connectivity issue affecting our authentication service.
-
-**What's happening:**
-- Database connection pool is exhausted
-- Authentication requests are failing
-- Impact: ~245 users, 23 minutes duration
-
-**Current status:**
-Our team is actively working on the issue. We've identified the root cause and are implementing fixes.
-
-**Action items:**
-- [ ] Restart auth-service (ETA: 5 min)
-- [ ] Increase connection pool size
-- [ ] Optimize database queries
-
-Will update in 10 minutes.
-
-Thanks,
-DevOps Team`,
-    
-    'fix-guide': `**Temporary Fix Guide: Database Connection Timeout**
-
-**For:** Engineering Team
-**Incident:** Database connection pool exhaustion
-
-**Quick Fix (5 minutes):**
-\`\`\`bash
-# 1. Restart the auth-service
-kubectl rollout restart deployment/auth-service
-
-# 2. Verify pods are running
-kubectl get pods -l app=auth-service
-
-# 3. Check logs
-kubectl logs -f deployment/auth-service
-\`\`\`
-
-**Short-term Fix (30 minutes):**
-1. Update connection pool configuration:
-\`\`\`javascript
-// config/database.js
-pool: {
-  min: 5,
-  max: 25,  // Increased from 10
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000
-}
-\`\`\`
-
-2. Deploy updated configuration
-3. Monitor connection pool metrics
-
-**Monitoring:**
-- Dashboard: https://grafana.company.com/db-connections
-- Alert: #ops-alerts Slack channel
-
-**If issue persists:**
-Contact: @database-team or page on-call engineer`,
-    
-    escalation: `**ESCALATION REQUIRED**
-
-**Incident:** Database Connection Timeout
-**Severity:** P0 - Critical
-**Escalating To:** Database Team Lead, CTO
-
-**Reason for Escalation:**
-Initial fix attempts unsuccessful. Issue persisting beyond 30 minutes affecting customer authentication.
-
-**Attempted Actions:**
-✓ Restarted auth-service
-✓ Increased connection pool size
-✓ Reviewed slow query logs
-✗ Issue still occurring
-
-**Current Impact:**
-- Users unable to login: ~245
-- Revenue impact: ~$12K/hour
-- Customer support tickets: 47 new tickets
-- Social media mentions: 12 complaints
-
-**Required Assistance:**
-1. Database expert to review connection pool behavior
-2. Approval for emergency database scaling
-3. Decision on customer communication timing
-
-**Urgency:** IMMEDIATE
-**Contact:** DevOps Team - Slack #incident-response`
-  },
-  customer: {
-    report: `**Service Status Update**
-
-We wanted to inform you about a recent service interruption affecting login functionality.
-
-**What happened:**
-Between 14:32 and 14:55 UTC on April 3, some users experienced difficulties logging into their accounts due to a database connectivity issue.
-
-**Impact:**
-- Duration: 23 minutes
-- Affected feature: User authentication
-- Affected users: Less than 2% of active users
-
-**Resolution:**
-Our engineering team quickly identified and resolved the issue. All services are now operating normally.
-
-**What we're doing:**
-- Monitoring systems closely
-- Implementing additional safeguards
-- Improving our infrastructure to prevent similar issues
-
-We apologize for any inconvenience. If you continue experiencing issues, please contact support@company.com.`,
-    
-    message: `Hi there,
-
-We're currently experiencing some technical difficulties that may affect your ability to log in. Our team is actively working to resolve this as quickly as possible.
-
-**What you might notice:**
-- Slow login times
-- Occasional login failures
-- Session timeout errors
-
-**What you can do:**
-- Please wait a few minutes and try again
-- Clear your browser cache if issues persist
-- Use the "Forgot Password" option if needed
-
-We expect to have this resolved within 15 minutes. We apologize for the inconvenience and appreciate your patience.
-
-Best regards,
-The Support Team`,
-    
-    'fix-guide': `**Troubleshooting: Login Issues**
-
-If you're experiencing login problems, please try these steps:
-
-**Step 1: Basic Troubleshooting**
-1. Refresh your browser page
-2. Clear your browser cache and cookies
-3. Try using a different browser
-4. Check if you're using the correct email/password
-
-**Step 2: Account Recovery**
-1. Click "Forgot Password" on the login page
-2. Enter your registered email address
-3. Check your inbox for reset instructions
-4. Follow the link to create a new password
-
-**Step 3: Alternative Access**
-- Try accessing from a different device
-- Use our mobile app as an alternative
-- Contact support if issues persist
-
-**Need Help?**
-Email: support@company.com
-Live Chat: Available on our website
-Phone: 1-800-SUPPORT (Mon-Fri, 9AM-5PM)
-
-We're here to help!`,
-    
-    escalation: `**Customer Communication - Service Disruption**
-
-Dear Customer,
-
-We're writing to inform you about a service disruption that occurred on April 3, 2026.
-
-**Incident Summary:**
-- Issue: Authentication service interruption
-- Time: 14:32 - 14:55 UTC
-- Duration: 23 minutes
-- Impact: Login functionality
-
-**What Happened:**
-A database connectivity issue temporarily prevented some users from logging in. Our engineering team immediately identified and resolved the problem.
-
-**Resolution:**
-All services have been restored and are operating normally. We've implemented additional monitoring and safeguards.
-
-**Your Action Required:**
-None. Your account and data remain secure. Please contact us if you experience any ongoing issues.
-
-**Commitment:**
-We take service reliability seriously and are conducting a thorough review to prevent similar incidents.
-
-Thank you for your understanding.
-
-Sincerely,
-Customer Success Team`
-  },
-  cs: {
-    report: `**CS Team Brief: Database Incident**
-
-**Quick Reference:**
-- Issue: Database connection timeout
-- Impact: Login failures for some users
-- Status: RESOLVED
-- Duration: 14:32 - 14:55 UTC (23 min)
-
-**For Customer Inquiries:**
-
-"We experienced a brief technical issue affecting login functionality between 2:32 PM and 2:55 PM UTC today. The issue has been fully resolved and all services are operating normally. Your account and data remain secure."
-
-**Expected Questions:**
-
-Q: "I can't log in. Is this the same issue?"
-A: The original issue is resolved. Please try clearing your cache or using password reset. If problems persist, we'll escalate to technical support.
-
-Q: "Was my data affected?"
-A: No customer data was accessed, modified, or lost. This was purely a connectivity issue.
-
-Q: "Will this happen again?"
-A: Our team has implemented additional safeguards and monitoring to prevent similar issues.
-
-**Escalation Path:**
-- Technical issues → #tech-support
-- Billing concerns → #billing-team
-- VIP/Enterprise → Tag @cs-lead
-
-**Ticket Template:**
-Category: Service Disruption
-Priority: Normal (unless ongoing)
-Tags: database-incident, april-2026`,
-    
-    message: `**CS Alert: Active Incident**
-
-📢 **HEADS UP TEAM**
-
-We have an active incident affecting user logins.
-
-**Key Points:**
-- Issue: Database connection problems
-- Started: 14:32 UTC
-- Impact: Some users can't log in
-- Status: Team is working on it
-- ETA: 10-15 minutes
-
-**How to Respond:**
-
-✅ DO:
-- Acknowledge the issue
-- Tell them we're working on it
-- Provide ETA if available
-- Offer password reset as workaround
-
-❌ DON'T:
-- Give technical details
-- Promise specific timelines
-- Blame other teams
-- Share internal docs
-
-**Sample Response:**
-"Thanks for reaching out! We're aware of a technical issue affecting logins and our team is actively working on it. We expect to have this resolved within 15 minutes. In the meantime, you can try clearing your cache or using the password reset option."
-
-**Updates:**
-Watch #cs-updates for real-time information
-
-Questions? Ping @cs-lead`,
-    
-    'fix-guide': `**CS Response Guide: Login Issues**
-
-**Triage Questions:**
-1. When did you first notice the issue?
-2. What error message do you see?
-3. Have you tried a different browser/device?
-4. Is this for personal or business account?
-
-**First Response (1-2 min):**
-"Thank you for contacting us. I understand you're having trouble logging in. Let me help you resolve this right away."
-
-**Troubleshooting Steps:**
-1. ✓ Verify email spelling
-2. ✓ Check Caps Lock
-3. ✓ Try password reset
-4. ✓ Clear browser cache
-5. ✓ Try different browser
-6. ✓ Check account status
-
-**If Steps Don't Work:**
-→ Escalate to #tech-support with:
-- User email
-- Ticket number
-- Error message/screenshot
-- Steps already tried
-
-**Response Time SLAs:**
-- VIP/Enterprise: < 5 min
-- Premium: < 15 min
-- Standard: < 1 hour
-
-**Follow-up:**
-Send follow-up email 24 hours later to confirm resolution`,
-    
-    escalation: `**CS ESCALATION: Multiple Login Complaints**
-
-**Escalating To:** Tech Support Lead, DevOps
-
-**Situation:**
-Receiving high volume of login-related tickets. May indicate ongoing technical issue.
-
-**Metrics:**
-- New tickets: 47 in last 30 minutes
-- Avg volume: ~5/hour (940% increase)
-- Common keywords: "can't login", "timeout", "error"
-- Affected users: Mix of free and premium
-
-**Sample Complaints:**
-1. "Been trying for 20 minutes, keeps timing out"
-2. "Says incorrect password but it's definitely right"
-3. "Gets stuck on loading screen"
-
-**CS Actions Taken:**
-- Sent holding responses
-- Escalated to tech support
-- Created internal alert
-- Preparing customer communication
-
-**Request:**
-- Status update for customer communication
-- ETA for resolution
-- Approved messaging for social media
-
-**Impact on CS:**
-- Team capacity: 85% handling this issue
-- Wait times: Increased to 12 minutes
-- Satisfaction risk: HIGH
-
-**Priority:** URGENT
-**Channel:** #incident-response`
-  }
-};
-
 export function ResponseAssistantPage() {
   const location = useLocation();
+  const navIncidentAnalysis = (location.state as any)?.incidentAnalysis as IncidentAnalyzeResponse | undefined;
+  const hasNavReport = !!navIncidentAnalysis?.data;
+
   const [incidents, setIncidents] = useState<IncidentOption[]>([]);
   const [selectedIncident, setSelectedIncident] = useState('');
-  const [audience, setAudience] = useState<AudienceType>('internal');
-  const [messageType, setMessageType] = useState<MessageType>('report');
-  const [content, setContent] = useState(initialContent.internal.report);
+  const [isLoadingIncidents, setIsLoadingIncidents] = useState(!hasNavReport);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const [aiAnalysis, setAiAnalysis] = useState<IncidentAnalyzeResponse | null>(navIncidentAnalysis ?? null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [aiTab, setAiTab] = useState<AiTab>('internal');
+  const [content, setContent] = useState(navIncidentAnalysis?.data?.internal_report ?? '');
   const [copied, setCopied] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [apiError, setApiError] = useState<string | null>(null);
-  const analysisReference = (location.state as any)?.analysis;
 
-  const buildContent = (
-    nextAudience: AudienceType,
-    nextType: MessageType,
-    incidentId = selectedIncident,
-    sourceIncidents = incidents,
-  ) => {
-    const incident = sourceIncidents.find((item) => item.id === incidentId);
-    if (!incident) return initialContent[nextAudience][nextType];
-
-    return initialContent[nextAudience][nextType]
-      .replace(/Database Connection Timeout/g, incident.title)
-      .replace(/Database connection timeout/g, incident.title)
-      .replace(/database connectivity issue/g, incident.errorMessage || incident.title)
-      .replace(/authentication service/g, incident.endpoint || 'affected API');
-  };
-
-  const refreshTemplateContent = (
-    nextAudience = audience,
-    nextType = messageType,
-    incidentId = selectedIncident,
-    sourceIncidents = incidents,
-  ) => {
-    setContent(buildContent(nextAudience, nextType, incidentId, sourceIncidents));
-  };
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  const hasAiReport = !!aiAnalysis?.data;
 
   useEffect(() => {
+    if (hasNavReport) return;
     let active = true;
-    setIsLoading(true);
+    setIsLoadingIncidents(true);
+
     flowOpsApi
       .listExecutions(getDefaultAppId())
       .then((page) => {
         if (!active) return;
-        const nextIncidents = page.content
+        const list = page.content
           .filter((execution) => !['SUCCESS', 'QUEUED', 'RUNNING'].includes(execution.status))
           .map((execution) => ({
             id: String(execution.id),
@@ -447,36 +66,94 @@ export function ResponseAssistantPage() {
             errorMessage: execution.errorMessage,
           }));
 
-        setIncidents(nextIncidents);
-        const firstId = nextIncidents[0]?.id || '';
-        setSelectedIncident(firstId);
-        setContent(firstId ? buildContent(audience, messageType, firstId, nextIncidents) : initialContent[audience][messageType]);
-        setApiError(null);
+        setIncidents(list);
+        if (list[0]) setSelectedIncident(list[0].id);
+        setListError(null);
       })
       .catch((error) => {
         if (!active) return;
-        setIncidents([]);
-        setSelectedIncident('');
-        setContent(initialContent[audience][messageType]);
-        setApiError(error instanceof Error ? error.message : 'Failed to load incidents.');
+        setListError(error instanceof Error ? error.message : 'Failed to load incidents.');
       })
       .finally(() => {
-        if (active) setIsLoading(false);
+        if (active) setIsLoadingIncidents(false);
       });
 
     return () => {
       active = false;
     };
+  }, [hasNavReport]);
+
+  useEffect(() => () => {
+    analyzeAbortRef.current?.abort();
   }, []);
 
-  const handleAudienceChange = (newAudience: AudienceType) => {
-    setAudience(newAudience);
-    refreshTemplateContent(newAudience, messageType);
+  const setAudience = (nextTab: AiTab) => {
+    setAiTab(nextTab);
+    setContent(
+      nextTab === 'internal'
+        ? aiAnalysis?.data?.internal_report ?? ''
+        : aiAnalysis?.data?.external_notice ?? '',
+    );
   };
 
-  const handleMessageTypeChange = (newType: MessageType) => {
-    setMessageType(newType);
-    refreshTemplateContent(audience, newType);
+  const handleAnalyzeSelectedIncident = () => {
+    if (hasNavReport || !selectedIncident) return;
+
+    analyzeAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
+
+    setIsAnalyzing(true);
+    setAnalyzeError(null);
+    setAiAnalysis(null);
+    setContent('');
+
+    const incident = incidents.find((item) => item.id === selectedIncident);
+
+    flowOpsApi
+      .getExecution(Number(selectedIncident))
+      .then((execution) => {
+        if (controller.signal.aborted) return undefined;
+
+        const failedStep = execution.timeline?.find((step) => !step.success);
+
+        return flowOpsApi.analyzeIncident({
+          project_id: String(getDefaultAppId()),
+          service_name: execution.caseName || incident?.endpoint || 'unknown',
+          occurred_at: execution.executedAt || execution.startedAt || new Date().toISOString(),
+          raw_log: execution.timeline
+            ?.map((step) => `[${step.startedAt || ''}] ${step.success ? 'INFO' : 'ERROR'} ${step.method || ''} ${step.endpoint || ''} ${step.responseCode ?? ''}`)
+            .join('\n') ?? '',
+          log_entries: (execution.timeline ?? []).map((step) => ({
+            timestamp: step.startedAt || '',
+            level: step.success ? 'INFO' : 'ERROR',
+            message: `${step.method || ''} ${step.endpoint || ''} -> ${step.responseCode ?? ''}`,
+            logger: step.caseName || step.step || '',
+            stack_trace: step.errorMessage ?? null,
+          })),
+          failure_context: {
+            endpoint: failedStep?.endpoint || incident?.endpoint || '',
+            expected_status: 200,
+            actual_status: failedStep?.responseCode ?? execution.statusCode,
+            request_body: failedStep?.requestBody ?? execution.body ?? null,
+            response_body: failedStep?.responseBody ?? execution.response ?? null,
+            error_message: failedStep?.errorMessage || execution.errorMessage || null,
+          },
+        });
+      })
+      .then((response) => {
+        if (!response || controller.signal.aborted) return;
+        setAiAnalysis(response);
+        setAiTab('internal');
+        setContent(response.data?.internal_report ?? '');
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setAnalyzeError(error instanceof Error ? error.message : 'Failed to analyze incident.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsAnalyzing(false);
+      });
   };
 
   const handleCopy = () => {
@@ -487,200 +164,122 @@ export function ResponseAssistantPage() {
 
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex">
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         <div className="p-8 space-y-6">
-          {/* Header */}
           <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
-            <p className="text-gray-400">AI-generated communication for incidents</p>
-          </div>
-            
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
+              <p className="text-gray-400">AI-generated communication for incidents</p>
+            </div>
             <div className="flex items-center gap-3">
-              <button 
+              <button
                 onClick={handleCopy}
-                className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:bg-[#1a1a22] text-gray-300 rounded-xl font-medium transition-colors"
+                disabled={!content}
+                className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:bg-[#1a1a22] text-gray-300 rounded-xl font-medium transition-colors disabled:opacity-50"
               >
                 {copied ? (
-                  <>
-                    <CheckCircle2 size={16} className="text-green-400" />
-                    Copied!
-                  </>
+                  <><CheckCircle2 size={16} className="text-green-400" />Copied!</>
                 ) : (
-                  <>
-                    <Copy size={16} />
-                    Copy
-                  </>
+                  <><Copy size={16} />Copy</>
                 )}
               </button>
-              
               <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:bg-[#1a1a22] text-gray-300 rounded-xl font-medium transition-colors">
-                <Save size={16} />
-                Save
+                <Save size={16} />Save
               </button>
-              
               <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">
-                <Send size={16} />
-                Share
+                <Send size={16} />Share
               </button>
             </div>
           </div>
 
-          {/* Selectors */}
-          {analysisReference && (
-            <div className="rounded-2xl border border-purple-500/20 bg-purple-500/10 p-5">
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-purple-300">
-                <Sparkles size={16} />
-                Log Analysis Reference
-              </div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div>
-                  <div className="mb-1 text-purple-200/70">Category</div>
-                  <div className="text-white">{analysisReference.failureCategory}</div>
-                </div>
-                <div>
-                  <div className="mb-1 text-purple-200/70">Severity</div>
-                  <div className="text-white">{analysisReference.severity}</div>
-                </div>
-                <div>
-                  <div className="mb-1 text-purple-200/70">Confidence</div>
-                  <div className="text-white">{Math.round((analysisReference.confidence || 0) * 100)}%</div>
-                </div>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-gray-300">{analysisReference.diagnosis}</p>
-            </div>
-          )}
-
-          {/* Selectors */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 space-y-4">
-            {/* Incident Selector */}
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Select Incident</label>
-              <select 
-                value={selectedIncident}
-                onChange={(e) => {
-                  setSelectedIncident(e.target.value);
-                  refreshTemplateContent(audience, messageType, e.target.value);
-                }}
-                className="w-full px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
-              >
-                {incidents.map((incident) => (
-                  <option key={incident.id} value={incident.id}>{incident.title}</option>
-                ))}
-              </select>
-            </div>
+            {!hasNavReport && (
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-2">Select Incident</label>
+                <div className="flex gap-3">
+                  {isLoadingIncidents ? (
+                    <div className="h-12 flex-1 rounded-xl bg-[#13131a] animate-pulse" />
+                  ) : (
+                    <select
+                      value={selectedIncident}
+                      onChange={(event) => {
+                        setSelectedIncident(event.target.value);
+                        setAiAnalysis(null);
+                        setAnalyzeError(null);
+                        setContent('');
+                      }}
+                      className="flex-1 px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-white font-medium focus:outline-none focus:border-blue-500/30"
+                    >
+                      {incidents.length === 0 && <option value="">No failed incidents found</option>}
+                      {incidents.map((incident) => (
+                        <option key={incident.id} value={incident.id}>{incident.title}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAnalyzeSelectedIncident}
+                    disabled={!selectedIncident || isLoadingIncidents || isAnalyzing}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                    {isAnalyzing ? 'Analyzing...' : 'Analyze Incident'}
+                  </button>
+                </div>
+                {listError && <p className="mt-2 text-xs text-red-400">{listError}</p>}
+                {analyzeError && (
+                  <p className="mt-2 flex items-center gap-2 text-xs text-red-400">
+                    <AlertTriangle size={13} />
+                    {analyzeError}
+                  </p>
+                )}
+              </div>
+            )}
 
-            {/* Audience Selector */}
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-3">Target Audience</label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => handleAudienceChange('internal')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'internal'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
+                  onClick={() => setAudience('internal')}
+                  className={`p-4 rounded-xl border-2 transition-all ${aiTab === 'internal' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
                 >
-                  <Users size={24} className={audience === 'internal' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    Internal Team
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Engineering & DevOps</div>
+                  <Users size={24} className={`mb-2 ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-500'}`} />
+                  <div className={`font-medium ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>Internal Team</div>
+                  <div className="text-xs text-gray-500 mt-1">Internal report</div>
                 </button>
-
                 <button
-                  onClick={() => handleAudienceChange('customer')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'customer'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
+                  onClick={() => setAudience('external')}
+                  className={`p-4 rounded-xl border-2 transition-all ${aiTab === 'external' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
                 >
-                  <Mail size={24} className={audience === 'customer' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'customer' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    Customer
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">External users</div>
-                </button>
-
-                <button
-                  onClick={() => handleAudienceChange('cs')}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    audience === 'cs'
-                      ? 'border-blue-500 bg-blue-500/10'
-                      : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'
-                  }`}
-                >
-                  <MessageSquare size={24} className={audience === 'cs' ? 'text-blue-400 mb-2' : 'text-gray-500 mb-2'} />
-                  <div className={`font-medium ${audience === 'cs' ? 'text-blue-400' : 'text-gray-300'}`}>
-                    CS Team
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Support staff</div>
+                  <Globe size={24} className={`mb-2 ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-500'}`} />
+                  <div className={`font-medium ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-300'}`}>External Team</div>
+                  <div className="text-xs text-gray-500 mt-1">External notice</div>
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Message Type Tabs */}
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl">
-            <div className="border-b border-[#1f1f28] px-6">
-              <div className="flex gap-1 -mb-px">
-                <button
-                  onClick={() => handleMessageTypeChange('report')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'report'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  Internal Report
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('message')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'message'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  {audience === 'customer' ? 'Customer Message' : 'Team Update'}
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('fix-guide')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'fix-guide'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  {audience === 'customer' ? 'Troubleshooting' : 'Fix Guide'}
-                </button>
-                <button
-                  onClick={() => handleMessageTypeChange('escalation')}
-                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
-                    messageType === 'escalation'
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-[#2f2f38]'
-                  }`}
-                >
-                  Escalation Note
-                </button>
-              </div>
-            </div>
-
-            {/* Content Editor */}
             <div className="p-6">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles size={16} className="text-blue-400" />
                 <span className="text-sm font-medium text-blue-400">AI Generated Content</span>
+                {isAnalyzing && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs text-orange-400">
+                    <Loader2 size={13} className="animate-spin" />Generating report...
+                  </span>
+                )}
+                {hasAiReport && !isAnalyzing && (
+                  <span className="ml-auto text-xs text-gray-500">
+                    {aiTab === 'internal' ? 'Internal report' : 'External notice'}
+                  </span>
+                )}
               </div>
               <textarea
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
+                onChange={(event) => setContent(event.target.value)}
                 className="w-full h-[600px] px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-gray-300 font-mono text-sm focus:outline-none focus:border-blue-500/30 resize-none"
-                placeholder="Generated content will appear here..."
+                placeholder={isAnalyzing ? 'Analyzing incident...' : 'Select an incident and run AI analysis to generate content.'}
               />
             </div>
           </div>

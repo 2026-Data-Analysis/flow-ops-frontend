@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   CheckCircle2,
@@ -12,10 +12,13 @@ import {
   X,
   AlertCircle,
   FileText,
-  Code
+  Code,
+  Loader2
 } from 'lucide-react';
-import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse } from '../api/flowOpsClient';
+import { flowOpsApi, getDefaultAppId, type ExecutionDetailResponse, type ExecutionStepLogResponse, type IncidentAnalyzeResponse } from '../api/flowOpsClient';
+import { IncidentRootCauseList } from './IncidentRootCauseList';
 import { normalizeAssertionResults, type NormalizedAssertionResult } from '../utils/executionAssertions';
+import { parseMaybeJson } from '../utils/incidentAnalysis';
 
 interface ExecutionLog {
   id: string;
@@ -56,7 +59,6 @@ const envColors = {
 
 const getEnvColor = (environment: string) =>
   envColors[environment as keyof typeof envColors] || { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' };
-
 
 const normalizeMethod = (method?: string): ExecutionLog['method'] =>
   (['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method || '') ? method : 'GET') as ExecutionLog['method'];
@@ -117,6 +119,10 @@ export function ExecutionListPage() {
   const [testLevelFilter, setTestLevelFilter] = useState<'all' | 'smoke' | 'sanity' | 'regression' | 'full'>('all');
 
   const selectedLog = selectedLogId ? logs.find(l => l.id === selectedLogId) : null;
+  const [isAnalyzingIncident, setIsAnalyzingIncident] = useState(false);
+  const [incidentAnalysis, setIncidentAnalysis] = useState<IncidentAnalyzeResponse | null>(null);
+  const [incidentAnalysisError, setIncidentAnalysisError] = useState<string | null>(null);
+  const incidentAnalysisRequestRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -162,10 +168,66 @@ export function ExecutionListPage() {
     navigate('/execution/run', { state: { rerunLog: selectedLog } });
   };
 
-  const handleGenerateTests = () => {
-    if (!selectedLog) return;
-    navigate('/qc/testcase', { state: { generateFromFailure: true, log: selectedLog } });
+  const handleGenerateIncidentReport = async (navigateAfter = true, targetLog = selectedLog) => {
+    if (!targetLog) return;
+    const requestId = ++incidentAnalysisRequestRef.current;
+    setIsAnalyzingIncident(true);
+    setIncidentAnalysisError(null);
+    try {
+      const rawLog = [
+        targetLog.errorMessage,
+        targetLog.step ? `Step: ${targetLog.step}` : null,
+        `${targetLog.method} ${targetLog.path} -> ${targetLog.responseCode ?? 'no response'}`,
+      ].filter(Boolean).join('\n');
+
+      const analysis = await flowOpsApi.analyzeIncident({
+        project_id: String(getDefaultAppId()),
+        service_name: targetLog.execution,
+        occurred_at: targetLog.timestamp || new Date().toISOString(),
+        raw_log: rawLog,
+        log_entries: [{
+          timestamp: targetLog.timestamp || new Date().toISOString(),
+          level: 'ERROR',
+          message: targetLog.errorMessage || `${targetLog.method} ${targetLog.path} failed`,
+          logger: targetLog.path,
+          stack_trace: null,
+          extra: { statusCode: String(targetLog.responseCode ?? '') },
+        }],
+        failure_context: {
+          endpoint: `${targetLog.method} ${targetLog.path}`,
+          expected_status: 200,
+          actual_status: targetLog.responseCode,
+          request_body: parseMaybeJson(targetLog.requestBody),
+          response_body: parseMaybeJson(targetLog.responseBody),
+          error_message: targetLog.errorMessage,
+        },
+      });
+      if (requestId !== incidentAnalysisRequestRef.current) return;
+      setIncidentAnalysis(analysis);
+      if (navigateAfter) {
+        navigate('/monitoring/response', { state: { incidentAnalysis: analysis, executionId: targetLog.id } });
+      }
+    } catch (error) {
+      if (requestId !== incidentAnalysisRequestRef.current) return;
+      setIncidentAnalysis(null);
+      setIncidentAnalysisError(error instanceof Error ? error.message : 'Failed to analyze incident.');
+    } finally {
+      if (requestId === incidentAnalysisRequestRef.current) {
+        setIsAnalyzingIncident(false);
+      }
+    }
   };
+
+  useEffect(() => {
+    incidentAnalysisRequestRef.current += 1;
+    setIncidentAnalysis(null);
+    setIncidentAnalysisError(null);
+    if (selectedLog?.status === 'failed') {
+      void handleGenerateIncidentReport(false, selectedLog);
+    } else {
+      setIsAnalyzingIncident(false);
+    }
+  }, [selectedLogId]);
 
   return (
     <div className="responsive-detail-grid flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: selectedLogId ? '1fr 600px' : '1fr' }}>
@@ -474,7 +536,7 @@ export function ExecutionListPage() {
             </div>
 
             {/* D. Validation / Error */}
-            {(selectedLog.errorMessage || selectedLog.assertions.length > 0) && (
+            {(selectedLog.errorMessage || selectedLog.assertions.length > 0 || selectedLog.status === 'failed') && (
               <div>
                 <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">Validation</div>
                 <div className="bg-[#13131a] border border-[#1f1f28] rounded-lg p-4 space-y-3">
@@ -487,6 +549,48 @@ export function ExecutionListPage() {
                           <div className="text-sm text-red-300">{selectedLog.errorMessage}</div>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {selectedLog.status === 'failed' && (
+                    <div className="rounded-lg border border-[#1f1f28] bg-[#0a0a0f] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Sparkles size={16} className="text-purple-400" />
+                          AI Failure Analysis
+                        </div>
+                        {isAnalyzingIncident && (
+                          <span className="flex items-center gap-1.5 text-xs text-orange-400">
+                            <Loader2 size={13} className="animate-spin" />
+                            Analyzing
+                          </span>
+                        )}
+                        {!isAnalyzingIncident && incidentAnalysis && (
+                          <span className="flex items-center gap-1.5 text-xs text-green-400">
+                            <CheckCircle2 size={13} />
+                            Complete
+                          </span>
+                        )}
+                      </div>
+
+                      {isAnalyzingIncident && (
+                        <div className="space-y-2">
+                          <div className="h-4 w-2/3 rounded bg-[#1f1f28] animate-pulse" />
+                          <div className="h-3 w-full rounded bg-[#1f1f28] animate-pulse" />
+                          <div className="h-3 w-4/5 rounded bg-[#1f1f28] animate-pulse" />
+                        </div>
+                      )}
+
+                      {!isAnalyzingIncident && incidentAnalysisError && (
+                        <div className="flex items-center gap-2 text-xs text-red-400">
+                          <AlertCircle size={14} />
+                          {incidentAnalysisError}
+                        </div>
+                      )}
+
+                      {!isAnalyzingIncident && incidentAnalysis?.data?.root_causes?.length > 0 && (
+                        <IncidentRootCauseList causes={incidentAnalysis.data.root_causes} compact />
+                      )}
                     </div>
                   )}
 
@@ -609,11 +713,15 @@ export function ExecutionListPage() {
 
             {selectedLog.status === 'failed' && (
               <button
-                onClick={handleGenerateTests}
-                className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-purple-500/20 hover:bg-purple-500/5 text-purple-400 px-4 py-3 rounded-lg transition-all"
+                onClick={() => {
+                  if (!incidentAnalysis) return;
+                  navigate('/monitoring/response', { state: { incidentAnalysis, executionId: selectedLog.id } });
+                }}
+                disabled={isAnalyzingIncident || !incidentAnalysis}
+                className="w-full flex items-center justify-center gap-2 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 px-4 py-3 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Sparkles size={18} />
-                Generate Test Cases from Failure
+                {isAnalyzingIncident ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                Generate Response
               </button>
             )}
           </div>

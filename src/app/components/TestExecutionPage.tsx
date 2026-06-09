@@ -144,6 +144,7 @@ export function TestExecutionPage() {
   // Configuration State
   const [executionType, setExecutionType] = useState<'tests' | 'scenario'>('tests');
   const [testLevel, setTestLevel] = useState('smoke');
+  const [tearDownMode, setTearDownMode] = useState(() => localStorage.getItem('flowOps.tearDownMode') === 'true');
 
   // Execution State
   const [isRunning, setIsRunning] = useState(false);
@@ -278,6 +279,7 @@ export function TestExecutionPage() {
           environmentId,
           scenarioIds: normalizedScenarioIds,
           testLevel: testLevel.toUpperCase() as any,
+          tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
       } else if (testCaseIds.length > 0) {
@@ -286,6 +288,7 @@ export function TestExecutionPage() {
           environmentId,
           testCaseIds,
           testLevel: testLevel.toUpperCase() as any,
+          tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
       } else if (apiIds.length > 0) {
@@ -295,6 +298,7 @@ export function TestExecutionPage() {
           apiIds,
           executionMode: 'RUN_EXISTING',
           testLevel: testLevel.toUpperCase() as any,
+          tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
       } else {
@@ -307,6 +311,7 @@ export function TestExecutionPage() {
         environment,
         testLevel,
         execution: result,
+        tearDownMode: result.tearDownMode ?? tearDownMode,
         logs: nextLogs,
         stats: calculateStats(nextLogs),
       });
@@ -321,6 +326,11 @@ export function TestExecutionPage() {
 
   const handleStop = () => {
     setIsRunning(false);
+  };
+
+  const handleTearDownModeChange = (enabled: boolean) => {
+    setTearDownMode(enabled);
+    localStorage.setItem('flowOps.tearDownMode', String(enabled));
   };
 
   const handleRerunFailed = () => {
@@ -427,6 +437,29 @@ export function TestExecutionPage() {
                 <option value="full">Full Suite</option>
               </select>
             </div>
+
+            {/* Teardown Mode */}
+            <label className="flex flex-shrink-0 items-center gap-2 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-1.5 transition-colors hover:border-blue-500/30">
+              <input
+                type="checkbox"
+                checked={tearDownMode}
+                onChange={(event) => handleTearDownModeChange(event.target.checked)}
+                disabled={isRunning}
+                className="sr-only peer"
+              />
+              <span
+                className={`relative h-5 w-9 rounded-full transition-colors peer-disabled:opacity-50 ${
+                  tearDownMode ? 'bg-blue-600' : 'bg-[#1f1f28]'
+                }`}
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                    tearDownMode ? 'translate-x-4' : ''
+                  }`}
+                />
+              </span>
+              <span className="text-sm font-medium text-gray-300">Teardown</span>
+            </label>
           </div>
 
           {/* Right: Action Buttons — always visible */}
