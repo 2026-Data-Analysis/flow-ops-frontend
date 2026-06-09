@@ -19,8 +19,12 @@ import {
   flowOpsApi,
   rememberAppId,
   rememberAppTitle,
+  DEFAULT_APP_ID,
+  DEFAULT_ENVIRONMENT_BASE_URL,
   type AiOrchestratorFormField,
   type AiOrchestratorResult,
+  type OrchestratorTestCaseData,
+  type OrchestratorTestCaseDraft,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
@@ -283,6 +287,34 @@ const routeFromAction = (result: AiOrchestratorResult) => result.action?.route |
 
 const isApiInventoryPrompt = (prompt: string) =>
   /api|endpoint|inventory|명세|상세|상세조회|조회/i.test(prompt);
+
+const isTestCaseGenerationPrompt = (prompt: string) =>
+  /(테스트\s*케이스|test\s*case).*(생성|만들|작성|generate)/i.test(prompt) ||
+  /(생성|만들|작성|generate).*(테스트\s*케이스|test\s*case)/i.test(prompt);
+
+function formatTestCaseResult(data: OrchestratorTestCaseData): string {
+  const unique = data.drafts.filter((d: OrchestratorTestCaseDraft) => !d.duplicate);
+  const dupeCount = data.drafts.length - unique.length;
+  const lines: string[] = [
+    `✅ **${data.drafts.length}개 테스트 케이스 생성됨**${dupeCount > 0 ? ` (중복 ${dupeCount}개 제외 시 ${unique.length}개)` : ''}`,
+    '',
+  ];
+  const byApi = new Map<string, OrchestratorTestCaseDraft[]>();
+  data.drafts.forEach((d: OrchestratorTestCaseDraft) => {
+    if (!byApi.has(d.apiId)) byApi.set(d.apiId, []);
+    byApi.get(d.apiId)!.push(d);
+  });
+  byApi.forEach((drafts, apiId) => {
+    lines.push(`**API #${apiId}** (${drafts[0]?.requestSpec?.method ?? ''}) — ${drafts.length}개`);
+    drafts.slice(0, 5).forEach((d, i) => {
+      lines.push(`  ${i + 1}. [${d.type}] ${d.title}${d.duplicate ? ' *(중복)*' : ''}`);
+    });
+    if (drafts.length > 5) lines.push(`  ... 외 ${drafts.length - 5}개`);
+    lines.push('');
+  });
+  lines.push('_OrchestratorAgent에서 체크박스로 선택 후 저장할 수 있습니다._');
+  return lines.join('\n');
+}
 
 const extractKeywordFromPrompt = (prompt: string) =>
   prompt
@@ -558,6 +590,33 @@ export function AIAssistant() {
   const sendToOrchestrator = async (userPrompt: string, extraContext: Record<string, unknown> = {}) => {
     setActionError(null);
     setIsTyping(true);
+
+    if (isTestCaseGenerationPrompt(userPrompt)) {
+      try {
+        const res = await flowOpsApi.dispatchOrchestratorTest({
+          project_id: String(DEFAULT_APP_ID),
+          user_prompt: userPrompt,
+          context: {
+            base_url: DEFAULT_ENVIRONMENT_BASE_URL,
+            env_name: 'local',
+          },
+        });
+        const r = res.data.agent_results.find((x) => x.agent_type === 'testcase');
+        if (r?.success && r.data) {
+          appendAiMessage(formatTestCaseResult(r.data as OrchestratorTestCaseData));
+        } else {
+          appendAiMessage(r?.error_message ?? '테스트 케이스 생성 중 오류가 발생했습니다.');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '테스트 케이스 생성 요청 실패';
+        appendAiMessage(message);
+        setActionError(message);
+      } finally {
+        setIsTyping(false);
+      }
+      return;
+    }
+
     try {
       const result = await flowOpsApi.orchestrateChat({
         project_id: 'ecommerce-backend',
