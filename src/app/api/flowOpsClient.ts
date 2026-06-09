@@ -659,10 +659,25 @@ export interface AiOrchestratorResult {
   message?: string;
 }
 
-export interface AiOrchestratorChatResponse {
+export interface AiOrchestratorChatDataPayload {
+  dispatched_agents?: string[];
   agent_results?: Array<{
+    agent_type?: string;
+    success?: boolean;
     data?: AiOrchestratorResult;
+    error_message?: string | null;
   }>;
+  summary?: string;
+}
+
+export interface AiOrchestratorChatResponse {
+  success?: boolean;
+  data?: AiOrchestratorChatDataPayload;
+  error_code?: string | null;
+  error_message?: string | null;
+  trace_id?: string | null;
+  // 일부 AI 서버는 래퍼 없이 agent_results를 최상위에 둘 수 있어 호환을 위해 유지
+  agent_results?: AiOrchestratorChatDataPayload['agent_results'];
 }
 
 function toQuery(params: Record<string, unknown>) {
@@ -1141,8 +1156,13 @@ export const flowOpsApi = {
         body: JSON.stringify(body),
       },
     );
-    const envelope = 'data' in response ? response.data : response;
-    const result = envelope?.agent_results?.[0]?.data;
+    // ApiResponse.data → OrchestratorChatResponse → OrchestratorChatDataPayload(agent_results)
+    // 두 단계까지 중첩될 수 있어 단계적으로 풀어낸다.
+    const envelope = (response && 'data' in response ? response.data : response) as
+      | AiOrchestratorChatResponse
+      | undefined;
+    const payload = envelope?.data ?? envelope;
+    const result = payload?.agent_results?.[0]?.data;
     if (!result) {
       throw new Error('AI orchestrator returned no actionable result.');
     }
