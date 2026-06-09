@@ -1148,7 +1148,7 @@ export const flowOpsApi = {
       body: JSON.stringify(body),
     }),
 
-  orchestrateChat: async (body: AiOrchestratorChatRequest) => {
+  orchestrateChat: async (body: AiOrchestratorChatRequest): Promise<AiOrchestratorResult> => {
     const response = await request<ApiResponse<AiOrchestratorChatResponse> | AiOrchestratorChatResponse>(
       '/ai/agents/orchestrator/chat',
       {
@@ -1156,17 +1156,47 @@ export const flowOpsApi = {
         body: JSON.stringify(body),
       },
     );
-    // ApiResponse.data → OrchestratorChatResponse → OrchestratorChatDataPayload(agent_results)
-    // 두 단계까지 중첩될 수 있어 단계적으로 풀어낸다.
-    const envelope = (response && 'data' in response ? response.data : response) as
-      | AiOrchestratorChatResponse
-      | undefined;
-    const payload = envelope?.data ?? envelope;
-    const result = payload?.agent_results?.[0]?.data;
-    if (!result) {
-      throw new Error('AI orchestrator returned no actionable result.');
+
+    // 응답 구조 디버깅용 — 실제 오케스트레이터 응답 형태를 콘솔에서 확인할 수 있다.
+    // eslint-disable-next-line no-console
+    console.debug('[orchestrateChat] raw response', response);
+
+    // 응답은 다음과 같이 최대 2단계까지 중첩될 수 있다:
+    //   ApiResponse.data → OrchestratorChatResponse → OrchestratorChatDataPayload(agent_results)
+    // 일부 AI 서버는 래퍼 없이 agent_results를 더 위 레벨에 둘 수도 있어 단계적으로 탐색한다.
+    const levels: Array<Record<string, unknown> | undefined> = [];
+    let cursor: unknown = response;
+    for (let i = 0; i < 4 && cursor && typeof cursor === 'object'; i += 1) {
+      const node = cursor as Record<string, unknown>;
+      levels.push(node);
+      cursor = node.data;
     }
-    return result;
+
+    const payloadWithResults = levels.find(
+      (level) => Array.isArray((level as { agent_results?: unknown } | undefined)?.agent_results),
+    ) as AiOrchestratorChatDataPayload | undefined;
+
+    const result = payloadWithResults?.agent_results?.find((entry) => entry?.data)?.data;
+    if (result) {
+      return result;
+    }
+
+    // agent_results의 actionable data가 없으면 summary/메시지라도 사용자에게 보여준다.
+    const summaryLevel = levels.find(
+      (level) => typeof (level as { summary?: unknown } | undefined)?.summary === 'string',
+    ) as AiOrchestratorChatDataPayload | undefined;
+    if (summaryLevel?.summary) {
+      return { status: 'ready', message: summaryLevel.summary };
+    }
+
+    const errorLevel = levels.find(
+      (level) => typeof (level as { error_message?: unknown } | undefined)?.error_message === 'string',
+    ) as AiOrchestratorChatResponse | undefined;
+    if (errorLevel?.error_message) {
+      throw new Error(errorLevel.error_message);
+    }
+
+    throw new Error('AI orchestrator returned no actionable result.');
   },
 
   runQuickTest: (environmentId: number, body: { domainTags?: string[]; tearDownMode?: boolean; createdBy: string }) =>
