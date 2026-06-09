@@ -21,7 +21,6 @@ import {
 import {
   flowOpsApi,
   DEFAULT_APP_ID,
-  DEFAULT_ENVIRONMENT_BASE_URL,
   type IncidentAgentData,
   type RootCause,
   type OrchestratorTestCaseData,
@@ -1120,69 +1119,54 @@ export function OrchestratorAgent() {
   const handleCancelForm = (formMsgId: string) =>
     setMessages((prev) => prev.filter((m) => m.id !== formMsgId));
 
-  const handleDirectTestDispatch = async (userPrompt: string) => {
-    const taskMsgId = `task-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: `user-${Date.now()}`, role: 'user', content: userPrompt },
-      {
-        id: taskMsgId,
-        role: 'assistant',
-        content: 'Test Case Agent로 요청을 라우팅합니다...',
-        tasks: [{ type: 'test-generation' as const, status: 'running' as const }],
-      },
-    ]);
-    setIsProcessing(true);
-    try {
-      const res = await flowOpsApi.dispatchOrchestratorTest({
-        project_id: String(DEFAULT_APP_ID),
-        user_prompt: userPrompt,
-        context: {
-          base_url: DEFAULT_ENVIRONMENT_BASE_URL,
-          env_name: 'local',
-        },
-      });
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
-      if (r?.success && r.data) {
-        updateTask(taskMsgId, 'test-generation', {
-          status: 'done',
-          testData: r.data as OrchestratorTestCaseData,
-          summary: res.data?.summary,
-        });
-      } else {
-        updateTask(taskMsgId, 'test-generation', {
-          status: 'error',
-          errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.',
-        });
-      }
-    } catch (e) {
-      updateTask(taskMsgId, 'test-generation', {
-        status: 'error',
-        errorMessage: e instanceof Error ? e.message : '알 수 없는 오류',
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleSend = () => {
+  // 프롬프트를 어떤 판단도 없이 그대로 오케스트레이터에 넘기고, 돌아온 agent 결과를 렌더링한다.
+  const handleSend = async () => {
     const text = input.trim();
     if (!text || isProcessing) return;
     setInput('');
-    const lower = text.toLowerCase();
-    const wantsLog = lower.includes('로그') || lower.includes('분석') || lower.includes('log') || lower.includes('에러');
-    const wantsTest = lower.includes('테스트') || lower.includes('test') || lower.includes('케이스');
-    const wantsScenario = lower.includes('시나리오') || lower.includes('scenario') || lower.includes('e2e') || lower.includes('흐름');
-    if (wantsScenario) handleActionClick('scenario');
-    else if (wantsLog && wantsTest) handleActionClick('both');
-    else if (wantsLog) handleActionClick('log-analysis');
-    else if (wantsTest) handleDirectTestDispatch(text);
-    else {
-      setMessages((prev) => [
-        ...prev,
-        { id: `user-${Date.now()}`, role: 'user', content: text },
-        { id: `ai-${Date.now()}`, role: 'assistant', content: '아래 버튼으로 원하는 작업을 선택해 주세요.' },
-      ]);
+    const taskMsgId = `task-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: `user-${Date.now()}`, role: 'user', content: text },
+      { id: taskMsgId, role: 'assistant', content: '오케스트레이터에 요청을 전달합니다...' },
+    ]);
+    setIsProcessing(true);
+    try {
+      const res = await flowOpsApi.chatOrchestrator({
+        project_id: String(DEFAULT_APP_ID),
+        user_prompt: text,
+      });
+      const results = res.data?.agent_results ?? [];
+      const summary = res.data?.summary;
+      const tasks: AgentTask[] = results.map((r) => {
+        const type: AgentTask['type'] =
+          r.agent_type === 'incident' ? 'log-analysis'
+            : r.agent_type === 'scenario' ? 'scenario-generation'
+              : 'test-generation';
+        if (!r.success || !r.data) {
+          return { type, status: 'error', errorMessage: r.error_message ?? '에이전트 처리 중 오류가 발생했습니다.' };
+        }
+        if (type === 'log-analysis') return { type, status: 'done', incidentData: r.data as IncidentAgentData, summary };
+        if (type === 'scenario-generation') return { type, status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary };
+        return { type, status: 'done', testData: r.data as OrchestratorTestCaseData, summary };
+      });
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id !== taskMsgId
+            ? m
+            : tasks.length > 0
+              ? { ...m, content: summary ?? '요청을 처리했습니다.', tasks }
+              : { ...m, content: summary ?? res.error_message ?? '결과가 없습니다.' },
+        ),
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '알 수 없는 오류';
+      setMessages((prev) =>
+        prev.map((m) => (m.id !== taskMsgId ? m : { ...m, content: `오류: ${message}` })),
+      );
+    } finally {
+      setIsProcessing(false);
     }
   };
 

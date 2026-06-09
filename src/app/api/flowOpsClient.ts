@@ -1341,6 +1341,26 @@ export const flowOpsApi = {
   dispatchOrchestratorScenario: (body: OrchestratorScenarioRequest) =>
     request<OrchestratorApiResponse>('/api/v1/orchestrator/dispatch', { method: 'POST', body: JSON.stringify(body) }),
 
+  // 프롬프트를 그대로 오케스트레이터(AI)에 전달하고, 라우팅된 agent 결과 전체를 반환한다.
+  // 응답은 dispatch와 동일한 { success, data: { dispatched_agents, agent_results, summary }, ... } 구조.
+  chatOrchestrator: async (body: AiOrchestratorChatRequest): Promise<OrchestratorApiResponse> => {
+    const response = await request<unknown>(
+      '/ai/agents/orchestrator/chat',
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+    // { data: { data: { agent_results } } } 까지 중첩될 수 있어, agent_results를 가진
+    // 레벨이 나올 때까지 data를 단계적으로 벗긴다.
+    let cursor: Record<string, unknown> | undefined = response as Record<string, unknown>;
+    for (let i = 0; i < 4 && cursor && typeof cursor === 'object'; i += 1) {
+      const node = cursor as { data?: { agent_results?: unknown } };
+      if (Array.isArray(node.data?.agent_results)) {
+        return cursor as unknown as OrchestratorApiResponse;
+      }
+      cursor = (cursor as { data?: Record<string, unknown> }).data;
+    }
+    return (response as OrchestratorApiResponse);
+  },
+
   orchestrateChat: async (body: AiOrchestratorChatRequest): Promise<AiOrchestratorResult> => {
     const response = await request<ApiResponse<AiOrchestratorChatResponse> | AiOrchestratorChatResponse>(
       '/ai/agents/orchestrator/chat',
