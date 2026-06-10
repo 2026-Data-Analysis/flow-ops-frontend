@@ -151,6 +151,17 @@ const safeMethodColor = (method?: string) =>
   methodColors[method as keyof typeof methodColors]
   ?? { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' };
 
+const STANDARD_TEST_LEVELS = ['SMOKE', 'SANITY', 'REGRESSION', 'FULL'];
+
+// 에이전트가 준 값을 강제로 ENUM에 맞추지 않고 그대로 살린다.
+// 표준 레벨이 아니어도 현재 값을 선택지에 포함시켜 화면에 보이고 저장되도록 한다.
+const testLevelOptions = (current?: string): string[] => {
+  const normalized = String(current || '').toUpperCase();
+  return normalized && !STANDARD_TEST_LEVELS.includes(normalized)
+    ? [...STANDARD_TEST_LEVELS, normalized]
+    : [...STANDARD_TEST_LEVELS];
+};
+
 const formatRelativeTime = (value?: string) => {
   if (!value) return 'Never';
   const time = new Date(value).getTime();
@@ -329,7 +340,8 @@ const normalizeDraft = (draft: TestGenerationDraftResponse): TestCase => {
     type: mapBackendType(draft.type),
     backendType: draft.type,
     riskLevel: draft.risk_level,
-    testLevel: draft.testLevel,
+    // 에이전트는 테스트 레벨 값을 risk_level로 내려준다. testLevel이 비면 risk_level을 그대로 사용한다.
+    testLevel: (draft.testLevel ?? draft.risk_level) as TestLevel | undefined,
     apiId: String(draft.selectedEndpoint?.id || draft.apiId || draft.apiInventoryId || ''),
     endpointName: draft.endpointName,
     apiMethod: draft.selectedEndpoint?.method && draft.selectedEndpoint.method !== 'TRACE'
@@ -1316,12 +1328,11 @@ export function TestCaseGenerationPage() {
                                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                       <div>
                                         <label className="block text-xs text-gray-500 mb-2">Test Level</label>
-                                        <select value={test.testLevel || ''} onChange={(e) => updateTestCase(test.id, { testLevel: e.target.value ? e.target.value as TestLevel : undefined })} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30">
+                                        <select value={normalizeTestLevel(test.testLevel)} onChange={(e) => updateTestCase(test.id, { testLevel: e.target.value ? e.target.value as TestLevel : undefined })} className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30">
                                           <option value="">Source default</option>
-                                          <option value="SMOKE">SMOKE</option>
-                                          <option value="SANITY">SANITY</option>
-                                          <option value="REGRESSION">REGRESSION</option>
-                                          <option value="FULL">FULL</option>
+                                          {testLevelOptions(test.testLevel).map((level) => (
+                                            <option key={level} value={level}>{level}</option>
+                                          ))}
                                         </select>
                                       </div>
                                       <div>
@@ -1634,14 +1645,13 @@ export function TestCaseGenerationPage() {
                                   {isEditing ? (
                                     <select
                                       className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
-                                      value={test.testLevel || ''}
+                                      value={normalizeTestLevel(test.testLevel)}
                                       onChange={e => updateTestCase(test.id, { testLevel: e.target.value ? e.target.value as TestLevel : undefined })}
                                     >
                                       <option value="">-</option>
-                                      <option value="SMOKE">SMOKE</option>
-                                      <option value="SANITY">SANITY</option>
-                                      <option value="REGRESSION">REGRESSION</option>
-                                      <option value="FULL">FULL</option>
+                                      {testLevelOptions(test.testLevel).map((level) => (
+                                        <option key={level} value={level}>{level}</option>
+                                      ))}
                                     </select>
                                   ) : (
                                     <div className="text-xs text-white font-mono">{test.testLevel || '-'}</div>
