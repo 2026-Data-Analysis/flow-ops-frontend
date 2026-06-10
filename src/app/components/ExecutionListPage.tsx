@@ -69,8 +69,10 @@ const normalizeExecutionStatus = (status?: string): ExecutionLog['status'] =>
 const normalizeStepLog = (step: ExecutionStepLogResponse, execution: ExecutionDetailResponse): ExecutionLog => ({
   id: String(step.id),
   timestamp: step.executedAt || step.startedAt || execution.executedAt || '',
-  execution: execution.caseName || execution.executionType || `Execution #${execution.id}`,
-  step: step.step || step.caseName,
+  // EXECUTION 열에는 해당 스텝(테스트 케이스)의 이름을 표시한다.
+  // STEP 열은 시나리오 스텝 라벨 전용이며, 테스트 케이스 실행에서는 비워둔다.
+  execution: step.caseName || execution.caseName || execution.executionType || `Execution #${execution.id}`,
+  step: step.step,
   method: normalizeMethod(step.method || execution.endpoint?.split(' ')[0]),
   path: step.endpoint || execution.endpoint || 'Unknown endpoint',
   status: normalizeExecutionStatus(step.status || (step.success === false ? 'FAILED' : 'SUCCESS')),

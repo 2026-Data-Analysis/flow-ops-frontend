@@ -1302,10 +1302,10 @@ export function TestCaseGenerationPage() {
                                 <button type="button" onClick={() => toggleTestEdit(test.id)} className="flex-1 text-left flex items-start justify-between">
                                   <div>
                                     <div className="flex items-center gap-2 mb-2">
-                                      <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>{typeColors[test.type].label}</span>
-                                      {test.riskLevel && riskLevelColors[test.riskLevel as keyof typeof riskLevelColors] && (
-                                        <span className={`text-xs px-2 py-1 rounded ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].bg} ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].text} ${riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].border} border`}>
-                                          {riskLevelColors[test.riskLevel as keyof typeof riskLevelColors].label}
+                                      <span className={`text-xs px-2 py-1 rounded ${backendTypeMeta(test.backendType || test.type).bg} ${backendTypeMeta(test.backendType || test.type).text} ${backendTypeMeta(test.backendType || test.type).border} border`}>{backendTypeMeta(test.backendType || test.type).label}</span>
+                                      {normalizeTestLevel(test.testLevel) && (
+                                        <span className="text-xs px-2 py-1 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                          {normalizeTestLevel(test.testLevel)}
                                         </span>
                                       )}
                                       {test.isEdited && <span className="text-xs px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded">Edited</span>}
@@ -1956,8 +1956,8 @@ export function TestCaseGenerationPage() {
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-2">
-                                <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
-                                  {typeColors[test.type].label}
+                                <span className={`text-xs px-2 py-1 rounded ${backendTypeMeta(test.backendType || test.type).bg} ${backendTypeMeta(test.backendType || test.type).text} ${backendTypeMeta(test.backendType || test.type).border} border`}>
+                                  {backendTypeMeta(test.backendType || test.type).label}
                                 </span>
                                 {test.isEdited && (
                                   <span className="text-xs px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded">
@@ -2097,8 +2097,8 @@ export function TestCaseGenerationPage() {
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
-                            <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
-                              {typeColors[test.type].label}
+                            <span className={`text-xs px-2 py-1 rounded ${backendTypeMeta(test.backendType || test.type).bg} ${backendTypeMeta(test.backendType || test.type).text} ${backendTypeMeta(test.backendType || test.type).border} border`}>
+                              {backendTypeMeta(test.backendType || test.type).label}
                             </span>
                             {test.status === 'new' && (
                               <span className="text-xs px-2 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded">
