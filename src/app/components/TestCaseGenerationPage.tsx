@@ -426,13 +426,11 @@ export function TestCaseGenerationPage() {
     flowOpsApi
       .ensureProject()
       .then(async (project) => {
-        const mainApplication = await flowOpsApi.resolveMainApplication();
+        const selectedApplication = activeApplication;
         const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
         const storedRepositories = readStoredRepositories();
-        let selectedApplication = mainApplication;
-        let items = await flowOpsApi.listEnvironments(mainApplication.appId).catch(() => [] as EnvironmentResponse[]);
+        const items = await flowOpsApi.listEnvironments(selectedApplication.appId).catch(() => [] as EnvironmentResponse[]);
         console.info('[TestCaseGeneration] environment candidates', {
-          resolvedMainApplication: mainApplication,
           activeApplication,
           selectedApplication,
           environmentCount: items.length,

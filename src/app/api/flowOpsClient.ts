@@ -761,6 +761,7 @@ export interface OrchestratorTestEndpoint {
   path: string;
   method: string;
   summary?: string;
+  operationId?: string;
   auth?: { type: string };
   request_body_schema?: object;
   response_schema?: object;
