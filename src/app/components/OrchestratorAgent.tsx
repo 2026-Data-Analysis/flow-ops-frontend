@@ -788,19 +788,67 @@ const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse
   };
 };
 
+// 드래프트에 엔드포인트 경로가 없으면(예: apiId만 있는 경우) API 상세를 조회해
+// selectedEndpoint(method/path)를 채워서 "API #2007" 대신 실제 엔드포인트명이 보이도록 한다.
+const enrichDraftEndpoints = async (
+  drafts: OrchestratorTestCaseDraft[],
+): Promise<OrchestratorTestCaseDraft[]> => {
+  const missingApiIds = new Set<number>();
+  drafts.forEach((draft) => {
+    if (draftEndpointParts(draft).endpoint) return;
+    const apiId = Number(draft.selectedEndpoint?.id ?? draft.apiId);
+    if (Number.isFinite(apiId) && apiId > 0) missingApiIds.add(apiId);
+  });
+  if (missingApiIds.size === 0) return drafts;
+
+  const detailByApiId = new Map<number, { method: string; path: string }>();
+  await Promise.all(
+    Array.from(missingApiIds).map(async (apiId) => {
+      try {
+        const detail = await flowOpsApi.getApiDetail(apiId);
+        if (detail?.path) {
+          detailByApiId.set(apiId, { method: String(detail.method || ''), path: detail.path });
+        }
+      } catch (error) {
+        console.warn('[OrchestratorAgent] failed to resolve endpoint for apiId', { apiId, error });
+      }
+    }),
+  );
+  if (detailByApiId.size === 0) return drafts;
+
+  return drafts.map((draft) => {
+    if (draftEndpointParts(draft).endpoint) return draft;
+    const apiId = Number(draft.selectedEndpoint?.id ?? draft.apiId);
+    const detail = detailByApiId.get(apiId);
+    if (!detail) return draft;
+    return {
+      ...draft,
+      selectedEndpoint: {
+        ...draft.selectedEndpoint,
+        id: draft.selectedEndpoint?.id ?? apiId,
+        method: draft.selectedEndpoint?.method || detail.method,
+        path: draft.selectedEndpoint?.path || detail.path,
+      },
+    };
+  });
+};
+
 const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<OrchestratorTestCaseData> => {
   const generationId = Number(data.generationId);
   if (Array.isArray(data.drafts) && data.drafts.length > 0) {
+    const drafts = await enrichDraftEndpoints(
+      data.drafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
+    );
     return {
       ...data,
       generationId: Number.isFinite(generationId) && generationId > 0 ? generationId : data.generationId,
-      drafts: data.drafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
+      drafts,
     };
   }
 
   if (!Number.isFinite(generationId) || generationId <= 0) return data;
 
-  const drafts = await flowOpsApi
+  const backendDrafts = await flowOpsApi
     .listTestGenerationDrafts(generationId)
     .catch((error) => {
       console.warn('[OrchestratorAgent] failed to hydrate test generation drafts', {
@@ -810,9 +858,9 @@ const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<Orch
       return [] as TestGenerationDraftResponse[];
     });
 
-  return drafts.length > 0
-    ? { ...data, generationId, drafts: drafts.map(normalizeBackendDraftForOrchestrator) }
-    : data;
+  if (backendDrafts.length === 0) return data;
+  const drafts = await enrichDraftEndpoints(backendDrafts.map(normalizeBackendDraftForOrchestrator));
+  return { ...data, generationId, drafts };
 };
 
 function TestCaseDraftRow({
@@ -1259,6 +1307,7 @@ export function OrchestratorAgent() {
   const [messages, setMessages] = useState<Message[]>([INIT_MESSAGE]);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isActionsCollapsed, setIsActionsCollapsed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -1580,21 +1629,30 @@ export function OrchestratorAgent() {
           </div>
 
           <div className="border-t border-[#1f1f28] bg-[#0d0d12] px-3 pt-2.5 pb-2 shrink-0">
-            <p className="text-xs text-gray-500 mb-2">액션 선택:</p>
-            <div className="grid grid-cols-2 gap-2">
-              <ActionButton icon={<FileSearch size={13} />} label="로그 분석"
-                colorClass="text-violet-300 border-violet-500/20 hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-200"
-                onClick={() => handleActionClick('log-analysis')} disabled={isProcessing || hasActiveForm} />
-              <ActionButton icon={<TestTube2 size={13} />} label="테스트 생성"
-                colorClass="text-indigo-300 border-indigo-500/20 hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-indigo-200"
-                onClick={() => handleActionClick('test-generation')} disabled={isProcessing || hasActiveForm} />
-              <ActionButton icon={<GitBranch size={13} />} label="시나리오 생성"
-                colorClass="text-teal-300 border-teal-500/20 hover:border-teal-500/50 hover:bg-teal-500/10 hover:text-teal-200"
-                onClick={() => handleActionClick('scenario')} disabled={isProcessing || hasActiveForm} />
-              <ActionButton icon={<Zap size={13} />} label="동시 실행"
-                colorClass="text-amber-300 border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/10 hover:text-amber-200"
-                onClick={() => handleActionClick('both')} disabled={isProcessing || hasActiveForm} />
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsActionsCollapsed((prev) => !prev)}
+              className="w-full flex items-center justify-between text-xs text-gray-500 hover:text-gray-300 transition-colors mb-2"
+            >
+              <span>액션 선택</span>
+              {isActionsCollapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+            {!isActionsCollapsed && (
+              <div className="grid grid-cols-2 gap-2">
+                <ActionButton icon={<FileSearch size={13} />} label="로그 분석"
+                  colorClass="text-violet-300 border-violet-500/20 hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-200"
+                  onClick={() => handleActionClick('log-analysis')} disabled={isProcessing || hasActiveForm} />
+                <ActionButton icon={<TestTube2 size={13} />} label="테스트 생성"
+                  colorClass="text-indigo-300 border-indigo-500/20 hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-indigo-200"
+                  onClick={() => handleActionClick('test-generation')} disabled={isProcessing || hasActiveForm} />
+                <ActionButton icon={<GitBranch size={13} />} label="시나리오 생성"
+                  colorClass="text-teal-300 border-teal-500/20 hover:border-teal-500/50 hover:bg-teal-500/10 hover:text-teal-200"
+                  onClick={() => handleActionClick('scenario')} disabled={isProcessing || hasActiveForm} />
+                <ActionButton icon={<Zap size={13} />} label="동시 실행"
+                  colorClass="text-amber-300 border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/10 hover:text-amber-200"
+                  onClick={() => handleActionClick('both')} disabled={isProcessing || hasActiveForm} />
+              </div>
+            )}
           </div>
 
           <div className="border-t border-[#1f1f28] bg-[#0d0d12] px-3 pb-3 pt-2 shrink-0">
@@ -1612,25 +1670,6 @@ export function OrchestratorAgent() {
         </div>
       )}
 
-      {isOpen && isMinimized && (
-        <div className="fixed bottom-6 right-6 bg-[#0a0a0f] border border-[#1f1f28] rounded-xl shadow-xl px-3 py-2.5 z-50 flex items-center gap-3 animate-slide-up">
-          <div className="w-8 h-8 bg-gradient-to-br from-violet-600 to-indigo-700 rounded-full flex items-center justify-center shrink-0">
-            <Bot size={16} className="text-white" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-white text-sm font-medium leading-none mb-0.5">Orchestrator Agent</p>
-            <p className="text-gray-400 text-xs">Multi-agent coordinator</p>
-          </div>
-          <button onClick={() => setIsMinimized(false)}
-            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors ml-1" title="펼치기">
-            <ChevronUp size={15} className="text-gray-400" />
-          </button>
-          <button onClick={() => { setIsOpen(false); setIsMinimized(false); }}
-            className="w-7 h-7 flex items-center justify-center hover:bg-[#13131a] rounded-lg transition-colors" title="닫기">
-            <X size={15} className="text-gray-400" />
-          </button>
-        </div>
-      )}
     </>
   );
 }
