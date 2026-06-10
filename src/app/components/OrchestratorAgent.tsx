@@ -580,10 +580,37 @@ const draftRequestSpecObject = (draft: OrchestratorTestCaseDraft) =>
   parseJsonObject(draft.requestSpec) ??
   (typeof draft.requestSpec === 'object' && !Array.isArray(draft.requestSpec) ? draft.requestSpec : {});
 
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+
+const normalizeHttpMethod = (value?: unknown) => {
+  if (typeof value !== 'string') return undefined;
+  const method = value.trim().toUpperCase();
+  return HTTP_METHODS.has(method) ? method : undefined;
+};
+
 const splitMethodEndpoint = (value?: unknown) => {
   if (typeof value !== 'string') return {};
-  const match = value.trim().match(/^([A-Z]+):(\/.*)$/i);
-  return match ? { method: match[1].toUpperCase(), endpoint: match[2] } : {};
+  const trimmed = value.trim();
+  const match = trimmed.match(/^([A-Z]+)\s*[: ]\s*(\/.*)$/i);
+  if (!match) return {};
+  const method = normalizeHttpMethod(match[1]);
+  return method ? { method, endpoint: match[2].trim() } : {};
+};
+
+const normalizeEndpointPath = (value?: unknown) => {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || normalizeHttpMethod(trimmed)) return undefined;
+  const split = splitMethodEndpoint(trimmed);
+  if (split.endpoint) return split.endpoint;
+  if (trimmed.startsWith('/')) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    const slashIndex = trimmed.indexOf('/');
+    return slashIndex >= 0 ? trimmed.slice(slashIndex) : undefined;
+  }
 };
 
 const isTestCaseAgentType = (agentType?: string) => {
@@ -591,23 +618,55 @@ const isTestCaseAgentType = (agentType?: string) => {
   return normalized === 'testcase' || normalized === 'testcases' || normalized.includes('testcase');
 };
 
-const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
-  String(draft.selectedEndpoint?.id ?? draftEndpointLabel(draft));
+const draftEndpointParts = (draft: OrchestratorTestCaseDraft) => {
+  const requestSpec = draftRequestSpecObject(draft);
+  const apiIdEndpoint = splitMethodEndpoint(draft.apiId);
+  const endpointName = splitMethodEndpoint(draft.endpointName);
+
+  const candidates = [
+    {
+      method: normalizeHttpMethod(draft.selectedEndpoint?.method),
+      endpoint: normalizeEndpointPath(draft.selectedEndpoint?.path),
+    },
+    {
+      method: normalizeHttpMethod(draft.request?.method),
+      endpoint: normalizeEndpointPath(draft.request?.endpoint),
+    },
+    {
+      method: normalizeHttpMethod(draft.executionMethod),
+      endpoint: normalizeEndpointPath(draft.executionEndpoint),
+    },
+    {
+      method: normalizeHttpMethod(endpointName.method),
+      endpoint: normalizeEndpointPath(endpointName.endpoint),
+    },
+    {
+      method: normalizeHttpMethod(requestSpec.method),
+      endpoint: normalizeEndpointPath(requestSpec.endpoint),
+    },
+    {
+      method: normalizeHttpMethod(apiIdEndpoint.method),
+      endpoint: normalizeEndpointPath(apiIdEndpoint.endpoint),
+    },
+  ];
+
+  return candidates.find((candidate) => candidate.method && candidate.endpoint) ?? candidates.find((candidate) => candidate.method) ?? {};
+};
+
+const draftGroupKey = (draft: OrchestratorTestCaseDraft) => {
+  const endpoint = draftEndpointParts(draft);
+  if (draft.selectedEndpoint?.id) return `api:${draft.selectedEndpoint.id}`;
+  if (endpoint.method && endpoint.endpoint) return `${endpoint.method} ${endpoint.endpoint}`;
+  return `draft:${draft.apiId || draft.id || draft.draftId || draft.title}`;
+};
 
 const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
-  const methodEndpoint = [draft.executionMethod, draft.executionEndpoint].filter(Boolean).join(' ');
-  const requestEndpoint = [draft.request?.method, draft.request?.endpoint].filter(Boolean).join(' ');
-  const selectedEndpoint = [draft.selectedEndpoint?.method, draft.selectedEndpoint?.path].filter(Boolean).join(' ');
-  return selectedEndpoint || requestEndpoint || methodEndpoint || `API #${draft.apiId}`;
+  const endpoint = draftEndpointParts(draft);
+  return endpoint.method && endpoint.endpoint ? `${endpoint.method} ${endpoint.endpoint}` : `API #${draft.apiId}`;
 };
 
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
-  String(
-    draft.selectedEndpoint?.method ||
-    draft.request?.method ||
-    draft.executionMethod ||
-    'API',
-  ).toUpperCase();
+  draftEndpointParts(draft).method || 'API';
 
 const draftRequestBody = (draft: OrchestratorTestCaseDraft) => {
   const requestSpec = draftRequestSpecObject(draft);
@@ -617,8 +676,8 @@ const draftRequestBody = (draft: OrchestratorTestCaseDraft) => {
 const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
   ({
     ...draftRequestSpecObject(draft),
-    method: draft.request?.method ?? draftRequestSpecObject(draft).method ?? splitMethodEndpoint(draft.apiId).method,
-    endpoint: draft.request?.endpoint ?? draftRequestSpecObject(draft).endpoint ?? splitMethodEndpoint(draft.apiId).endpoint,
+    method: draftEndpointParts(draft).method ?? draft.request?.method ?? draftRequestSpecObject(draft).method ?? splitMethodEndpoint(draft.apiId).method,
+    endpoint: draftEndpointParts(draft).endpoint ?? draft.request?.endpoint ?? draftRequestSpecObject(draft).endpoint ?? splitMethodEndpoint(draft.apiId).endpoint,
     headers: draft.request?.headers,
     pathParams: draft.request?.pathParams ?? draftRequestSpecObject(draft).pathParams ?? {},
     queryParams: draft.request?.queryParams ?? draftRequestSpecObject(draft).queryParams ?? {},
