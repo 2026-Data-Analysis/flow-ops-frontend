@@ -30,6 +30,7 @@ import {
   type OrchestratorScenarioData,
   type OrchestratorScenario,
   type OrchestratorScenarioStep,
+  type TestGenerationDraftResponse,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
@@ -595,7 +596,7 @@ const draftRequestBody = (draft: OrchestratorTestCaseDraft) => {
 
 const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
   ({
-    ...draft.requestSpec,
+    ...(parseJsonObject(draft.requestSpec) ?? (typeof draft.requestSpec === 'object' && !Array.isArray(draft.requestSpec) ? draft.requestSpec : {})),
     method: draft.request?.method ?? draft.requestSpec?.method,
     endpoint: draft.request?.endpoint ?? draft.requestSpec?.endpoint,
     headers: draft.request?.headers,
@@ -605,10 +606,118 @@ const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
   });
 
 const draftExpected = (draft: OrchestratorTestCaseDraft) =>
-  draft.expected ?? draft.expectedSpec ?? {};
+  draft.expected ?? parseJsonObject(draft.expectedSpec) ?? draft.expectedSpec ?? {};
 
 const draftAssertion = (draft: OrchestratorTestCaseDraft) =>
-  draft.assertion ?? draft.assertionSpec ?? {};
+  draft.assertion ?? parseJsonObject(draft.assertionSpec) ?? draft.assertionSpec ?? {};
+
+const stringifySpecForSave = (value: unknown) => {
+  if (value === undefined || value === null || value === '') return '';
+  return typeof value === 'string' ? value.trim() : JSON.stringify(value);
+};
+
+const buildOrchestratorDraftSavePayload = (draft: OrchestratorTestCaseDraft, draftId?: number) => {
+  const expectedSpec = stringifySpecForSave(draft.expectedResult || draftExpected(draft));
+  return {
+    ...(draftId !== undefined ? { draftId } : {}),
+    name: draft.title.trim(),
+    title: draft.title.trim(),
+    description: draft.description,
+    type: draft.type,
+    testLevel: draft.testLevel,
+    userRole: draft.userRole ?? undefined,
+    stateCondition: draft.stateCondition ?? undefined,
+    dataVariant: draft.dataVariant ?? undefined,
+    requestSpec: stringifySpecForSave(
+      typeof draft.requestSpec === 'string' && !draft.request ? draft.requestSpec : draftRequestSpec(draft),
+    ),
+    expectedResult: expectedSpec,
+    expectedSpec,
+    assertionSpec: stringifySpecForSave(draftAssertion(draft)),
+  };
+};
+
+const toObjectValue = (value: unknown, fallback: Record<string, unknown> = {}) =>
+  parseJsonObject(value) ?? (value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : fallback);
+
+const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse): OrchestratorTestCaseDraft => {
+  const request = toObjectValue(draft.request);
+  const requestSpec = toObjectValue(draft.requestSpec, request);
+  const expected = toObjectValue(draft.expected ?? draft.expectedSpec ?? draft.expectedResult);
+  const assertion = toObjectValue(draft.assertion ?? draft.assertionSpec);
+  const draftId = Number(draft.draftId ?? draft.id);
+
+  return {
+    id: Number.isFinite(draftId) ? draftId : undefined,
+    draftId: Number.isFinite(draftId) ? draftId : undefined,
+    apiId: String(draft.selectedEndpoint?.id ?? draft.apiId ?? draft.apiInventoryId ?? ''),
+    endpointName: draft.endpointName,
+    selectedEndpoint: draft.selectedEndpoint
+      ? {
+          id: draft.selectedEndpoint.id,
+          method: String(draft.selectedEndpoint.method || ''),
+          path: draft.selectedEndpoint.path,
+          domainTag: draft.selectedEndpoint.domainTag,
+          controllerName: draft.selectedEndpoint.controllerName,
+        }
+      : undefined,
+    title: draft.title || draft.name || `Draft ${Number.isFinite(draftId) ? draftId : ''}`.trim(),
+    description: draft.description || '',
+    type: draft.type || 'HAPPY_PATH',
+    risk_level: draft.risk_level,
+    testLevel: draft.testLevel,
+    userRole: draft.userRole || draft.role || null,
+    stateCondition: draft.stateCondition || null,
+    dataVariant: draft.dataVariant || null,
+    requestSpec: {
+      method: String(requestSpec.method || request.method || draft.executionMethod || draft.selectedEndpoint?.method || ''),
+      endpoint: String(requestSpec.endpoint || request.endpoint || draft.executionEndpoint || draft.selectedEndpoint?.path || ''),
+      pathParams: toObjectValue(requestSpec.pathParams),
+      queryParams: toObjectValue(requestSpec.queryParams),
+      body: request.body ?? requestSpec.body ?? {},
+    },
+    request: {
+      method: String(request.method || requestSpec.method || draft.executionMethod || draft.selectedEndpoint?.method || ''),
+      endpoint: String(request.endpoint || requestSpec.endpoint || draft.executionEndpoint || draft.selectedEndpoint?.path || ''),
+      headers: toObjectValue(request.headers),
+      pathParams: toObjectValue(request.pathParams ?? requestSpec.pathParams),
+      queryParams: toObjectValue(request.queryParams ?? requestSpec.queryParams),
+      body: request.body ?? requestSpec.body ?? {},
+    },
+    executionMethod: draft.executionMethod || String(request.method || requestSpec.method || draft.selectedEndpoint?.method || ''),
+    executionEndpoint: draft.executionEndpoint || String(request.endpoint || requestSpec.endpoint || draft.selectedEndpoint?.path || ''),
+    expected,
+    assertion,
+    expectedSpec: {
+      statusCode: Number(expected.statusCode ?? 0),
+      body: expected.body ?? {},
+      errorMessage: typeof expected.errorMessage === 'string' ? expected.errorMessage : null,
+    },
+    assertionSpec: {
+      statusCode: Number(assertion.statusCode ?? expected.statusCode ?? 0),
+      bodyContains: Array.isArray(assertion.bodyContains) ? assertion.bodyContains.map(String) : [],
+      headerContains: toObjectValue(assertion.headerContains) as Record<string, string>,
+    },
+    validationRules: draft.validationRules,
+    expectedStatusCodes: draft.expectedStatusCodes,
+    errorStatusCodes: draft.errorStatusCodes,
+    errorCodes: draft.errorCodes,
+    duplicate: Boolean(draft.duplicate),
+  };
+};
+
+const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<OrchestratorTestCaseData> => {
+  const generationId = Number(data.generationId);
+  if (!Number.isFinite(generationId) || generationId <= 0) return data;
+
+  const drafts = await flowOpsApi
+    .listTestGenerationDrafts(generationId)
+    .catch(() => [] as TestGenerationDraftResponse[]);
+
+  return drafts.length > 0
+    ? { ...data, generationId: String(generationId), drafts: drafts.map(normalizeBackendDraftForOrchestrator) }
+    : data;
+};
 
 function TestCaseDraftRow({
   draft, index, checked, onToggle,
@@ -624,7 +733,9 @@ function TestCaseDraftRow({
   const requestBody = draftRequestBody(draft);
   const expected = draftExpected(draft);
   const assertion = draftAssertion(draft);
-  const statusCode = expected.statusCode ?? assertion.statusCode;
+  const expectedObject = toObjectValue(expected);
+  const assertionObject = toObjectValue(assertion);
+  const statusCode = expectedObject.statusCode ?? assertionObject.statusCode;
   return (
     <div className={`bg-[#0d0d12] border rounded-lg p-2.5 ${draft.duplicate ? 'border-amber-500/20 opacity-60' : 'border-[#2a2a35]'}`}>
       <div className="flex items-start gap-2">
@@ -671,9 +782,6 @@ function TestCaseDraftRow({
               {JSON.stringify(assertion, null, 2)}
             </pre>
           </div>
-          {false && draft.assertionSpec.bodyContains.length > 0 && (
-            <p className="text-[10px] text-gray-500">검증: {draft.assertionSpec.bodyContains.join(', ')}</p>
-          )}
         </div>
       )}
     </div>
@@ -740,37 +848,17 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
       if (Number.isFinite(generationId) && generationId > 0 && backendDrafts.length === toSave.length) {
         await flowOpsApi.saveTestGenerationDrafts(generationId, {
           appId,
-          testCases: backendDrafts.map(({ draft, draftId }) => ({
-            draftId,
-            name: draft.title.trim(),
-            description: draft.description,
-            type: draft.type,
-            userRole: draft.userRole ?? undefined,
-            stateCondition: draft.stateCondition ?? undefined,
-            dataVariant: draft.dataVariant ?? undefined,
-            requestSpec: JSON.stringify(draftRequestSpec(draft)),
-            expectedResult: JSON.stringify(draftExpected(draft)),
-            expectedSpec: JSON.stringify(draftExpected(draft)),
-            assertionSpec: JSON.stringify(draftAssertion(draft)),
-          })),
+          testCases: backendDrafts.map(({ draft, draftId }) => buildOrchestratorDraftSavePayload(draft, draftId)),
         });
       } else {
         await Promise.all(
-          toSave.map((draft) =>
-            flowOpsApi.createTestCase(appId, {
-              apiInventoryId: Number(draft.selectedEndpoint?.id ?? draft.apiId),
-              name: draft.title,
-              title: draft.title,
-              description: draft.description,
-              type: draft.type,
-              requestSpec: JSON.stringify(draftRequestSpec(draft)),
-              expectedResult: JSON.stringify(draftExpected(draft)),
-              assertionSpec: JSON.stringify(draftAssertion(draft)),
-              ...(draft.userRole ? { userRole: draft.userRole } : {}),
-              ...(draft.stateCondition ? { stateCondition: draft.stateCondition } : {}),
-              ...(draft.dataVariant ? { dataVariant: draft.dataVariant } : {}),
-            }),
-          ),
+          toSave.map((draft) => {
+            const apiId = Number(draft.selectedEndpoint?.id ?? draft.apiId);
+            return flowOpsApi.createTestCase(appId, {
+              apiId,
+              ...buildOrchestratorDraftSavePayload(draft),
+            });
+          }),
         );
       }
       navigate('/qc/testcase');
@@ -1137,7 +1225,8 @@ export function OrchestratorAgent() {
       });
       const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
       if (r?.success && r.data) {
-        updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data?.summary });
+        const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData);
+        updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary });
       } else {
         updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.' });
       }
@@ -1209,7 +1298,11 @@ export function OrchestratorAgent() {
       },
     }).then((res) => {
       const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
-      if (r?.success && r.data) updateTask(taskMsgId, 'test-generation', { status: 'done', testData: r.data as OrchestratorTestCaseData, summary: res.data?.summary });
+      if (r?.success && r.data) {
+        void hydrateTestCaseData(r.data as OrchestratorTestCaseData).then((testData) =>
+          updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary }),
+        );
+      }
       else updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? '오류' });
     }).catch((e: unknown) => updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
@@ -1255,7 +1348,7 @@ export function OrchestratorAgent() {
       });
       const results = res.data?.agent_results ?? [];
       const summary = res.data?.summary;
-      const tasks: AgentTask[] = results.map((r) => {
+      const tasks: AgentTask[] = await Promise.all(results.map(async (r) => {
         const type: AgentTask['type'] =
           r.agent_type === 'incident' ? 'log-analysis'
             : r.agent_type === 'scenario' ? 'scenario-generation'
@@ -1265,8 +1358,9 @@ export function OrchestratorAgent() {
         }
         if (type === 'log-analysis') return { type, status: 'done', incidentData: r.data as IncidentAgentData, summary };
         if (type === 'scenario-generation') return { type, status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary };
-        return { type, status: 'done', testData: r.data as OrchestratorTestCaseData, summary };
-      });
+        const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData);
+        return { type, status: 'done', testData, summary };
+      }));
 
       setMessages((prev) =>
         prev.map((m) =>

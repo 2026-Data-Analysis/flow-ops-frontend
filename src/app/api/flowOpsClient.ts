@@ -799,6 +799,7 @@ export interface OrchestratorTestCaseDraft {
   type: string;
   risk_level?: string;
   test_case_type?: string;
+  testLevel?: TestLevel | string;
   userRole: string | null;
   stateCondition: string | null;
   dataVariant: string | null;
@@ -819,26 +820,23 @@ export interface OrchestratorTestCaseDraft {
   };
   executionMethod?: string;
   executionEndpoint?: string;
-  expected?: {
-    statusCode?: number;
-    body?: unknown;
-    errorMessage?: string | null;
-  };
-  assertion?: {
-    statusCode?: number;
-    bodyContains?: string[];
-    headerContains?: Record<string, string>;
-  };
+  expected?: unknown;
+  assertion?: unknown;
+  expectedResult?: string;
   expectedSpec: {
     statusCode: number;
     body: unknown;
     errorMessage: string | null;
-  };
+  } | string;
   assertionSpec: {
     statusCode: number;
     bodyContains: string[];
     headerContains: Record<string, string>;
-  };
+  } | string;
+  validationRules?: string[] | unknown;
+  expectedStatusCodes?: number[];
+  errorStatusCodes?: number[];
+  errorCodes?: string[];
   duplicate: boolean;
 }
 
