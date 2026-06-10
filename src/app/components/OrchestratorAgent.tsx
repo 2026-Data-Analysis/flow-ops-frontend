@@ -586,27 +586,26 @@ const splitMethodEndpoint = (value?: unknown) => {
   return match ? { method: match[1].toUpperCase(), endpoint: match[2] } : {};
 };
 
+const isTestCaseAgentType = (agentType?: string) => {
+  const normalized = String(agentType || '').toLowerCase().replace(/[\s_-]+/g, '');
+  return normalized === 'testcase' || normalized === 'testcases' || normalized.includes('testcase');
+};
+
 const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
   String(draft.selectedEndpoint?.id ?? draftEndpointLabel(draft));
 
 const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
-  const requestSpec = draftRequestSpecObject(draft);
-  const apiIdEndpoint = splitMethodEndpoint(draft.apiId);
   const methodEndpoint = [draft.executionMethod, draft.executionEndpoint].filter(Boolean).join(' ');
   const requestEndpoint = [draft.request?.method, draft.request?.endpoint].filter(Boolean).join(' ');
-  const requestSpecEndpoint = [requestSpec.method, requestSpec.endpoint].filter(Boolean).join(' ');
-  const apiEndpoint = [apiIdEndpoint.method, apiIdEndpoint.endpoint].filter(Boolean).join(' ');
   const selectedEndpoint = [draft.selectedEndpoint?.method, draft.selectedEndpoint?.path].filter(Boolean).join(' ');
-  return draft.endpointName || selectedEndpoint || requestEndpoint || requestSpecEndpoint || methodEndpoint || apiEndpoint || `API #${draft.apiId}`;
+  return selectedEndpoint || requestEndpoint || methodEndpoint || `API #${draft.apiId}`;
 };
 
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
   String(
+    draft.selectedEndpoint?.method ||
     draft.request?.method ||
     draft.executionMethod ||
-    draftRequestSpecObject(draft).method ||
-    draft.selectedEndpoint?.method ||
-    splitMethodEndpoint(draft.apiId).method ||
     'API',
   ).toUpperCase();
 
@@ -671,6 +670,7 @@ const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse
   return {
     id: Number.isFinite(draftId) ? draftId : undefined,
     draftId: Number.isFinite(draftId) ? draftId : undefined,
+    generationId: draft.generationId,
     apiId: String(draft.selectedEndpoint?.id ?? draft.apiId ?? draft.apiInventoryId ?? ''),
     endpointName: draft.endpointName,
     selectedEndpoint: draft.selectedEndpoint
@@ -724,11 +724,21 @@ const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse
     errorStatusCodes: draft.errorStatusCodes,
     errorCodes: draft.errorCodes,
     duplicate: Boolean(draft.duplicate),
+    selectedForSave: (draft as { selectedForSave?: boolean }).selectedForSave,
+    createdAt: (draft as { createdAt?: string }).createdAt,
   };
 };
 
 const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<OrchestratorTestCaseData> => {
   const generationId = Number(data.generationId);
+  if (Array.isArray(data.drafts) && data.drafts.length > 0) {
+    return {
+      ...data,
+      generationId: Number.isFinite(generationId) && generationId > 0 ? generationId : data.generationId,
+      drafts: data.drafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
+    };
+  }
+
   if (!Number.isFinite(generationId) || generationId <= 0) return data;
 
   const drafts = await flowOpsApi
@@ -742,7 +752,7 @@ const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<Orch
     });
 
   return drafts.length > 0
-    ? { ...data, generationId: String(generationId), drafts: drafts.map(normalizeBackendDraftForOrchestrator) }
+    ? { ...data, generationId, drafts: drafts.map(normalizeBackendDraftForOrchestrator) }
     : data;
 };
 
@@ -1274,7 +1284,7 @@ export function OrchestratorAgent() {
           },
         },
       });
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
+      const r = res.data?.agent_results?.find((x) => isTestCaseAgentType(x.agent_type));
       if (r?.success && r.data) {
         const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData);
         updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary });
@@ -1348,7 +1358,7 @@ export function OrchestratorAgent() {
         },
       },
     }).then((res) => {
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'testcase');
+      const r = res.data?.agent_results?.find((x) => isTestCaseAgentType(x.agent_type));
       if (r?.success && r.data) {
         void hydrateTestCaseData(r.data as OrchestratorTestCaseData).then((testData) =>
           updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary }),
@@ -1403,6 +1413,7 @@ export function OrchestratorAgent() {
         const type: AgentTask['type'] =
           r.agent_type === 'incident' ? 'log-analysis'
             : r.agent_type === 'scenario' ? 'scenario-generation'
+              : isTestCaseAgentType(r.agent_type) ? 'test-generation'
               : 'test-generation';
         if (!r.success || !r.data) {
           return { type, status: 'error', errorMessage: r.error_message ?? '에이전트 처리 중 오류가 발생했습니다.' };

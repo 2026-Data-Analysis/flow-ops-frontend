@@ -408,6 +408,7 @@ export interface TestGenerationResponse {
 export interface TestGenerationDraftResponse {
   id?: number;
   draftId?: number;
+  generationId?: number;
   apiId?: number;
   apiInventoryId?: number;
   endpointName?: string;
@@ -785,7 +786,8 @@ export interface OrchestratorTestRequest {
 export interface OrchestratorTestCaseDraft {
   id?: number;
   draftId?: number;
-  apiId: string;
+  generationId?: number;
+  apiId: string | number;
   endpointName?: string;
   selectedEndpoint?: {
     id?: number;
@@ -838,11 +840,13 @@ export interface OrchestratorTestCaseDraft {
   errorStatusCodes?: number[];
   errorCodes?: string[];
   duplicate: boolean;
+  selectedForSave?: boolean;
+  createdAt?: string;
 }
 
 export interface OrchestratorTestCaseData {
-  requestId: string;
-  generationId: string;
+  requestId?: string;
+  generationId: number | string;
   drafts: OrchestratorTestCaseDraft[];
 }
 
