@@ -558,11 +558,46 @@ const TC_METHOD_COLOR: Record<string, string> = {
   PATCH: 'bg-yellow-500/20 text-yellow-400',
   DELETE: 'bg-red-500/20 text-red-400',
 };
-const RISK_LEVEL_STYLE: Record<string, string> = {
-  HIGH: 'bg-red-500/20 text-red-400',
-  MEDIUM: 'bg-amber-500/20 text-amber-400',
-  LOW: 'bg-green-500/20 text-green-400',
+const TEST_LEVEL_STYLE: Record<string, string> = {
+  SMOKE: 'bg-red-500/20 text-red-400',
+  SANITY: 'bg-yellow-500/20 text-yellow-400',
+  REGRESSION: 'bg-blue-500/20 text-blue-400',
+  FULL: 'bg-purple-500/20 text-purple-400',
 };
+const DRAFT_TYPE_LABEL: Record<string, string> = {
+  HAPPY_PATH: 'Happy Path',
+  VALIDATION: 'Validation',
+  AUTHORIZATION: 'Authorization',
+  EDGE_CASE: 'Edge Case',
+  PERFORMANCE: 'Performance',
+  FAILURE_HANDLING: 'Failure Handling',
+};
+
+// 에이전트가 success/auth/edge 등 자유로운 표기로 type을 내려주므로 표준 키로 정규화한다.
+// 예: "success" / "Success" → HAPPY_PATH → "Happy Path"
+const canonicalDraftType = (rawType?: string): string => {
+  const normalized = String(rawType || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (!normalized) return '';
+  if (normalized.includes('happy') || normalized.includes('success') || normalized === 'normal') return 'HAPPY_PATH';
+  if (normalized.includes('auth')) return 'AUTHORIZATION';
+  if (normalized.includes('perf') || normalized.includes('load') || normalized.includes('latency')) return 'PERFORMANCE';
+  if (normalized.includes('edge') || normalized.includes('boundary')) return 'EDGE_CASE';
+  if (normalized.includes('valid') || normalized.includes('invalid')) return 'VALIDATION';
+  if (normalized.includes('fail') || normalized.includes('error') || normalized.includes('negative') || normalized.includes('exception')) return 'FAILURE_HANDLING';
+  return normalized.toUpperCase();
+};
+
+const draftTypeLabel = (rawType?: string): string => {
+  const key = canonicalDraftType(rawType);
+  return DRAFT_TYPE_LABEL[key] ?? (rawType || '');
+};
+
+const draftTypeStyle = (rawType?: string): string =>
+  DRAFT_TYPE_STYLE[canonicalDraftType(rawType)] ?? 'bg-gray-500/20 text-gray-400';
+
+// 에이전트는 테스트 레벨 값을 risk_level로 내려주므로 testLevel이 없으면 risk_level을 사용한다.
+const draftTestLevel = (draft: OrchestratorTestCaseDraft): string =>
+  String(draft.testLevel || draft.risk_level || '').toUpperCase();
 
 const parseJsonObject = (value: unknown): Record<string, unknown> | undefined => {
   if (!value) return undefined;
@@ -745,7 +780,8 @@ const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse
     description: draft.description || '',
     type: draft.type || 'HAPPY_PATH',
     risk_level: draft.risk_level,
-    testLevel: draft.testLevel,
+    // 에이전트가 테스트 레벨 값을 risk_level로 내려주므로 testLevel이 비어 있으면 risk_level로 매핑한다.
+    testLevel: draft.testLevel ?? draft.risk_level,
     userRole: draft.userRole || draft.role || null,
     stateCondition: draft.stateCondition || null,
     dataVariant: draft.dataVariant || null,
@@ -872,8 +908,9 @@ function TestCaseDraftRow({
   onToggle: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const typeStyle = DRAFT_TYPE_STYLE[draft.type] ?? 'bg-gray-500/20 text-gray-400';
-  const riskStyle = RISK_LEVEL_STYLE[draft.risk_level || ''] ?? 'bg-gray-500/10 text-gray-500';
+  const typeStyle = draftTypeStyle(draft.type);
+  const testLevel = draftTestLevel(draft);
+  const testLevelStyle = TEST_LEVEL_STYLE[testLevel] ?? 'bg-gray-500/10 text-gray-500';
   const requestBody = draftRequestBody(draft);
   const expected = draftExpected(draft);
   const assertion = draftAssertion(draft);
@@ -893,8 +930,8 @@ function TestCaseDraftRow({
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-200 leading-snug">{draft.title}</p>
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
-            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${typeStyle}`}>{draft.type}</span>
-            {draft.risk_level && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${riskStyle}`}>{draft.risk_level}</span>}
+            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${typeStyle}`}>{draftTypeLabel(draft.type)}</span>
+            {testLevel && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${testLevelStyle}`}>{testLevel}</span>}
             {statusCode !== undefined && <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded">{statusCode}</span>}
             {draft.duplicate && <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">중복</span>}
           </div>
@@ -952,6 +989,8 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
     () => new Set(groups.map(([key]) => key)),
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const toggleDraft = (idx: number) =>
@@ -983,7 +1022,7 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
       setSaveError('Select at least one test case draft before saving.');
       return;
     }
-    if (isSaving) return;
+    if (isSaving || isSaved) return;
     const generationId = Number(data.generationId);
     const appId = activeApplication.appId || DEFAULT_APP_ID;
     setIsSaving(true);
@@ -1029,7 +1068,11 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
         );
       }
       console.info('[OrchestratorAgent] test case draft save completed');
-      navigate('/qc/testcase');
+      // 로딩 → 저장완료 상태를 노출한 뒤 테스트 케이스 목록으로 이동한다.
+      setIsSaving(false);
+      setSavedCount(toSave.length);
+      setIsSaved(true);
+      setTimeout(() => navigate('/qc/testcase'), 1200);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.');
       setIsSaving(false);
@@ -1097,12 +1140,18 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
       {saveError && <p className="text-xs text-red-400">{saveError}</p>}
       <button
         onClick={handleSave}
-        disabled={selectedCount === 0 || isSaving}
-        className="w-full mt-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+        disabled={selectedCount === 0 || isSaving || isSaved}
+        className={`w-full mt-1 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+          isSaved
+            ? 'bg-green-600 disabled:opacity-100'
+            : 'bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40'
+        }`}
       >
-        {isSaving
-          ? <><Loader2 size={12} className="animate-spin" /> 저장 중...</>
-          : <><Save size={12} /> 저장하기 ({selectedCount}개)</>}
+        {isSaved
+          ? <><CheckCircle2 size={12} /> 저장완료 ({savedCount}개)</>
+          : isSaving
+            ? <><Loader2 size={12} className="animate-spin" /> 저장 중...</>
+            : <><Save size={12} /> 저장하기 ({selectedCount}개)</>}
       </button>
     </div>
   );
