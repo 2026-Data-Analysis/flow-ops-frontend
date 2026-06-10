@@ -798,9 +798,9 @@ export interface OrchestratorTestCaseDraft {
   };
   title: string;
   description: string;
+  // type: 백엔드 TestCaseType(HAPPY_PATH, EDGE_CASE 등). TEST LEVEL은 risk_level/testLevel을 사용한다.
   type: string;
   risk_level?: string;
-  test_case_type?: string;
   testLevel?: TestLevel | string;
   userRole: string | null;
   stateCondition: string | null;

@@ -118,6 +118,39 @@ const riskLevelColors = {
   LOW: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', label: 'Low risk' },
 };
 
+// 저장된 테스트 케이스의 Type은 백엔드 TestCaseType(HAPPY_PATH 등)을 그대로 사용한다.
+// (TEST LEVEL은 risk_level → testLevel로 매핑되며, test_case_type 개념은 사용하지 않는다.)
+const BACKEND_TYPE_META: Record<string, { bg: string; text: string; border: string; label: string }> = {
+  HAPPY_PATH: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', label: 'Happy Path' },
+  VALIDATION: { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/20', label: 'Validation' },
+  AUTHORIZATION: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', label: 'Authorization' },
+  EDGE_CASE: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', label: 'Edge Case' },
+  PERFORMANCE: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20', label: 'Performance' },
+  FAILURE_HANDLING: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', label: 'Failure Handling' },
+};
+
+const TEST_CASE_TYPE_OPTIONS = ['HAPPY_PATH', 'VALIDATION', 'AUTHORIZATION', 'EDGE_CASE', 'PERFORMANCE', 'FAILURE_HANDLING'] as const;
+
+// 백엔드 type 문자열을 표준 TestCaseType 키로 정규화한다(소문자/별칭 허용).
+const canonicalBackendType = (value?: string): string => {
+  const normalized = String(value || '').toUpperCase().replace(/[\s-]+/g, '_');
+  if (!normalized) return 'HAPPY_PATH';
+  if (BACKEND_TYPE_META[normalized]) return normalized;
+  if (normalized.includes('HAPPY') || normalized.includes('SUCCESS') || normalized === 'NORMAL') return 'HAPPY_PATH';
+  if (normalized.includes('AUTH')) return 'AUTHORIZATION';
+  if (normalized.includes('PERF') || normalized.includes('LOAD') || normalized.includes('LATENCY')) return 'PERFORMANCE';
+  if (normalized.includes('EDGE') || normalized.includes('BOUNDARY')) return 'EDGE_CASE';
+  if (normalized.includes('VALID') || normalized.includes('INVALID')) return 'VALIDATION';
+  if (normalized.includes('FAIL') || normalized.includes('ERROR') || normalized.includes('NEGATIVE') || normalized.includes('EXCEPTION')) return 'FAILURE_HANDLING';
+  return 'HAPPY_PATH';
+};
+
+const backendTypeMeta = (value?: string) => BACKEND_TYPE_META[canonicalBackendType(value)];
+
+const safeMethodColor = (method?: string) =>
+  methodColors[method as keyof typeof methodColors]
+  ?? { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20' };
+
 const formatRelativeTime = (value?: string) => {
   if (!value) return 'Never';
   const time = new Date(value).getTime();
@@ -194,10 +227,11 @@ const formatDomainLabel = (domain: string) => (domain === '__empty__' || !domain
 const normalizeTestLevel = (value?: TestLevel | string) => String(value || '').toUpperCase();
 
 const resolveTestApiMeta = (test: TestCase, apis: ApiEndpoint[]) => {
-  const api = apis.find((item) => item.id === test.apiId);
+  // test.apiId는 문자열, api.id도 문자열로 정규화돼 있으므로 문자열 비교로 매칭한다.
+  const api = apis.find((item) => String(item.id) === String(test.apiId));
   return {
-    method: api?.method || test.apiMethod,
-    path: api?.path || test.apiPath || 'Unlinked API',
+    method: (test.executionMethod || api?.method || test.apiMethod) as ApiEndpoint['method'] | undefined,
+    path: test.executionEndpoint || api?.path || test.apiPath || 'Unlinked API',
     domain: api?.domain || test.apiDomain || '',
   };
 };
@@ -563,11 +597,15 @@ export function TestCaseGenerationPage() {
     const matchesDomain =
       existingDomainFilter === 'all' ||
       (existingDomainFilter === '__empty__' ? !apiDomain : apiDomain === existingDomainFilter);
-    const matchesMethod = existingMethodFilter === 'all' || apiMeta.method === existingMethodFilter;
+    const matchesMethod =
+      existingMethodFilter === 'all' ||
+      String(apiMeta.method || '').toUpperCase() === existingMethodFilter;
     const matchesTestLevel =
       existingTestLevelFilter === 'all' ||
       normalizeTestLevel(test.testLevel) === existingTestLevelFilter;
-    const matchesType = existingTypeFilter === 'all' || test.type === existingTypeFilter;
+    const matchesType =
+      existingTypeFilter === 'all' ||
+      canonicalBackendType(test.backendType || test.type) === existingTypeFilter;
     return matchesSearch && matchesDomain && matchesMethod && matchesTestLevel && matchesType;
   });
 
@@ -754,7 +792,8 @@ export function TestCaseGenerationPage() {
   };
 
   const updateTestCase = (testId: string, updates: Partial<TestCase>) => {
-    if (rightPanelMode === 'existing') {
+    // rightPanelMode와 무관하게 id가 속한 목록을 직접 찾아 갱신한다(저장된 목록 인라인 편집 대응).
+    if (existingTests.some(t => t.id === testId)) {
       setExistingTests(prev =>
         prev.map(t => t.id === testId ? { ...t, ...updates, isEdited: true } : t)
       );
@@ -1410,12 +1449,11 @@ export function TestCaseGenerationPage() {
                               className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm text-white focus:outline-none focus:border-blue-500/30"
                             >
                               <option value="all">All Types</option>
-                              <option value="success">Success</option>
-                              <option value="validation">Validation</option>
-                              <option value="auth">Authorization</option>
-                              <option value="performance">Performance</option>
-                              <option value="edge">Edge</option>
-                              <option value="error">Error</option>
+                              {TEST_CASE_TYPE_OPTIONS.map((typeOption) => (
+                                <option key={typeOption} value={typeOption}>
+                                  {BACKEND_TYPE_META[typeOption].label}
+                                </option>
+                              ))}
                             </select>
                           </>
                         )}
@@ -1478,10 +1516,23 @@ export function TestCaseGenerationPage() {
                     <p className="text-gray-600 text-xs mt-1">Use Generate Test Cases to create and save new tests.</p>
                   </div>
                 ) : filteredExistingTests.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+                  <div className="flex min-h-[280px] flex-col items-center justify-center px-6 py-16 text-center">
                     <FileText size={32} className="text-gray-600 mb-3" />
                     <p className="text-gray-500 text-sm">No matching test cases</p>
                     <p className="text-gray-600 text-xs mt-1">Try adjusting the search, domain, or filters.</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExistingMethodFilter('all');
+                        setExistingTestLevelFilter('all');
+                        setExistingTypeFilter('all');
+                        setExistingDomainFilter('all');
+                        setExistingSearchQuery('');
+                      }}
+                      className="mt-4 rounded-lg border border-[#1f1f28] bg-[#13131a] px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:border-blue-500/30 transition-colors"
+                    >
+                      필터 초기화
+                    </button>
                   </div>
                 ) : (
                   <div className="divide-y divide-[#1f1f28]">
@@ -1516,11 +1567,11 @@ export function TestCaseGenerationPage() {
                               className="min-w-0 flex-1 text-left"
                             >
                               <div className="mb-2 flex flex-wrap items-center gap-2">
-                                <span className={`text-xs px-2 py-1 rounded ${typeColors[test.type].bg} ${typeColors[test.type].text} ${typeColors[test.type].border} border`}>
-                                  {typeColors[test.type].label}
+                                <span className={`text-xs px-2 py-1 rounded ${backendTypeMeta(test.backendType || test.type).bg} ${backendTypeMeta(test.backendType || test.type).text} ${backendTypeMeta(test.backendType || test.type).border} border`}>
+                                  {backendTypeMeta(test.backendType || test.type).label}
                                 </span>
                                 {apiMeta.method && (
-                                  <span className={`${methodColors[apiMeta.method].bg} ${methodColors[apiMeta.method].text} ${methodColors[apiMeta.method].border} border px-2 py-0.5 rounded text-xs font-semibold font-mono`}>
+                                  <span className={`${safeMethodColor(apiMeta.method).bg} ${safeMethodColor(apiMeta.method).text} ${safeMethodColor(apiMeta.method).border} border px-2 py-0.5 rounded text-xs font-semibold font-mono`}>
                                     {apiMeta.method}
                                   </span>
                                 )}
@@ -1560,45 +1611,31 @@ export function TestCaseGenerationPage() {
                                   <div className="text-sm text-gray-300">{test.name}</div>
                                 )}
                               </div>
-                              {/* Description */}
-                              <div>
-                                <div className="text-xs text-gray-500 mb-1">Description</div>
-                                {isEditing ? (
-                                  <textarea
-                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
-                                    rows={2}
-                                    value={test.description || ''}
-                                    onChange={e => updateTestCase(test.id, { description: e.target.value })}
-                                  />
-                                ) : (
-                                  test.description && <div className="text-sm text-gray-300">{test.description}</div>
-                                )}
-                              </div>
-                              {/* Expected Result */}
-                              <div>
-                                <div className="text-xs text-gray-500 mb-1">Expected Spec</div>
-                                {isEditing ? (
-                                  <textarea
-                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none placeholder-gray-600"
-                                    rows={5}
-                                    placeholder={EXPECTED_SPEC_PLACEHOLDER}
-                                    value={test.expectedResult || ''}
-                                    onChange={e => updateTestCase(test.id, { expectedResult: e.target.value })}
-                                  />
-                                ) : (
-                                  test.expectedResult && <div className="text-sm text-gray-300">{test.expectedResult}</div>
-                                )}
-                              </div>
-                              {renderStatusMetadata(test)}
-                              {test.testLevel && (
+                              {/* Type / Test Level / Endpoint */}
                               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Type</div>
+                                  {isEditing ? (
+                                    <select
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
+                                      value={canonicalBackendType(test.backendType || test.type)}
+                                      onChange={e => updateTestCase(test.id, { backendType: e.target.value, type: mapBackendType(e.target.value) })}
+                                    >
+                                      {TEST_CASE_TYPE_OPTIONS.map((typeOption) => (
+                                        <option key={typeOption} value={typeOption}>{BACKEND_TYPE_META[typeOption].label}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="text-xs text-white font-mono">{backendTypeMeta(test.backendType || test.type).label}</div>
+                                  )}
+                                </div>
                                 <div>
                                   <div className="text-xs text-gray-500 mb-1">Test Level</div>
                                   {isEditing ? (
                                     <select
                                       className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500/50"
                                       value={test.testLevel || ''}
-                                      onChange={e => updateTestCase(test.id, { testLevel: e.target.value as any })}
+                                      onChange={e => updateTestCase(test.id, { testLevel: e.target.value ? e.target.value as TestLevel : undefined })}
                                     >
                                       <option value="">-</option>
                                       <option value="SMOKE">SMOKE</option>
@@ -1610,19 +1647,116 @@ export function TestCaseGenerationPage() {
                                     <div className="text-xs text-white font-mono">{test.testLevel || '-'}</div>
                                   )}
                                 </div>
-                              </div>
-                              )}
-                              {test.requestPreview && (
                                 <div>
-                                  <div className="text-xs text-gray-500 mb-1">Request Spec</div>
-                                  <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.requestPreview}</pre>
+                                  <div className="text-xs text-gray-500 mb-1">Endpoint</div>
+                                  <div className="text-xs text-white font-mono truncate" title={`${apiMeta.method || ''} ${apiMeta.path}`}>
+                                    {apiMeta.method ? `${apiMeta.method} ` : ''}{apiMeta.path}
+                                  </div>
                                 </div>
-                              )}
-                              {test.assertionSpec && (
+                              </div>
+                              {/* Description */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Description</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none resize-none"
+                                    rows={2}
+                                    value={test.description || ''}
+                                    onChange={e => updateTestCase(test.id, { description: e.target.value })}
+                                  />
+                                ) : (
+                                  <div className="text-sm text-gray-300">{test.description || '-'}</div>
+                                )}
+                              </div>
+                              {/* User Role / State Condition / Data Variant */}
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                                 <div>
-                                  <div className="text-xs text-gray-500 mb-1">Assertion Spec</div>
+                                  <div className="text-xs text-gray-500 mb-1">User Role</div>
+                                  {isEditing ? (
+                                    <input
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                                      value={test.role || ''}
+                                      onChange={e => updateTestCase(test.id, { role: e.target.value })}
+                                    />
+                                  ) : (
+                                    <div className="text-xs text-gray-300">{test.role || '-'}</div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">State Condition</div>
+                                  {isEditing ? (
+                                    <input
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                                      value={test.stateCondition || ''}
+                                      onChange={e => updateTestCase(test.id, { stateCondition: e.target.value })}
+                                    />
+                                  ) : (
+                                    <div className="text-xs text-gray-300">{test.stateCondition || '-'}</div>
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="text-xs text-gray-500 mb-1">Data Variant</div>
+                                  {isEditing ? (
+                                    <input
+                                      className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                                      value={test.dataVariant || ''}
+                                      onChange={e => updateTestCase(test.id, { dataVariant: e.target.value })}
+                                    />
+                                  ) : (
+                                    <div className="text-xs text-gray-300">{test.dataVariant || '-'}</div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Request Spec */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Request Spec</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none"
+                                    rows={6}
+                                    value={test.requestSpec || test.requestPreview || ''}
+                                    onChange={e => updateTestCase(test.id, { requestSpec: e.target.value, requestPreview: e.target.value })}
+                                  />
+                                ) : (test.requestSpec || test.requestPreview) ? (
+                                  <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.requestSpec || test.requestPreview}</pre>
+                                ) : (
+                                  <div className="text-xs text-gray-600">-</div>
+                                )}
+                              </div>
+                              {/* Expected Spec */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Expected Spec</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none placeholder-gray-600"
+                                    rows={5}
+                                    placeholder={EXPECTED_SPEC_PLACEHOLDER}
+                                    value={test.expectedResult || ''}
+                                    onChange={e => updateTestCase(test.id, { expectedResult: e.target.value })}
+                                  />
+                                ) : test.expectedResult ? (
+                                  <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.expectedResult}</pre>
+                                ) : (
+                                  <div className="text-xs text-gray-600">-</div>
+                                )}
+                              </div>
+                              {renderStatusMetadata(test)}
+                              {/* Assertion Spec */}
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Assertion Spec</div>
+                                {isEditing ? (
+                                  <textarea
+                                    className="w-full bg-[#13131a] border border-[#1f1f28] focus:border-blue-500/50 rounded-lg px-3 py-2 text-xs font-mono text-white outline-none resize-none"
+                                    rows={5}
+                                    value={test.assertionSpec || ''}
+                                    onChange={e => updateTestCase(test.id, { assertionSpec: e.target.value })}
+                                  />
+                                ) : test.assertionSpec ? (
                                   <pre className="bg-[#13131a] rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto max-h-40 overflow-y-auto">{test.assertionSpec}</pre>
-                                </div>)}
+                                ) : (
+                                  <div className="text-xs text-gray-600">-</div>
+                                )}
+                              </div>
                               {/* Edit/Save buttons */}
                               <div className="flex items-center gap-2 pt-1 border-t border-[#1f1f28]">
                                 {isEditing ? (
