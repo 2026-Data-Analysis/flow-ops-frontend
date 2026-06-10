@@ -809,7 +809,7 @@ export interface OrchestratorTestCaseDraft {
     pathParams: Record<string, unknown>;
     queryParams: Record<string, unknown>;
     body: unknown;
-  };
+  } | string;
   request?: {
     method?: string;
     endpoint?: string;

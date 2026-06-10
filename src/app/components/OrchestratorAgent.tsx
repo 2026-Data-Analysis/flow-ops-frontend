@@ -576,32 +576,53 @@ const parseJsonObject = (value: unknown): Record<string, unknown> | undefined =>
   }
 };
 
+const draftRequestSpecObject = (draft: OrchestratorTestCaseDraft) =>
+  parseJsonObject(draft.requestSpec) ??
+  (typeof draft.requestSpec === 'object' && !Array.isArray(draft.requestSpec) ? draft.requestSpec : {});
+
+const splitMethodEndpoint = (value?: unknown) => {
+  if (typeof value !== 'string') return {};
+  const match = value.trim().match(/^([A-Z]+):(\/.*)$/i);
+  return match ? { method: match[1].toUpperCase(), endpoint: match[2] } : {};
+};
+
 const draftGroupKey = (draft: OrchestratorTestCaseDraft) =>
-  String(draft.selectedEndpoint?.id ?? draft.apiId);
+  String(draft.selectedEndpoint?.id ?? draftEndpointLabel(draft));
 
 const draftEndpointLabel = (draft: OrchestratorTestCaseDraft) => {
+  const requestSpec = draftRequestSpecObject(draft);
+  const apiIdEndpoint = splitMethodEndpoint(draft.apiId);
   const methodEndpoint = [draft.executionMethod, draft.executionEndpoint].filter(Boolean).join(' ');
   const requestEndpoint = [draft.request?.method, draft.request?.endpoint].filter(Boolean).join(' ');
+  const requestSpecEndpoint = [requestSpec.method, requestSpec.endpoint].filter(Boolean).join(' ');
+  const apiEndpoint = [apiIdEndpoint.method, apiIdEndpoint.endpoint].filter(Boolean).join(' ');
   const selectedEndpoint = [draft.selectedEndpoint?.method, draft.selectedEndpoint?.path].filter(Boolean).join(' ');
-  return draft.endpointName || methodEndpoint || requestEndpoint || selectedEndpoint || `API #${draft.apiId}`;
+  return draft.endpointName || selectedEndpoint || requestEndpoint || requestSpecEndpoint || methodEndpoint || apiEndpoint || `API #${draft.apiId}`;
 };
 
 const draftMethod = (draft: OrchestratorTestCaseDraft) =>
-  String(draft.request?.method || draft.executionMethod || draft.requestSpec?.method || draft.selectedEndpoint?.method || 'API').toUpperCase();
+  String(
+    draft.request?.method ||
+    draft.executionMethod ||
+    draftRequestSpecObject(draft).method ||
+    draft.selectedEndpoint?.method ||
+    splitMethodEndpoint(draft.apiId).method ||
+    'API',
+  ).toUpperCase();
 
 const draftRequestBody = (draft: OrchestratorTestCaseDraft) => {
-  const parsedRequestSpec = parseJsonObject(draft.requestSpec);
-  return draft.request?.body ?? parsedRequestSpec?.body ?? draft.requestSpec?.body ?? {};
+  const requestSpec = draftRequestSpecObject(draft);
+  return draft.request?.body ?? requestSpec.body ?? {};
 };
 
 const draftRequestSpec = (draft: OrchestratorTestCaseDraft) =>
   ({
-    ...(parseJsonObject(draft.requestSpec) ?? (typeof draft.requestSpec === 'object' && !Array.isArray(draft.requestSpec) ? draft.requestSpec : {})),
-    method: draft.request?.method ?? draft.requestSpec?.method,
-    endpoint: draft.request?.endpoint ?? draft.requestSpec?.endpoint,
+    ...draftRequestSpecObject(draft),
+    method: draft.request?.method ?? draftRequestSpecObject(draft).method ?? splitMethodEndpoint(draft.apiId).method,
+    endpoint: draft.request?.endpoint ?? draftRequestSpecObject(draft).endpoint ?? splitMethodEndpoint(draft.apiId).endpoint,
     headers: draft.request?.headers,
-    pathParams: draft.request?.pathParams ?? draft.requestSpec?.pathParams ?? {},
-    queryParams: draft.request?.queryParams ?? draft.requestSpec?.queryParams ?? {},
+    pathParams: draft.request?.pathParams ?? draftRequestSpecObject(draft).pathParams ?? {},
+    queryParams: draft.request?.queryParams ?? draftRequestSpecObject(draft).queryParams ?? {},
     body: draftRequestBody(draft),
   });
 
@@ -712,7 +733,13 @@ const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<Orch
 
   const drafts = await flowOpsApi
     .listTestGenerationDrafts(generationId)
-    .catch(() => [] as TestGenerationDraftResponse[]);
+    .catch((error) => {
+      console.warn('[OrchestratorAgent] failed to hydrate test generation drafts', {
+        generationId,
+        error,
+      });
+      return [] as TestGenerationDraftResponse[];
+    });
 
   return drafts.length > 0
     ? { ...data, generationId: String(generationId), drafts: drafts.map(normalizeBackendDraftForOrchestrator) }
@@ -835,7 +862,11 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
 
   const handleSave = async () => {
     const toSave = data.drafts.filter((_, i) => selected.has(i));
-    if (!toSave.length || isSaving) return;
+    if (!toSave.length) {
+      setSaveError('Select at least one test case draft before saving.');
+      return;
+    }
+    if (isSaving) return;
     const generationId = Number(data.generationId);
     const appId = activeApplication.appId || DEFAULT_APP_ID;
     setIsSaving(true);
@@ -846,11 +877,30 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
         .filter((item) => Number.isFinite(item.draftId) && item.draftId > 0);
 
       if (Number.isFinite(generationId) && generationId > 0 && backendDrafts.length === toSave.length) {
-        await flowOpsApi.saveTestGenerationDrafts(generationId, {
+        const body = {
           appId,
           testCases: backendDrafts.map(({ draft, draftId }) => buildOrchestratorDraftSavePayload(draft, draftId)),
+        };
+        console.info('[OrchestratorAgent] saving via test generation draft API', {
+          generationId,
+          appId,
+          testCaseCount: body.testCases.length,
+          testCases: body.testCases,
         });
+        await flowOpsApi.saveTestGenerationDrafts(generationId, body);
       } else {
+        console.info('[OrchestratorAgent] saving via direct test case API fallback', {
+          generationId: data.generationId,
+          appId,
+          selectedCount: toSave.length,
+          backendDraftCount: backendDrafts.length,
+          drafts: toSave.map((draft) => ({
+            id: draft.id,
+            draftId: draft.draftId,
+            apiId: draft.apiId,
+            endpoint: draftEndpointLabel(draft),
+          })),
+        });
         await Promise.all(
           toSave.map((draft) => {
             const apiId = Number(draft.selectedEndpoint?.id ?? draft.apiId);
@@ -861,6 +911,7 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
           }),
         );
       }
+      console.info('[OrchestratorAgent] test case draft save completed');
       navigate('/qc/testcase');
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.');
