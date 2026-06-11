@@ -302,6 +302,8 @@ export interface ScenarioSummaryResponse {
   name: string;
   description?: string;
   type?: string;
+  testLevel?: TestLevel | string | null;
+  estimatedRisk?: string | null;
   steps?: number;
   updatedAt?: string;
   lastExecutedAt?: string;
@@ -314,6 +316,8 @@ export interface ScenarioDetailResponse {
   name: string;
   description?: string;
   type?: string;
+  testLevel?: TestLevel | string | null;
+  estimatedRisk?: string | null;
   lastExecutedAt?: string;
   steps?: Array<{
     id: number;
@@ -370,6 +374,8 @@ export interface ScenarioRecommendationResponse {
   description?: string | null;
   type: 'HAPPY_PATH' | 'EDGE_CASE' | 'FAILURE_RECOVERY' | string;
   recommendationReason?: string | null;
+  testLevel?: TestLevel | string | null;
+  estimatedRisk?: string | null;
   steps?: Array<{
     order?: number;
     stepOrder?: number;
@@ -574,8 +580,11 @@ export interface AiScenarioBuildResponse {
   name: string;
   description?: string;
   type: string;
+  test_level?: string;
   meta?: {
     rationale?: string;
+    test_level?: string;
+    estimated_risk?: string;
   };
   steps: Array<{
     order: number;
@@ -1064,6 +1073,7 @@ export interface ScenarioV2Step {
 export interface ScenarioV2Meta {
   rationale?: string;
   coverage_gap?: string;
+  test_level?: string;
   estimated_risk?: string;
 }
 
@@ -1071,6 +1081,8 @@ export interface ScenarioV2 {
   scenario_id?: string;
   name?: string;
   description?: string | null;
+  type?: string;
+  test_level?: string;
   steps?: ScenarioV2Step[];
   meta?: ScenarioV2Meta;
 }
@@ -1528,6 +1540,8 @@ export const flowOpsApi = {
     description?: string;
     type?: string;
     recommendationReason?: string;
+    testLevel?: TestLevel | string | null;
+    estimatedRisk?: string | null;
     source?: 'AI' | 'MANUAL' | string;
     steps: Array<{
       stepOrder: number;
