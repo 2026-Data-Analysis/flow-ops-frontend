@@ -1499,9 +1499,9 @@ export function ScenarioBuilderPage() {
       )}
 
       {/* Main Panel: Scenario List */}
-      <main className="flex flex-col overflow-hidden bg-[#060609]">
-        {/* Header */}
-        <div className="flow-page-header">
+      <main className="flow-page-body bg-[#060609]">
+        <div className="mx-auto w-full max-w-6xl">
+          {/* Header */}
           <div className="flow-page-header-row mb-6">
             <div>
               <h1 className="flow-page-title">Scenario Builder</h1>
@@ -1612,11 +1612,9 @@ export function ScenarioBuilderPage() {
               </span>
             </div>
           )}
-        </div>
 
-        {/* Scenario List */}
-        <div className="flow-page-body">
-          <div className="mx-auto w-full max-w-6xl space-y-2">
+          {/* Scenario List */}
+          <div className="mt-6 space-y-2">
             {isLoading ? (
               <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
                 <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
@@ -1827,18 +1825,18 @@ export function ScenarioBuilderPage() {
                         </div>
 
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`text-xs px-2 py-0.5 rounded font-mono ${methodColors[step.method].bg} ${methodColors[step.method].text} ${methodColors[step.method].border} border`}>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <span className={`flex-shrink-0 whitespace-nowrap text-xs px-2 py-0.5 rounded font-mono ${methodColors[step.method].bg} ${methodColors[step.method].text} ${methodColors[step.method].border} border`}>
                               {step.method}
                             </span>
-                            <span className="text-white text-sm font-medium">{step.label}</span>
+                            <span className="min-w-0 truncate text-white text-sm font-medium">{step.label}</span>
                             {step.duplicate === true && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">
+                              <span className="flex-shrink-0 whitespace-nowrap text-xs px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">
                                 Duplicate
                               </span>
                             )}
                             {(step.type || step.rawV2Step?.type) && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                              <span className="flex-shrink-0 whitespace-nowrap text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
                                 {step.type || step.rawV2Step?.type}
                               </span>
                             )}
