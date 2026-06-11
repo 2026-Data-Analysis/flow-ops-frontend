@@ -1505,6 +1505,7 @@ export function ScenarioBuilderPage() {
           <div className="flow-page-header-row mb-6">
             <div>
               <h1 className="flow-page-title">Scenario Builder</h1>
+              <p className="flow-page-subtitle">Compose and run multi-step test scenarios</p>
             </div>
 
             {isRunning && (

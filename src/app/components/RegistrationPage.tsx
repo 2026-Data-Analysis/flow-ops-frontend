@@ -359,12 +359,18 @@ export function RegistrationPage() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[#060609] p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-white text-2xl mb-1">Application Registration</h1>
+    <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
+      {/* Header */}
+      <div className="flow-page-header">
+        <div className="flow-page-header-row">
+          <div>
+            <h1 className="flow-page-title">Application Registration</h1>
+            <p className="flow-page-subtitle">Connect a repository and register your application</p>
+          </div>
         </div>
+      </div>
+      <div className="flow-page-body">
+        <div className="flow-page-body-inner">
 
         {/* Step Progress Indicator */}
         <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-xl px-8 py-7">
@@ -753,6 +759,7 @@ export function RegistrationPage() {
             </button>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

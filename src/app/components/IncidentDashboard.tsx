@@ -170,7 +170,7 @@ export function IncidentDashboard() {
   return (
     <div className="flex-1 overflow-y-auto bg-[#060609]">
       {/* Header */}
-      <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
+      <div className="flow-page-header">
         {/* Context Banner */}
         {executionResults && (
           <div className="mb-4 flex items-center justify-between px-4 py-2 bg-blue-500/5 border border-blue-500/20 rounded-lg">
@@ -191,34 +191,35 @@ export function IncidentDashboard() {
           </div>
         )}
 
-        <div className="responsive-header flex items-center justify-between mb-4">
+        <div className="flow-page-header-row mb-4">
           <div>
-            <h1 className="text-3xl font-bold text-white">Incident Dashboard</h1>
+            <h1 className="flow-page-title">Incident Dashboard</h1>
+            <p className="flow-page-subtitle">Monitor incidents and test health across environments</p>
           </div>
 
           {/* Filters */}
-          <div className="responsive-filters flex items-center gap-3">
-            <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-xl hover:bg-[#1a1a22] transition-colors">
+          <div className="responsive-filters flow-page-actions">
+            <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg hover:bg-[#1a1a22] transition-colors">
               <Calendar size={16} className="text-gray-400" />
               <span className="text-sm font-medium text-gray-300">{dateRange}</span>
               <ChevronDown size={16} className="text-gray-500" />
             </button>
-            
-            <select 
+
+            <select
               value={environment}
               onChange={(e) => setEnvironment(e.target.value)}
-              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-xl text-sm font-medium text-gray-300 hover:bg-[#1a1a22] transition-colors"
+              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm font-medium text-gray-300 hover:bg-[#1a1a22] transition-colors"
             >
               <option value="all">All Environments</option>
               <option value="prod">Production</option>
               <option value="staging">Staging</option>
               <option value="dev">Development</option>
             </select>
-            
-            <select 
+
+            <select
               value={severityFilter}
               onChange={(e) => setSeverityFilter(e.target.value)}
-              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-xl text-sm font-medium text-gray-300 hover:bg-[#1a1a22] transition-colors"
+              className="px-4 py-2 bg-[#13131a] border border-[#1f1f28] rounded-lg text-sm font-medium text-gray-300 hover:bg-[#1a1a22] transition-colors"
             >
               <option value="all">All Severity</option>
               <option value="critical">Critical</option>

@@ -236,16 +236,19 @@ export function ExecutionListPage() {
       {/* Main: Execution Logs Table */}
       <main className="flex flex-col overflow-hidden bg-[#060609]">
         {/* Header */}
-        <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-          <div className="responsive-header flex items-center justify-between mb-6">
+        <div className="flow-page-header">
+          <div className="flow-page-header-row mb-6">
             <div>
-              <h1 className="text-2xl font-semibold text-white mb-1">Execution Logs</h1>
+              <h1 className="flow-page-title">Execution Logs</h1>
+              <p className="flow-page-subtitle">Browse and filter past execution runs</p>
             </div>
 
-            <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white rounded-lg transition-all text-sm">
-              <Download size={16} />
-              Export
-            </button>
+            <div className="flow-page-actions">
+              <button className="flow-action-secondary">
+                <Download size={16} />
+                Export
+              </button>
+            </div>
           </div>
 
           {/* Search and Filters */}

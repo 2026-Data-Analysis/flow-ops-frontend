@@ -163,33 +163,36 @@ export function ResponseAssistantPage() {
   };
 
   return (
-    <div className="flex-1 overflow-hidden bg-[#060609] flex">
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8 space-y-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleCopy}
-                disabled={!content}
-                className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:bg-[#1a1a22] text-gray-300 rounded-xl font-medium transition-colors disabled:opacity-50"
-              >
-                {copied ? (
-                  <><CheckCircle2 size={16} className="text-green-400" />Copied!</>
-                ) : (
-                  <><Copy size={16} />Copy</>
-                )}
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:bg-[#1a1a22] text-gray-300 rounded-xl font-medium transition-colors">
-                <Save size={16} />Save
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors">
-                <Send size={16} />Share
-              </button>
-            </div>
+    <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
+      <div className="flow-page-header">
+        <div className="flow-page-header-row">
+          <div>
+            <h1 className="flow-page-title">Response Assistant</h1>
+            <p className="flow-page-subtitle">Draft and share incident response messages</p>
           </div>
+          <div className="flow-page-actions">
+            <button
+              onClick={handleCopy}
+              disabled={!content}
+              className="flow-action-secondary"
+            >
+              {copied ? (
+                <><CheckCircle2 size={16} className="text-green-400" />Copied!</>
+              ) : (
+                <><Copy size={16} />Copy</>
+              )}
+            </button>
+            <button className="flow-action-secondary">
+              <Save size={16} />Save
+            </button>
+            <button className="flow-action-primary">
+              <Send size={16} />Share
+            </button>
+          </div>
+        </div>
+      </div>
+      <main className="flow-page-body">
+        <div className="flow-page-body-inner space-y-6">
 
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 space-y-4">
             {!hasNavReport && (

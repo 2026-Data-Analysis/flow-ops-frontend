@@ -170,22 +170,27 @@ export function LogDetailPage() {
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
       {/* Header */}
-      <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <button
-            onClick={() => navigate('/monitoring/history')}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft size={18} />
-            <span>Back to History</span>
-          </button>
+      <div className="flow-page-header">
+        <button
+          onClick={() => navigate('/monitoring/history')}
+          className="mb-4 inline-flex items-center gap-2 text-sm text-gray-400 transition-colors hover:text-white"
+        >
+          <ArrowLeft size={18} />
+          <span>Back to History</span>
+        </button>
 
-          <div className="flex items-center gap-3">
+        <div className="flow-page-header-row">
+          <div>
+            <h1 className="flow-page-title">POST /api/v1/posts</h1>
+            <p className="flow-page-subtitle">Execution log details</p>
+          </div>
+
+          <div className="flow-page-actions">
             {failedSteps.length > 0 && (
               <button
                 onClick={handleGenerateReport}
                 disabled={isAnalyzing || !incidentAnalysis}
-                className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors"
+                className="flow-action-secondary"
               >
                 {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 Generate Incident Report
@@ -193,22 +198,18 @@ export function LogDetailPage() {
             )}
             <button
               onClick={() => navigate('/execution/run')}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+              className="flow-action-primary"
             >
               <Play size={16} />
               Re-run
             </button>
           </div>
         </div>
-
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">POST /api/v1/posts</h1>
-        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-5xl mx-auto space-y-6">
+      <div className="flow-page-body">
+        <div className="flow-page-body-inner">
 
           {/* Incident Analysis Panel */}
           {failedSteps.length > 0 && (
