@@ -240,7 +240,6 @@ export function ExecutionListPage() {
           <div className="flow-page-header-row mb-6">
             <div>
               <h1 className="flow-page-title">Execution Logs</h1>
-              <p className="flow-page-subtitle">Browse and filter past execution runs</p>
             </div>
 
             <div className="flow-page-actions">

@@ -365,7 +365,6 @@ export function RegistrationPage() {
         <div className="flow-page-header-row">
           <div>
             <h1 className="flow-page-title">Application Registration</h1>
-            <p className="flow-page-subtitle">Connect a repository and register your application</p>
           </div>
         </div>
       </div>

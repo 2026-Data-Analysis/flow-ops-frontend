@@ -396,7 +396,6 @@ export function TestExecutionPage() {
         <div className="flow-page-header-row mb-4">
           <div>
             <h1 className="flow-page-title">Run Tests</h1>
-            <p className="flow-page-subtitle">Execute test cases or scenarios by environment</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

@@ -331,7 +331,6 @@ export function ExecutionHistoryPage() {
         <div className="flow-page-header space-y-4">
           <div>
             <h2 className="flow-page-title">Execution History</h2>
-            <p className="flow-page-subtitle">{executions.length} past executions</p>
           </div>
 
           {/* Search */}

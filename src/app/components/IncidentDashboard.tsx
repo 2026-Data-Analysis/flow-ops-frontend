@@ -194,7 +194,6 @@ export function IncidentDashboard() {
         <div className="flow-page-header-row mb-4">
           <div>
             <h1 className="flow-page-title">Incident Dashboard</h1>
-            <p className="flow-page-subtitle">Monitor incidents and test health across environments</p>
           </div>
 
           {/* Filters */}

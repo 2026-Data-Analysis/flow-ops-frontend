@@ -182,7 +182,6 @@ export function LogDetailPage() {
         <div className="flow-page-header-row">
           <div>
             <h1 className="flow-page-title">POST /api/v1/posts</h1>
-            <p className="flow-page-subtitle">Execution log details</p>
           </div>
 
           <div className="flow-page-actions">

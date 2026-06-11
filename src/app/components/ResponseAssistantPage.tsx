@@ -168,7 +168,6 @@ export function ResponseAssistantPage() {
         <div className="flow-page-header-row">
           <div>
             <h1 className="flow-page-title">Response Assistant</h1>
-            <p className="flow-page-subtitle">Draft and share incident response messages</p>
           </div>
           <div className="flow-page-actions">
             <button

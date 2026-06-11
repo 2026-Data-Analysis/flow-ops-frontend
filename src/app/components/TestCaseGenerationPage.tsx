@@ -1090,7 +1090,6 @@ export function TestCaseGenerationPage() {
             <div className="flow-page-header-row">
               <div>
                 <h1 className="flow-page-title">AI Test Generation</h1>
-                <p className="flow-page-subtitle">Generate and manage test cases from your API spec</p>
               </div>
 
               {selectedExistingTestIds.length > 0 && (

@@ -322,7 +322,6 @@ export function ApiManagementPage() {
           <div className="flow-page-header-row mb-6">
           <div>
             <h1 className="flow-page-title">API Management</h1>
-            <p className="flow-page-subtitle">Monitor and manage your API endpoints and coverage</p>
           </div>
 
           {/* Summary Stats */}
