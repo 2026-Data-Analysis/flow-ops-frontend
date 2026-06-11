@@ -392,7 +392,13 @@ export function TestExecutionPage() {
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
       {/* Top Execution Control Bar */}
-      <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-4 py-3 sticky top-0 z-10 sm:px-6">
+      <div className="flow-page-header sticky top-0 z-10">
+        <div className="flow-page-header-row mb-4">
+          <div>
+            <h1 className="flow-page-title">Run Tests</h1>
+            <p className="flow-page-subtitle">Execute test cases or scenarios by environment</p>
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           {/* Left: Configuration Controls */}
           <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
@@ -492,7 +498,7 @@ export function TestExecutionPage() {
             {hasFailures && !isRunning && (
               <button
                 onClick={handleRerunFailed}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#13131a] border border-orange-500/20 hover:bg-orange-500/5 text-orange-400 rounded-lg transition-all text-sm"
+                className="flow-action-secondary h-9 border-orange-500/20 px-3 text-orange-400 hover:bg-orange-500/5"
               >
                 <RefreshCw size={15} />
                 <span className="hidden sm:inline">Re-run Failed ({failedLogs.length})</span>
@@ -503,7 +509,7 @@ export function TestExecutionPage() {
             {isRunning ? (
               <button
                 onClick={handleStop}
-                className="flex items-center gap-2 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-semibold text-sm"
+                className="flow-action-danger h-9 bg-red-600 px-4 text-white hover:bg-red-700"
               >
                 <StopCircle size={17} />
                 Stop
@@ -511,7 +517,7 @@ export function TestExecutionPage() {
             ) : (
               <button
                 onClick={handleRun}
-                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold text-sm"
+                className="flow-action-primary h-9 px-4"
               >
                 <Play size={17} />
                 {logs.length > 0 ? 'Run Again' : 'Run Tests'}
@@ -522,7 +528,7 @@ export function TestExecutionPage() {
       </div>
 
       {/* Main Content */}
-      <div className="responsive-detail-grid relative flex-1 overflow-hidden grid grid-cols-[1fr_320px]">
+      <div className="responsive-detail-grid relative flex-1 overflow-hidden grid grid-cols-[minmax(0,1fr)_24rem]">
         {/* Execution Console */}
         <main className="h-full overflow-y-auto bg-[#060609] p-6">
           {/* Console Header */}

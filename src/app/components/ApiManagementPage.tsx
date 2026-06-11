@@ -447,7 +447,7 @@ export function ApiManagementPage() {
 
       {/* Environment Tabs */}
       <div className="border-b border-[#1f1f28] bg-[#0a0a0f]">
-        <div className="px-8 py-3 overflow-x-auto">
+        <div className="px-4 py-3 sm:px-6 lg:px-8 overflow-x-auto">
           <div className="responsive-tabs flex items-center gap-2 flex-wrap">
             {environments.map((environment, index) => {
               const color = environmentColors[(index - 1 + environmentColors.length) % environmentColors.length];
@@ -480,7 +480,7 @@ export function ApiManagementPage() {
 
       {/* Domain Tabs */}
       <div className="border-b border-[#1f1f28] bg-[#0a0a0f]">
-        <div className="px-8 py-3 overflow-x-auto">
+        <div className="px-4 py-3 sm:px-6 lg:px-8 overflow-x-auto">
           <div className="flex items-center gap-2 flex-wrap">
             {domains.map((domain) => (
               <button
@@ -503,8 +503,8 @@ export function ApiManagementPage() {
       </div>
 
       {/* API List */}
-      <div className="api-management-list-scroll flex-1 overflow-y-auto p-8">
-        <div className="max-w-7xl mx-auto">
+      <div className="api-management-list-scroll flow-page-body">
+        <div className="mx-auto w-full max-w-6xl">
           {apiError && (
             <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
               {apiError}
@@ -640,7 +640,7 @@ export function ApiManagementPage() {
 
       {/* Right Panel: API Detail */}
       {selectedApiId && selectedApi && (
-        <aside className="api-detail-panel absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-1/2 xl:border-l xl:border-[#1f1f28]">
+        <aside className="api-detail-panel absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-[30rem] xl:border-l xl:border-[#1f1f28]">
           {/* Header */}
           <div className="p-5 border-b border-[#1f1f28] flex items-center justify-between">
             <div className="flex items-center gap-3">

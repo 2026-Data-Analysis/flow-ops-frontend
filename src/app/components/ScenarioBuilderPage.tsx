@@ -1615,8 +1615,8 @@ export function ScenarioBuilderPage() {
         </div>
 
         {/* Scenario List */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="space-y-2">
+        <div className="flow-page-body">
+          <div className="mx-auto w-full max-w-6xl space-y-2">
             {isLoading ? (
               <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-[#1f1f28] bg-[#0a0a0f] px-6 py-12">
                 <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500/20 bg-blue-500/10">
@@ -1738,7 +1738,7 @@ export function ScenarioBuilderPage() {
 
       {/* Right Panel: Scenario Detail */}
       {selectedScenarioId && selectedScenario && (
-        <aside className="absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-1/2 xl:border-l xl:border-[#1f1f28]">
+        <aside className="absolute inset-0 z-20 bg-[#0a0a0f] flex flex-col h-full overflow-hidden shadow-2xl shadow-black/40 xl:left-auto xl:w-[30rem] xl:border-l xl:border-[#1f1f28]">
           {/* Header */}
           <div className="p-6 border-b border-[#1f1f28]">
             <div className="flex items-center justify-between gap-3 mb-4">

@@ -245,6 +245,30 @@
     @apply flex flex-col gap-3 rounded-xl border border-[#1f1f28] bg-[#0a0a0f] p-4 sm:flex-row sm:items-center sm:justify-between;
   }
 
+  .flow-page-body {
+    @apply flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8;
+  }
+
+  .flow-page-body-inner {
+    @apply mx-auto w-full max-w-6xl space-y-6;
+  }
+
+  .flow-master-panel {
+    @apply w-full flex-1 lg:flex-none lg:w-[24rem] lg:border-r;
+  }
+
+  .flow-detail-panel {
+    @apply lg:flex-1;
+  }
+
+  .flow-side-panel {
+    @apply w-full xl:w-[30rem];
+  }
+
+  .flow-toolbar {
+    @apply border-b border-[#1f1f28] bg-[#0a0a0f] px-4 py-4 sm:px-6 lg:px-8;
+  }
+
   .api-management-shell {
     grid-template-rows: auto auto auto minmax(0, 1fr);
   }

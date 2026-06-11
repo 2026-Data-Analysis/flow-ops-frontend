@@ -326,12 +326,12 @@ export function ExecutionHistoryPage() {
     <div className="flex-1 overflow-hidden bg-[#060609] flex">
       {/* Left Panel: Execution List */}
       <aside className={`bg-[#0a0a0f] border-r border-[#1f1f28] flex flex-col transition-all duration-300 ${
-        selectedExecutionId ? 'w-[360px] xl:w-[400px]' : 'flex-1'
+        selectedExecutionId ? 'flow-master-panel' : 'flex-1'
       }`}>
-        <div className="p-6 border-b border-[#1f1f28] space-y-4">
+        <div className="flow-page-header space-y-4">
           <div>
-            <h2 className="text-white text-lg mb-1">Execution History</h2>
-            <p className="text-gray-500 text-sm">{executions.length} past executions</p>
+            <h2 className="flow-page-title">Execution History</h2>
+            <p className="flow-page-subtitle">{executions.length} past executions</p>
           </div>
 
           {/* Search */}
@@ -350,7 +350,7 @@ export function ExecutionHistoryPage() {
           <div className="space-y-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+              className={`flow-action-secondary h-9 px-3 ${
                 showFilters ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-[#13131a] border border-[#1f1f28] text-gray-400 hover:text-white'
               }`}
             >
@@ -506,7 +506,7 @@ export function ExecutionHistoryPage() {
             {/* Header */}
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-white text-xl mb-1">{selectedExecution.name}</h2>
+                <h2 className="flow-page-title">{selectedExecution.name}</h2>
                 <p className="text-gray-500 text-sm">Execution Details</p>
               </div>
               <button

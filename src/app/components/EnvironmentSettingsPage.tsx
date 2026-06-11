@@ -531,7 +531,7 @@ export function EnvironmentSettingsPage() {
             {/* Left: Environment List */}
             <aside
                 className={`bg-[#0a0a0f] border-b border-[#1f1f28] flex flex-col transition-all duration-300 lg:border-b-0 ${
-                    selectedEnvId ? 'w-full flex-1 lg:flex-none lg:w-96 lg:border-r' : 'w-full flex-1'
+                    selectedEnvId ? 'flow-master-panel' : 'w-full flex-1'
                 }`}
             >
                 <div className="flow-page-header">
@@ -674,8 +674,8 @@ export function EnvironmentSettingsPage() {
 
             {/* Right: Environment Detail */}
             {selectedEnv && (
-                <main className="absolute inset-0 z-20 overflow-y-auto bg-[#060609] p-4 shadow-2xl shadow-black/40 sm:p-6 lg:static lg:z-auto lg:flex-1 lg:border-l lg:border-[#1f1f28] lg:shadow-none">
-                    <div className="max-w-5xl mx-auto space-y-6">
+                <main className="flow-detail-panel absolute inset-0 z-20 overflow-y-auto bg-[#060609] p-4 shadow-2xl shadow-black/40 sm:p-6 lg:static lg:z-auto lg:border-l lg:border-[#1f1f28] lg:shadow-none">
+                    <div className="flow-page-body-inner">
                         {/* Header */}
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
