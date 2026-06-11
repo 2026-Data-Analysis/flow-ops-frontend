@@ -24,7 +24,6 @@ import {
   Loader2
 } from 'lucide-react';
 import {
-  DEFAULT_REQUESTER,
   flowOpsApi,
   getDefaultAppId,
   type AiScenarioBuildResponse,
@@ -1138,25 +1137,7 @@ export function ScenarioBuilderPage() {
 
   const runScenariosDirectly = async (ids: string[]) => {
     const numericIds = ids.map(Number).filter(Number.isFinite);
-    if (numericIds.length === 0) {
-      navigate('/execution/run', { state: { scenarioIds: ids } });
-      return;
-    }
-    setIsRunning(true);
-    setRunError(null);
-    try {
-      await flowOpsApi.runScenario({
-        appId: getDefaultAppId(),
-        environmentId: environments[0]?.id,
-        scenarioIds: numericIds,
-        createdBy: DEFAULT_REQUESTER,
-      });
-      navigate('/monitoring/history');
-    } catch (error) {
-      setRunError(error instanceof Error ? error.message : 'Failed to run scenario.');
-    } finally {
-      setIsRunning(false);
-    }
+    navigate('/execution/run', { state: { scenarioIds: numericIds.length > 0 ? numericIds : ids } });
   };
 
   const handleRunScenario = (scenarioId: string) => {
@@ -1520,10 +1501,10 @@ export function ScenarioBuilderPage() {
       {/* Main Panel: Scenario List */}
       <main className="flex flex-col overflow-hidden bg-[#060609]">
         {/* Header */}
-        <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
-          <div className="responsive-header flex items-center justify-between mb-6">
+        <div className="flow-page-header">
+          <div className="flow-page-header-row mb-6">
             <div>
-              <h1 className="text-white text-2xl font-semibold">Scenario Builder</h1>
+              <h1 className="flow-page-title">Scenario Builder</h1>
             </div>
 
             {isRunning && (
@@ -1536,10 +1517,10 @@ export function ScenarioBuilderPage() {
               <div className="text-sm text-red-400 max-w-xs truncate">{runError}</div>
             )}
             {selectedScenarioIds.length > 0 && !isRunning && (
-              <div className="flex items-center gap-2">
+              <div className="flow-page-actions">
                 <button
                   onClick={handleRunSelected}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg transition-colors text-sm font-medium"
+                  className="flow-action-primary"
                 >
                   <Play size={16} />
                   Run ({selectedScenarioIds.length})
@@ -1547,7 +1528,7 @@ export function ScenarioBuilderPage() {
                 <button
                   onClick={handleDeleteSelected}
                   disabled={isDeletingScenarios}
-                  className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 px-5 py-2.5 rounded-lg transition-colors text-sm disabled:opacity-50"
+                  className="flow-action-danger"
                 >
                   {isDeletingScenarios ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                   Delete ({selectedScenarioIds.length})
@@ -1557,10 +1538,10 @@ export function ScenarioBuilderPage() {
           </div>
 
           {/* Top Actions */}
-          <div className="responsive-filters flex items-center gap-3 mb-4">
+          <div className="responsive-filters flow-page-actions mb-4">
             <button
               onClick={() => setShowCustomPromptModal(true)}
-              className="flex items-center gap-2 bg-[#13131a] border border-purple-500/30 hover:bg-purple-500/5 text-purple-300 px-6 py-3 rounded-lg transition-all font-semibold"
+              className="flow-action-secondary border-purple-500/30 px-5 text-purple-300 hover:bg-purple-500/5"
             >
               <Sparkles size={20} className="text-purple-400" />
               Custom Prompt
@@ -1568,7 +1549,7 @@ export function ScenarioBuilderPage() {
 
             <button
               onClick={handleOpenRecommendations}
-              className="scenario-ai-action flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-semibold"
+              className="scenario-ai-action flow-action-primary bg-gradient-to-r from-purple-600 to-blue-600 px-5 hover:from-purple-700 hover:to-blue-700"
             >
               <Sparkles size={20} />
               Recommend Scenario
@@ -1576,7 +1557,7 @@ export function ScenarioBuilderPage() {
 
             <button
               onClick={handleManualScenarioCreate}
-              className="flex items-center gap-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white px-6 py-3 rounded-lg transition-all"
+              className="flow-action-secondary px-5"
             >
               <Plus size={20} />
               Manual Scenario

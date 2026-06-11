@@ -34,6 +34,7 @@ interface ApplicationRepository {
     repositoryUrl?: string;
     defaultBranch?: string;
     connectionStatus?: string;
+    autoSyncEnabled?: boolean;
 }
 
 const readStoredRepositories = (): ApplicationRepository[] => {
@@ -68,6 +69,7 @@ const normalizeRepository = (
         repositoryUrl: repository.repositoryUrl || stored?.repositoryUrl,
         defaultBranch: repository.defaultBranch || stored?.defaultBranch,
         connectionStatus: repository.connectionStatus || stored?.connectionStatus || 'ACTIVE',
+        autoSyncEnabled: repository.autoSyncEnabled ?? stored?.autoSyncEnabled ?? true,
     };
 };
 
@@ -79,6 +81,8 @@ export function ApplicationSettingsPage() {
     const [draftTitles, setDraftTitles] = useState<Record<number, string>>({});
     const [isLoading, setIsLoading] = useState(true);
     const [pendingId, setPendingId] = useState<number | null>(null);
+    const [autoSyncPendingId, setAutoSyncPendingId] = useState<number | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<ApplicationRepository | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
     const [apiError, setApiError] = useState<string | null>(null);
 
@@ -200,26 +204,64 @@ export function ApplicationSettingsPage() {
         }
     };
 
-    const handleDelete = async (repository: ApplicationRepository) => {
-        const nextRepositories = repositories.filter((item) => item.id !== repository.id);
-        setPendingId(repository.id);
+    const handleAutoSyncChange = async (repository: ApplicationRepository, autoSyncEnabled: boolean) => {
+        const previousRepositories = repositories;
+        const optimisticRepositories = repositories.map((item) =>
+            item.id === repository.id ? { ...item, autoSyncEnabled } : item,
+        );
+        setAutoSyncPendingId(repository.id);
+        setApiError(null);
         setNotice(null);
+        updateRepositoryState(optimisticRepositories);
 
         try {
-            await flowOpsApi.deleteRepository(repository.projectId, repository.id);
-        } catch (error) {
-            setApiError(
-                error instanceof Error ? error.message : 'Repository delete API failed. Stored history was updated.',
+            const updated = await flowOpsApi.updateRepositoryAutoSync(repository.projectId, repository.id, autoSyncEnabled);
+            const nextRepositories = optimisticRepositories.map((item) =>
+                item.id === repository.id
+                    ? {
+                          ...item,
+                          autoSyncEnabled: updated.autoSyncEnabled ?? autoSyncEnabled,
+                          connectionStatus: updated.connectionStatus || item.connectionStatus,
+                          defaultBranch: updated.defaultBranch || item.defaultBranch,
+                      }
+                    : item,
             );
-        } finally {
             updateRepositoryState(nextRepositories);
-            if (repository.appId === activeApplication.appId && nextRepositories[0]) {
-                rememberAppId(nextRepositories[0].appId);
-                rememberAppTitle(nextRepositories[0].title);
-                setActiveApplication({ appId: nextRepositories[0].appId, title: nextRepositories[0].title });
+            setNotice(`Auto Sync ${autoSyncEnabled ? 'enabled' : 'disabled'}.`);
+        } catch (error) {
+            updateRepositoryState(previousRepositories);
+            setApiError(error instanceof Error ? error.message : 'Auto Sync update API failed.');
+        } finally {
+            setAutoSyncPendingId(null);
+        }
+    };
+
+    const handleDeleteApplication = async (repository: ApplicationRepository) => {
+        setPendingId(repository.id);
+        setNotice(null);
+        setApiError(null);
+
+        try {
+            await flowOpsApi.deleteApp(repository.appId);
+            const nextRepositories = repositories.filter((item) => item.appId !== repository.appId);
+            updateRepositoryState(nextRepositories);
+            if (repository.appId === activeApplication.appId) {
+                if (nextRepositories[0]) {
+                    rememberAppId(nextRepositories[0].appId);
+                    rememberAppTitle(nextRepositories[0].title);
+                    setActiveApplication({ appId: nextRepositories[0].appId, title: nextRepositories[0].title });
+                } else {
+                    localStorage.removeItem('flowOps.appId');
+                    localStorage.removeItem('flowOps.appTitle');
+                    setActiveApplication({ appId: 1, title: 'Production API' });
+                }
             }
             setSelectedRepositoryId(nextRepositories[0]?.id ?? null);
-            setNotice('Repository removed from application settings.');
+            setNotice('Application deleted.');
+            setDeleteTarget(null);
+        } catch (error) {
+            setApiError(error instanceof Error ? error.message : 'Application delete API failed.');
+        } finally {
             setPendingId(null);
         }
     };
@@ -238,7 +280,7 @@ export function ApplicationSettingsPage() {
                     selectedRepository ? 'w-full flex-1 lg:flex-none lg:w-96 lg:border-r' : 'w-full flex-1'
                 }`}
             >
-                <div className="border-b border-[#1f1f28] p-4 sm:p-6">
+                <div className="flow-page-header">
                     <div className="mb-2 flex items-center gap-2 text-xs text-gray-500">
                         <span>Settings</span>
                         <ChevronRight size={13} />
@@ -246,7 +288,7 @@ export function ApplicationSettingsPage() {
                     </div>
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                            <h1 className="truncate text-2xl font-semibold text-white">
+                            <h1 className="flow-page-title truncate">
                                 {activeRepository?.title || activeApplication.title}
                             </h1>
                             <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-gray-400">
@@ -390,7 +432,7 @@ export function ApplicationSettingsPage() {
                                     >
                                         <ArrowLeft size={18} />
                                     </button>
-                                    <h2 className="truncate text-2xl font-semibold text-white">Repository Details</h2>
+                                    <h2 className="flow-page-title truncate">Repository Details</h2>
                                 </div>
                                 <p className="text-sm text-gray-500">Manage repository configuration</p>
                             </div>
@@ -461,16 +503,38 @@ export function ApplicationSettingsPage() {
                                         <div>
                                             <div className="text-white">Auto Sync</div>
                                             <div className="text-sm text-gray-500">
-                                                Automatically sync repository changes
+                                                Automatically refresh API inventory from GitHub merge pushes
                                             </div>
                                         </div>
                                         <button
                                             type="button"
-                                            disabled
-                                            className="inline-flex h-9 w-16 flex-shrink-0 cursor-not-allowed items-center justify-start rounded-full bg-[#2f2f38] p-1 opacity-60"
-                                            title="Auto sync backend API is not connected yet"
+                                            onClick={() =>
+                                                handleAutoSyncChange(
+                                                    selectedRepository,
+                                                    !(selectedRepository.autoSyncEnabled ?? true),
+                                                )
+                                            }
+                                            disabled={
+                                                selectedIsPending ||
+                                                autoSyncPendingId === selectedRepository.id ||
+                                                selectedRepository.connectionStatus !== 'ACTIVE'
+                                            }
+                                            className={`inline-flex h-9 w-16 flex-shrink-0 items-center rounded-full p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                                                selectedRepository.autoSyncEnabled ?? true
+                                                    ? 'justify-end bg-blue-600'
+                                                    : 'justify-start bg-[#2f2f38] hover:bg-[#3a3a44]'
+                                            }`}
+                                            title={
+                                                selectedRepository.connectionStatus === 'ACTIVE'
+                                                    ? 'Toggle Auto Sync'
+                                                    : 'Auto Sync requires an active GitHub connection'
+                                            }
                                         >
-                                            <span className="h-7 w-7 rounded-full bg-white shadow-sm" />
+                                            {autoSyncPendingId === selectedRepository.id ? (
+                                                <Loader2 size={18} className="mx-auto animate-spin text-white" />
+                                            ) : (
+                                                <span className="h-7 w-7 rounded-full bg-white shadow-sm" />
+                                            )}
                                         </button>
                                     </div>
                                 </div>
@@ -480,12 +544,12 @@ export function ApplicationSettingsPage() {
                         <div className="space-y-3">
                             <button
                                 type="button"
-                                onClick={() => handleDelete(selectedRepository)}
+                                onClick={() => setDeleteTarget(selectedRepository)}
                                 disabled={selectedIsPending}
                                 className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-red-300 transition-colors hover:border-red-500/30 hover:bg-red-500/15 disabled:opacity-50"
                             >
                                 <Trash2 size={18} />
-                                Delete Repository
+                                Delete Application
                             </button>
                             <button
                                 type="button"
@@ -503,6 +567,44 @@ export function ApplicationSettingsPage() {
                         </div>
                     </div>
                 </main>
+            )}
+
+            {deleteTarget && (
+                <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+                    <div className="w-full max-w-md rounded-xl border border-[#1f1f28] bg-[#0a0a0f] p-6 shadow-2xl shadow-black/40">
+                        <div className="mb-4 flex items-start gap-3">
+                            <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10">
+                                <TriangleAlert size={20} className="text-red-300" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-white">Delete application?</h3>
+                                <p className="mt-2 text-sm leading-6 text-gray-400">
+                                    This will delete {deleteTarget.title} and its FlowOps data, including environments,
+                                    repositories, API inventory, test cases, scenarios, and execution history.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setDeleteTarget(null)}
+                                disabled={pendingId === deleteTarget.id}
+                                className="rounded-lg border border-[#1f1f28] bg-[#13131a] px-4 py-2 text-sm text-gray-300 transition-colors hover:text-white disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleDeleteApplication(deleteTarget)}
+                                disabled={pendingId === deleteTarget.id}
+                                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {pendingId === deleteTarget.id && <Loader2 size={15} className="animate-spin" />}
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

@@ -326,7 +326,7 @@ export function ExecutionHistoryPage() {
     <div className="flex-1 overflow-hidden bg-[#060609] flex">
       {/* Left Panel: Execution List */}
       <aside className={`bg-[#0a0a0f] border-r border-[#1f1f28] flex flex-col transition-all duration-300 ${
-        selectedExecutionId ? 'w-[480px]' : 'flex-1'
+        selectedExecutionId ? 'w-[360px] xl:w-[400px]' : 'flex-1'
       }`}>
         <div className="p-6 border-b border-[#1f1f28] space-y-4">
           <div>
@@ -502,7 +502,7 @@ export function ExecutionHistoryPage() {
       {/* Right Panel: Execution Detail */}
       {selectedExecution ? (
         <main className="flex-1 overflow-y-auto bg-[#060609] animate-slide-in">
-          <div className="p-6 space-y-6">
+          <div className="p-4 space-y-5 lg:p-6">
             {/* Header */}
             <div className="flex items-start justify-between">
               <div>
@@ -550,28 +550,28 @@ export function ExecutionHistoryPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-[#13131a] rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                <div className="bg-[#13131a] rounded-lg p-3">
                   <div className="text-gray-400 text-xs mb-2">Total Steps</div>
-                  <div className="text-white text-2xl font-semibold">{selectedExecution.totalSteps}</div>
+                  <div className="text-white text-xl font-semibold">{selectedExecution.totalSteps}</div>
                 </div>
-                <div className="bg-[#13131a] rounded-lg p-4">
+                <div className="bg-[#13131a] rounded-lg p-3">
                   <div className="text-gray-400 text-xs mb-2">Passed</div>
-                  <div className="text-green-400 text-2xl font-semibold">{selectedExecution.passedSteps}</div>
+                  <div className="text-green-400 text-xl font-semibold">{selectedExecution.passedSteps}</div>
                 </div>
-                <div className="bg-[#13131a] rounded-lg p-4">
+                <div className="bg-[#13131a] rounded-lg p-3">
                   <div className="text-gray-400 text-xs mb-2">Failed</div>
-                  <div className="text-red-400 text-2xl font-semibold">{selectedExecution.failedSteps}</div>
+                  <div className="text-red-400 text-xl font-semibold">{selectedExecution.failedSteps}</div>
                 </div>
-                <div className="bg-[#13131a] rounded-lg p-4">
+                <div className="bg-[#13131a] rounded-lg p-3">
                   <div className="text-gray-400 text-xs mb-2">Duration</div>
-                  <div className="text-white text-2xl font-semibold">{formatDuration(selectedExecution.duration)}</div>
+                  <div className="text-white text-xl font-semibold">{formatDuration(selectedExecution.duration)}</div>
                 </div>
               </div>
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleRerun}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"

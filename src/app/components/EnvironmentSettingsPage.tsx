@@ -534,9 +534,9 @@ export function EnvironmentSettingsPage() {
                     selectedEnvId ? 'w-full flex-1 lg:flex-none lg:w-96 lg:border-r' : 'w-full flex-1'
                 }`}
             >
-                <div className="p-4 border-b border-[#1f1f28] sm:p-6">
-                    <h2 className="text-white text-lg mb-1">Environments</h2>
-                    <p className="text-gray-500 text-sm">Automation hubs for your testing workflow</p>
+                <div className="flow-page-header">
+                    <h2 className="flow-page-title">Environments</h2>
+                    <p className="flow-page-subtitle">Automation hubs for your testing workflow</p>
                     {apiError && (
                         <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
                             Backend unavailable: {apiError}
@@ -689,7 +689,7 @@ export function EnvironmentSettingsPage() {
                                     >
                                         <ArrowLeft size={18} />
                                     </button>
-                                    <h1 className="text-white text-2xl flex min-w-0 flex-wrap items-center gap-3 break-words">
+                                    <h1 className="flow-page-title flex min-w-0 flex-wrap items-center gap-3 break-words">
                                         {selectedEnv.name}
                                         <span
                                             className={`text-xs px-3 py-1 rounded-full ${

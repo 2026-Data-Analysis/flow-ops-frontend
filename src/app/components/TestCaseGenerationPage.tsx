@@ -1087,18 +1087,18 @@ export function TestCaseGenerationPage() {
         <main className="overflow-y-auto bg-[#060609]">
           <div className="p-8 max-w-6xl mx-auto space-y-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flow-page-header-row">
               <div>
-                <h1 className="text-white text-2xl font-semibold">AI Test Generation</h1>
+                <h1 className="flow-page-title">AI Test Generation</h1>
               </div>
 
               {selectedExistingTestIds.length > 0 && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flow-page-actions justify-end">
                   <span className="text-sm text-blue-300">{selectedExistingTestIds.length} selected</span>
                   <button
                     type="button"
                     onClick={handleRunSelectedExisting}
-                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                    className="flow-action-primary"
                   >
                     <Play size={16} />
                     Run
@@ -1107,7 +1107,7 @@ export function TestCaseGenerationPage() {
                     type="button"
                     onClick={handleDeleteSelectedExisting}
                     disabled={isDeletingTests}
-                    className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-[#13131a] px-5 py-2.5 text-sm font-semibold text-red-400 transition-all hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flow-action-danger"
                   >
                     {isDeletingTests ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                     Delete
@@ -1116,14 +1116,14 @@ export function TestCaseGenerationPage() {
               )}
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flow-page-actions">
               <button
                 onClick={() => {
                   setPendingApiIdsForGeneration(selectedApiIdsForGeneration);
                   setShowApiModal(true);
                 }}
                 disabled={isGenerating}
-                className="scenario-ai-action flex items-center justify-center gap-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
+                className="scenario-ai-action flow-action-primary bg-gradient-to-r from-purple-600 to-blue-600 px-5 hover:from-purple-700 hover:to-blue-700 disabled:opacity-50"
               >
                 {isGenerating ? <Clock size={20} className="animate-pulse" /> : <Sparkles size={20} />}
                 <span className="font-semibold">
@@ -1135,7 +1135,7 @@ export function TestCaseGenerationPage() {
                 <button
                   onClick={() => handleGenerateTests()}
                   disabled={isGenerating}
-                  className="scenario-ai-action flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl transition-colors disabled:opacity-50"
+                  className="scenario-ai-action flow-action-primary px-5 disabled:opacity-50"
                 >
                   {isGenerating ? <Clock size={18} className="animate-pulse" /> : <Sparkles size={18} />}
                   {isGenerating ? 'Generating...' : `Generate for Selected APIs (${selectedApiIdsForGeneration.length})`}
@@ -1146,7 +1146,7 @@ export function TestCaseGenerationPage() {
                 <button
                   onClick={handleRunGeneratedTests}
                   disabled={isGenerating}
-                  className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl transition-colors ${
+                  className={`flow-action-primary px-5 ${
                     isGenerating
                       ? 'cursor-not-allowed bg-[#13131a] text-gray-500 ring-1 ring-[#1f1f28]'
                       : 'bg-blue-600 text-white hover:bg-blue-700'
@@ -1189,7 +1189,7 @@ export function TestCaseGenerationPage() {
                   <h2 className="text-white text-lg font-semibold">Generated for Selected APIs</h2>
                   <p className="text-gray-500 text-sm">Open an API to review context, comparison, coverage, and editable generated cases.</p>
                 </div>
-                <div className="flex flex-col gap-3 rounded-xl border border-[#1f1f28] bg-[#0a0a0f] p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flow-selection-bar">
                   <div className="text-sm text-gray-400">
                     <span className="text-white font-semibold">{selectedGeneratedTestIds.length}</span> of {generatedTests.length} generated test cases selected
                     {generationId && (
@@ -1203,14 +1203,14 @@ export function TestCaseGenerationPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedGeneratedTestIds(generatedTests.map((test) => test.id))}
-                      className="px-3 py-2 rounded-lg border border-[#1f1f28] bg-[#13131a] text-sm text-gray-300 hover:text-white"
+                      className="flow-action-secondary h-9 px-3"
                     >
                       Select All
                     </button>
                     <button
                       type="button"
                       onClick={() => setSelectedGeneratedTestIds([])}
-                      className="px-3 py-2 rounded-lg border border-[#1f1f28] bg-[#13131a] text-sm text-gray-300 hover:text-white"
+                      className="flow-action-secondary h-9 px-3"
                     >
                       Clear
                     </button>
@@ -1221,7 +1221,7 @@ export function TestCaseGenerationPage() {
                         selectedGeneratedTestIds.length === 0 ||
                         isSavingTests
                       }
-                      className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flow-action-primary h-9 px-3"
                     >
                       <Save size={16} />
                       {isSavingTests ? 'Saving...' : 'Save Selected'}

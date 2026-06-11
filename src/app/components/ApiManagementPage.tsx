@@ -314,15 +314,15 @@ export function ApiManagementPage() {
   const totalTests = filteredEndpoints.reduce((sum, e) => sum + e.testCount, 0);
 
   return (
-    <div className="responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
+    <div className="api-management-shell responsive-detail-grid relative flex-1 overflow-hidden bg-[#060609] grid" style={{ gridTemplateColumns: '1fr' }}>
       {/* Left Panel: API List */}
       <div className="flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-8 py-6">
-          <div className="responsive-header flex items-center justify-between mb-6">
+        <div className="flow-page-header">
+          <div className="flow-page-header-row mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-1">API Discovery</h1>
-            <p className="text-gray-400">Find APIs and generate tests</p>
+            <h1 className="flow-page-title">API Management</h1>
+            <p className="flow-page-subtitle">Find APIs and generate tests</p>
           </div>
 
           {/* Summary Stats */}
@@ -368,7 +368,7 @@ export function ApiManagementPage() {
           </div>
 
           {/* Filters Row */}
-          <div className="responsive-filters flex items-center gap-3">
+          <div className="responsive-filters flow-page-actions">
             {selectedApiIds.length > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                 <span className="text-sm text-blue-400">
@@ -386,7 +386,7 @@ export function ApiManagementPage() {
             <button
               onClick={handleRunTests}
               disabled={selectedApiIds.length === 0}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-[#13131a] disabled:text-gray-500 disabled:border disabled:border-[#1f1f28]"
+              className="flow-action-primary disabled:bg-[#13131a] disabled:text-gray-500 disabled:border disabled:border-[#1f1f28]"
               title={selectedApiIds.length > 0 ? 'Run selected APIs' : 'Select APIs to run tests'}
             >
               <Play size={14} />
@@ -395,7 +395,7 @@ export function ApiManagementPage() {
 
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+              className={`flow-action-secondary ${
                 showFilters ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-[#13131a] border border-[#1f1f28] text-gray-400 hover:text-white'
               }`}
             >
@@ -503,7 +503,7 @@ export function ApiManagementPage() {
       </div>
 
       {/* API List */}
-      <div className="flex-1 overflow-y-auto p-8">
+      <div className="api-management-list-scroll flex-1 overflow-y-auto p-8">
         <div className="max-w-7xl mx-auto">
           {apiError && (
             <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">

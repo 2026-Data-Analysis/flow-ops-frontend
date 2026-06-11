@@ -142,7 +142,8 @@ export interface RepositoryResponse {
   repositoryUrl?: string;
   defaultBranch?: string;
   connectionStatus?: 'ACTIVE' | 'DISCONNECTED' | 'ERROR';
-  branches?: Array<{ name?: string; branchName?: string; defaultBranch?: boolean; selected?: boolean }>;
+  autoSyncEnabled?: boolean;
+  branches?: Array<{ name?: string; branchName?: string; isDefault?: boolean; defaultBranch?: boolean; selected?: boolean }>;
   scanResults?: ScanResultResponse[];
 }
 
@@ -1229,7 +1230,7 @@ export const flowOpsApi = {
   testConnection: (environmentId: number) =>
     unwrap(request<ApiResponse<unknown>>(`/environments/${environmentId}/test-connection`, { method: 'POST' })),
 
-  registerRepository: (projectId: number, body: { fullName: string; appId?: number; selectedBranches?: string[] }) =>
+  registerRepository: (projectId: number, body: { fullName: string; appId?: number; selectedBranches?: string[]; autoSyncEnabled?: boolean }) =>
     unwrap(
       request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories`, {
         method: 'POST',
@@ -1249,6 +1250,14 @@ export const flowOpsApi = {
       request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories/${repositoryId}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
+      }),
+    ),
+
+  updateRepositoryAutoSync: (projectId: number, repositoryId: number, autoSyncEnabled: boolean) =>
+    unwrap(
+      request<ApiResponse<RepositoryResponse>>(`/projects/${projectId}/repositories/${repositoryId}/auto-sync`, {
+        method: 'PATCH',
+        body: JSON.stringify({ autoSyncEnabled }),
       }),
     ),
 

@@ -217,6 +217,12 @@ export function TestExecutionPage() {
       .filter((id) => Number.isFinite(id) && id > 0);
   };
 
+  const getSelectedScenarioIds = () => {
+    const state = location.state as any;
+    const scenarioIds = state?.scenarioIds ?? (state?.scenarioId ? [state.scenarioId] : []);
+    return scenarioIds.map(Number).filter((id: number) => Number.isFinite(id) && id > 0);
+  };
+
   const getSelectedTestCaseIds = () => {
     const state = location.state as any;
     return (state?.selectedTestCaseIds || [])
@@ -249,9 +255,12 @@ export function TestExecutionPage() {
 
     const apiIds = getSelectedApiIds();
     const testCaseIds = getSelectedTestCaseIds();
+    const scenarioIds = getSelectedScenarioIds();
+    const hasExplicitTarget = apiIds.length > 0 || testCaseIds.length > 0 || scenarioIds.length > 0;
     const testCaseNameById = getSelectedTestCaseNameMap();
     const fallbackTestCaseName = testCaseIds.length === 1 ? testCaseNameById.get(testCaseIds[0]) : undefined;
     const environmentId = resolveEnvironmentId();
+    const selectedLevel = testLevel.toUpperCase() as any;
 
     try {
       if (!environmentId) {
@@ -268,17 +277,21 @@ export function TestExecutionPage() {
 
       let result: ExecutionDetailResponse;
       if (executionType === 'scenario') {
-        const state = location.state as any;
-        const scenarioIds = state?.scenarioIds ?? (state?.scenarioId ? [state.scenarioId] : []);
-        const normalizedScenarioIds = scenarioIds.map(Number).filter(Number.isFinite);
+        let normalizedScenarioIds = scenarioIds;
         if (normalizedScenarioIds.length === 0) {
-          throw new Error('Select a scenario before running tests.');
+          const scenarios = await flowOpsApi.listScenariosByEnvironment(activeApplication.appId, environmentId);
+          normalizedScenarioIds = scenarios
+            .map((scenario) => Number(scenario.id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+          if (normalizedScenarioIds.length === 0) {
+            throw new Error('No scenarios were found for the selected environment.');
+          }
         }
         result = await flowOpsApi.runScenario({
           appId: activeApplication.appId,
           environmentId,
           scenarioIds: normalizedScenarioIds,
-          testLevel: testLevel.toUpperCase() as any,
+          testLevel: hasExplicitTarget ? undefined : selectedLevel,
           tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
@@ -287,7 +300,7 @@ export function TestExecutionPage() {
           appId: activeApplication.appId,
           environmentId,
           testCaseIds,
-          testLevel: testLevel.toUpperCase() as any,
+          testLevel: undefined,
           tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
@@ -297,12 +310,18 @@ export function TestExecutionPage() {
           environmentId,
           apiIds,
           executionMode: 'RUN_EXISTING',
-          testLevel: testLevel.toUpperCase() as any,
+          testLevel: undefined,
           tearDownMode,
           createdBy: DEFAULT_REQUESTER,
         });
       } else {
-        throw new Error('Select test cases or APIs before running tests.');
+        result = await flowOpsApi.runTestCases({
+          appId: activeApplication.appId,
+          environmentId,
+          testLevel: selectedLevel,
+          tearDownMode,
+          createdBy: DEFAULT_REQUESTER,
+        });
       }
       const nextLogs = normalizeExecution(result, executionType, { testCaseNameById, fallbackTestCaseName });
       setLogs(nextLogs);
@@ -364,6 +383,11 @@ export function TestExecutionPage() {
   const failedLogs = logs.filter(log => log.status === 'failed');
   const hasFailures = failedLogs.length > 0;
   const isComplete = !isRunning && logs.length > 0;
+  const levelSelectionDisabled =
+    isRunning ||
+    getSelectedApiIds().length > 0 ||
+    getSelectedTestCaseIds().length > 0 ||
+    getSelectedScenarioIds().length > 0;
 
   return (
     <div className="flex-1 overflow-hidden bg-[#060609] flex flex-col">
@@ -428,8 +452,9 @@ export function TestExecutionPage() {
               <select
                 value={testLevel}
                 onChange={(e) => setTestLevel(e.target.value)}
-                disabled={isRunning}
+                disabled={levelSelectionDisabled}
                 className="bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/30 transition-colors disabled:opacity-50"
+                title={levelSelectionDisabled ? 'Level is fixed for selected APIs, test cases, or scenarios' : 'Select test level'}
               >
                 <option value="smoke">Smoke</option>
                 <option value="sanity">Sanity</option>
