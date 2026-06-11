@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Bot,
   Sparkles,
   X,
   Minimize2,
@@ -1767,14 +1766,14 @@ export function OrchestratorAgent() {
 
       {isOpen && !isMinimized && (
         <div className="fixed bottom-6 right-6 w-[440px] h-[72vh] min-h-[500px] bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-up">
-          <div className="bg-gradient-to-r from-violet-600 to-indigo-700 px-4 py-3.5 flex items-center justify-between shrink-0">
+          <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-3.5 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center">
-                <Bot size={20} className="text-white" />
+                <Sparkles size={20} className="text-white" />
               </div>
               <div>
                 <p className="text-white font-semibold text-sm leading-none mb-0.5">FlowOps Manager</p>
-                <p className="text-violet-200 text-xs">Guides testing and incidents</p>
+                <p className="text-blue-200 text-xs">Guides testing and incidents</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -1795,8 +1794,8 @@ export function OrchestratorAgent() {
                 <div className="max-w-[95%] min-w-0 w-full">
                   {msg.role === 'assistant' && (
                     <div className="flex items-center gap-2 mb-1.5">
-                      <div className="w-5 h-5 bg-violet-600 rounded-full flex items-center justify-center shrink-0">
-                        <Bot size={11} className="text-white" />
+                      <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shrink-0">
+                        <Sparkles size={11} className="text-white" />
                       </div>
                       <span className="text-xs text-gray-400">FlowOps</span>
                     </div>
