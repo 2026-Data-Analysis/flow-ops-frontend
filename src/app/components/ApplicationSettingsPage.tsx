@@ -281,11 +281,6 @@ export function ApplicationSettingsPage() {
                 }`}
             >
                 <div className="flow-page-header">
-                    <div className="mb-2 flex items-center gap-2 text-xs text-gray-500">
-                        <span>Settings</span>
-                        <ChevronRight size={13} />
-                        <span>Application</span>
-                    </div>
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                             <h1 className="flow-page-title truncate">
