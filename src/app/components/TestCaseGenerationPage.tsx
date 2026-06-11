@@ -1089,8 +1089,7 @@ export function TestCaseGenerationPage() {
             {/* Header */}
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-white text-2xl font-semibold mb-1">AI Test Generation</h1>
-                <p className="text-gray-500 text-sm">Select APIs from a branch/environment source. Generated test cases are saved at the App level.</p>
+                <h1 className="text-white text-2xl font-semibold">AI Test Generation</h1>
               </div>
 
               {selectedExistingTestIds.length > 0 && (
@@ -1372,7 +1371,7 @@ export function TestCaseGenerationPage() {
                   <div className="p-5">
                     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <h3 className="text-white font-semibold">Previously saved test cases for this App</h3>
+                        <h3 className="text-white font-semibold">Saved test cases</h3>
                       </div>
                       <div className="flex items-center gap-3 flex-shrink-0">
                         {filteredExistingTests.length > 0 && (

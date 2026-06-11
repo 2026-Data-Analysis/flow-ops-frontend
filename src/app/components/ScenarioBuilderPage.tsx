@@ -1523,8 +1523,7 @@ export function ScenarioBuilderPage() {
         <div className="bg-[#0a0a0f] border-b border-[#1f1f28] px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
           <div className="responsive-header flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-white text-2xl font-semibold mb-1">Scenario Builder</h1>
-              <p className="text-gray-500 text-sm">AI-powered multi-step API scenario testing</p>
+              <h1 className="text-white text-2xl font-semibold">Scenario Builder</h1>
             </div>
 
             {isRunning && (

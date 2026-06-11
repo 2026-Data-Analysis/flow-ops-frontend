@@ -1349,7 +1349,7 @@ const INIT_MESSAGE: Message = {
   id: 'init',
   role: 'assistant',
   content:
-    '👋 안녕하세요! 저는 Orchestrator Agent입니다.\n\n여러 AI 에이전트를 조율하여 네 가지 작업을 수행할 수 있습니다:\n\n• 🔍 로그 분석 — 에러 패턴 감지 및 원인 분석\n• 🧪 테스트 케이스 생성 — API 엔드포인트 테스트 자동 생성\n• 🌟 시나리오 생성 — 다중 API 연계 E2E 시나리오 자동 생성\n• ⚡ 동시 실행 — 로그 분석 + 테스트 케이스 병렬 처리\n\n아래 버튼을 선택해 주세요.',
+    '👋 안녕하세요! 저는 FlowOps Manager입니다.\n\n테스트 생성, 시나리오 구성, 로그 분석을 한곳에서 도와드릴게요.\n\n아래 버튼을 선택해 주세요.',
 };
 
 const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
@@ -1758,7 +1758,7 @@ export function OrchestratorAgent() {
       {(!isOpen || isMinimized) && (
         <button onClick={() => { setIsOpen(true); setIsMinimized(false); }}
           className="fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-violet-600 to-indigo-700 hover:from-violet-500 hover:to-indigo-600 text-white rounded-full shadow-lg shadow-violet-500/30 hover:shadow-violet-500/50 transition-all duration-300 flex items-center justify-center z-50 group"
-          title="Orchestrator Agent">
+          title="FlowOps Manager">
           <Bot size={24} className="group-hover:scale-110 transition-transform" />
           <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#060609] animate-pulse" />
         </button>
@@ -1772,8 +1772,8 @@ export function OrchestratorAgent() {
                 <Bot size={20} className="text-white" />
               </div>
               <div>
-                <p className="text-white font-semibold text-sm leading-none mb-0.5">Orchestrator Agent</p>
-                <p className="text-violet-200 text-xs">Multi-agent coordinator</p>
+                <p className="text-white font-semibold text-sm leading-none mb-0.5">FlowOps Manager</p>
+                <p className="text-violet-200 text-xs">Guides testing and incidents</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -1797,7 +1797,7 @@ export function OrchestratorAgent() {
                       <div className="w-5 h-5 bg-violet-600 rounded-full flex items-center justify-center shrink-0">
                         <Bot size={11} className="text-white" />
                       </div>
-                      <span className="text-xs text-gray-400">Orchestrator</span>
+                      <span className="text-xs text-gray-400">FlowOps</span>
                     </div>
                   )}
                   <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${

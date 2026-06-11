@@ -193,8 +193,7 @@ export function IncidentDashboard() {
 
         <div className="responsive-header flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-1">Incident Dashboard</h1>
-            <p className="text-gray-400">Monitor system health, test results, and track errors</p>
+            <h1 className="text-3xl font-bold text-white">Incident Dashboard</h1>
           </div>
 
           {/* Filters */}
