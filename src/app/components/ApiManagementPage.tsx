@@ -353,7 +353,7 @@ export function ApiManagementPage() {
         </div>
 
         {/* Search and Filters */}
-        <div className="space-y-3">
+        <div className="px-4 py-4 sm:px-6 lg:px-8 space-y-3">
           {/* Search */}
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
@@ -503,7 +503,7 @@ export function ApiManagementPage() {
 
       {/* API List */}
       <div className="api-management-list-scroll flow-page-body">
-        <div className="mx-auto w-full max-w-6xl">
+        <div className="w-full">
           {apiError && (
             <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
               {apiError}
