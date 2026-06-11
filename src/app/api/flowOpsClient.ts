@@ -380,6 +380,7 @@ export interface ScenarioRecommendationResponse {
     title?: string;
     description?: string | null;
     type?: string | null;
+    testLevel?: TestLevel | string | null;
     userRole?: string | null;
     stateCondition?: string | null;
     dataVariant?: string | null;
