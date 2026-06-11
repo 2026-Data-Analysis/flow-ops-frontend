@@ -254,8 +254,9 @@ export function EnvironmentSettingsPage() {
     const [apiError, setApiError] = useState<string | null>(null);
     const [headersJsonText, setHeadersJsonText] = useState('{}');
     const [headersJsonError, setHeadersJsonError] = useState<string | null>(null);
-    const [mainRepositoryScope, setMainRepositoryScope] =
-        useState<ReturnType<typeof mergeRepositoryScope> | null>(null);
+    const [mainRepositoryScope, setMainRepositoryScope] = useState<ReturnType<typeof mergeRepositoryScope> | null>(
+        null,
+    );
 
     const selectedEnv = selectedEnvId ? environments.find((env) => env.id === selectedEnvId) : null;
 
@@ -269,7 +270,9 @@ export function EnvironmentSettingsPage() {
             try {
                 const project = await flowOpsApi.ensureProject();
                 const storedRepositories = readStoredRepositories();
-                const repositories = await flowOpsApi.listRepositories(project.id).catch(() => [] as RepositoryResponse[]);
+                const repositories = await flowOpsApi
+                    .listRepositories(project.id)
+                    .catch(() => [] as RepositoryResponse[]);
                 const mainApplication = await flowOpsApi.resolveMainApplication();
 
                 console.info('[EnvironmentSettings] loading environments', {
@@ -298,11 +301,10 @@ export function EnvironmentSettingsPage() {
                     })),
                 });
 
-                const selectedRepository =
-                    mergeRepositoryScope(
-                        repositories.find((repository) => repository.appId === selectedApplication.appId),
-                        storedRepositories.find((repository) => Number(repository.appId) === selectedApplication.appId),
-                    );
+                const selectedRepository = mergeRepositoryScope(
+                    repositories.find((repository) => repository.appId === selectedApplication.appId),
+                    storedRepositories.find((repository) => Number(repository.appId) === selectedApplication.appId),
+                );
                 items = await syncMissingBranchEnvironments(
                     selectedApplication.appId,
                     selectedRepository?.id ? Number(selectedRepository.id) : undefined,
@@ -352,7 +354,9 @@ export function EnvironmentSettingsPage() {
         }
         setHeadersJsonText(
             JSON.stringify(
-                Object.fromEntries(selectedEnv.headers.filter((header) => header.key).map((header) => [header.key, header.value])),
+                Object.fromEntries(
+                    selectedEnv.headers.filter((header) => header.key).map((header) => [header.key, header.value]),
+                ),
                 null,
                 2,
             ),
@@ -808,7 +812,9 @@ export function EnvironmentSettingsPage() {
                                                 ? 'border-red-500/40 focus:border-red-500/60'
                                                 : 'border-[#1f1f28] focus:border-blue-500/30'
                                         }`}
-                                        placeholder={'{\n  "Authorization": "Bearer token",\n  "X-Tenant-Id": "flowops"\n}'}
+                                        placeholder={
+                                            '{\n  "Authorization": "Bearer token",\n  "X-Tenant-Id": "flowops"\n}'
+                                        }
                                     />
                                     {headersJsonError && (
                                         <div className="mb-3 text-xs text-red-400">{headersJsonError}</div>
