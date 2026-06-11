@@ -240,7 +240,6 @@ export function ExecutionListPage() {
           <div className="responsive-header flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-semibold text-white mb-1">Execution Logs</h1>
-              <p className="text-gray-500 text-sm">Test execution history and debugging</p>
             </div>
 
             <button className="flex items-center gap-2 px-4 py-2 bg-[#13131a] border border-[#1f1f28] hover:border-blue-500/30 text-white rounded-lg transition-all text-sm">
@@ -400,7 +399,6 @@ export function ExecutionListPage() {
                 <Search size={24} className="text-gray-500" />
               </div>
               <h3 className="text-white mb-2">No logs found</h3>
-              <p className="text-gray-500 text-sm">Try adjusting your filters or search query</p>
             </div>
           )}
         </div>

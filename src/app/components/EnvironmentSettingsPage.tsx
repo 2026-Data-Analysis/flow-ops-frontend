@@ -536,7 +536,6 @@ export function EnvironmentSettingsPage() {
             >
                 <div className="flow-page-header">
                     <h2 className="flow-page-title">Environments</h2>
-                    <p className="flow-page-subtitle">Automation hubs for your testing workflow</p>
                     {apiError && (
                         <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
                             Backend unavailable: {apiError}
@@ -704,9 +703,6 @@ export function EnvironmentSettingsPage() {
                                         </span>
                                     </h1>
                                 </div>
-                                <p className="text-gray-500 text-sm">
-                                    Configure automation triggers and testing strategies
-                                </p>
                             </div>
                             <button
                                 onClick={handleSave}
@@ -768,9 +764,6 @@ export function EnvironmentSettingsPage() {
                                         className="w-full bg-[#13131a] border border-[#1f1f28] rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500/30 transition-colors font-mono text-sm"
                                         placeholder="https://api.example.com or http://localhost:8080"
                                     />
-                                    <p className="mt-1 text-xs text-gray-500">
-                                        The backend normalizes missing schemes and falls back to http://localhost:8080 when empty.
-                                    </p>
                                 </div>
 
                                 {selectedEnv.authType !== 'none' && (
@@ -900,9 +893,6 @@ export function EnvironmentSettingsPage() {
                                                 >
                                                     On PR Merge
                                                 </div>
-                                                <div className="text-xs text-gray-500">
-                                                    Run tests when a pull request is merged
-                                                </div>
                                             </div>
                                         </div>
                                         <div
@@ -948,9 +938,6 @@ export function EnvironmentSettingsPage() {
                                                 >
                                                     On Deploy
                                                 </div>
-                                                <div className="text-xs text-gray-500">
-                                                    Run tests after deployment completes
-                                                </div>
                                             </div>
                                         </div>
                                         <div
@@ -987,9 +974,6 @@ export function EnvironmentSettingsPage() {
                                                     className={`font-medium mb-0.5 ${selectedEnv.triggers.onSchedule ? 'text-white' : 'text-gray-400'}`}
                                                 >
                                                     On Schedule
-                                                </div>
-                                                <div className="text-xs text-gray-500">
-                                                    Run tests on a recurring schedule
                                                 </div>
                                             </div>
                                         </div>
@@ -1030,9 +1014,6 @@ export function EnvironmentSettingsPage() {
                                                 className="w-full bg-[#1f1f28] border border-[#2f2f38] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/30 font-mono"
                                                 placeholder="0 */6 * * *"
                                             />
-                                            <div className="mt-1 text-xs text-gray-500">
-                                                Example: "0 */6 * * *" runs every 6 hours
-                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -1080,7 +1061,6 @@ export function EnvironmentSettingsPage() {
                                             )}
                                         </div>
                                     </div>
-                                    <div className="text-xs text-gray-500 mt-1">Test all registered APIs</div>
                                 </div>
 
                                 <div
@@ -1109,9 +1089,6 @@ export function EnvironmentSettingsPage() {
                                             )}
                                         </div>
                                     </div>
-                                    <div className="text-xs text-gray-500 mt-1">
-                                        Test only specific APIs ({selectedEnv.selectedAPIs.length} selected)
-                                    </div>
                                 </div>
 
                                 <div
@@ -1139,14 +1116,6 @@ export function EnvironmentSettingsPage() {
                                                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                                             )}
                                         </div>
-                                    </div>
-                                    <div className="text-xs text-gray-500 mt-1">
-                                        Test APIs with specific tags
-                                        {selectedEnv.tags.length > 0 && (
-                                            <span className="ml-1">
-                                                ({selectedEnv.tags.map((t) => `#${t}`).join(', ')})
-                                            </span>
-                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -1193,7 +1162,6 @@ export function EnvironmentSettingsPage() {
                                     >
                                         Run Existing Tests
                                     </div>
-                                    <div className="text-xs text-gray-500">Execute pre-configured test cases</div>
                                 </div>
 
                                 <div
@@ -1230,7 +1198,6 @@ export function EnvironmentSettingsPage() {
                                     >
                                         Generate + Run Tests
                                     </div>
-                                    <div className="text-xs text-gray-500">AI generates tests then executes</div>
                                 </div>
                             </div>
                         </div>

@@ -169,7 +169,6 @@ export function ResponseAssistantPage() {
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-3xl font-bold text-white mb-1">Response Assistant</h1>
-              <p className="text-gray-400">AI-generated communication for incidents</p>
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -246,7 +245,6 @@ export function ResponseAssistantPage() {
                   <Users size={24} className={`absolute left-7 top-7 ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-500'}`} />
                   <div className="flex flex-col items-center justify-center">
                     <div className={`font-medium ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>Internal Team</div>
-                    <div className="text-xs text-gray-500 mt-1">Internal report</div>
                   </div>
                 </button>
                 <button
@@ -256,7 +254,6 @@ export function ResponseAssistantPage() {
                   <Globe size={24} className={`absolute left-7 top-7 ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-500'}`} />
                   <div className="flex flex-col items-center justify-center">
                     <div className={`font-medium ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-300'}`}>External Team</div>
-                    <div className="text-xs text-gray-500 mt-1">External notice</div>
                   </div>
                 </button>
               </div>
@@ -273,17 +270,12 @@ export function ResponseAssistantPage() {
                     <Loader2 size={13} className="animate-spin" />Generating report...
                   </span>
                 )}
-                {hasAiReport && !isAnalyzing && (
-                  <span className="ml-auto text-xs text-gray-500">
-                    {aiTab === 'internal' ? 'Internal report' : 'External notice'}
-                  </span>
-                )}
               </div>
               <textarea
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 className="w-full h-[600px] px-4 py-3 bg-[#13131a] border border-[#1f1f28] rounded-xl text-gray-300 font-mono text-sm focus:outline-none focus:border-blue-500/30 resize-none"
-                placeholder={isAnalyzing ? 'Analyzing incident...' : 'Select an incident and run AI analysis to generate content.'}
+                placeholder={isAnalyzing ? 'Analyzing incident...' : ''}
               />
             </div>
           </div>

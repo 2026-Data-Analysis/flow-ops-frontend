@@ -322,7 +322,6 @@ export function ApiManagementPage() {
           <div className="flow-page-header-row mb-6">
           <div>
             <h1 className="flow-page-title">API Management</h1>
-            <p className="flow-page-subtitle">Find APIs and generate tests</p>
           </div>
 
           {/* Summary Stats */}
@@ -521,7 +520,6 @@ export function ApiManagementPage() {
                 <Package size={24} className="text-gray-500" />
               </div>
               <h3 className="text-white mb-2">No APIs found</h3>
-              <p className="text-gray-500 text-sm">Try adjusting your filters or search query</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">
@@ -707,9 +705,6 @@ export function ApiManagementPage() {
                   <pre className="max-h-56 overflow-auto text-xs text-gray-300 whitespace-pre-wrap">
                     {JSON.stringify(selectedRequestDefaults, null, 2)}
                   </pre>
-                  <div className="border-t border-[#1f1f28] pt-3 text-xs text-gray-500">
-                    Use this as the starting requestSpec/requestConfig and edit only the values that need to change.
-                  </div>
                 </div>
               </div>
             )}

@@ -203,7 +203,6 @@ export function LogDetailPage() {
 
         <div>
           <h1 className="text-2xl font-bold text-white mb-1">POST /api/v1/posts</h1>
-          <p className="text-gray-400 text-sm">Executed on Staging • 2026-04-10 14:23:01</p>
         </div>
       </div>
 
@@ -220,7 +219,6 @@ export function LogDetailPage() {
                 </div>
                 <div className="flex-1">
                   <h2 className="text-sm font-semibold text-white">Incident Analysis</h2>
-                  <p className="text-xs text-gray-500">AI-powered root cause diagnosis</p>
                 </div>
                 {isAnalyzing && (
                   <div className="flex items-center gap-2 text-xs text-orange-400">
@@ -266,9 +264,6 @@ export function LogDetailPage() {
                   />
                 )}
 
-                {!isAnalyzing && !analyzeError && !incidentAnalysis && (
-                  <p className="text-sm text-gray-500">No analysis available.</p>
-                )}
               </div>
             </div>
           )}

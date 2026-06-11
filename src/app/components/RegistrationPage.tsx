@@ -364,7 +364,6 @@ export function RegistrationPage() {
         {/* Header */}
         <div>
           <h1 className="text-white text-2xl mb-1">Application Registration</h1>
-          <p className="text-gray-500 text-sm">Connect your repository and scan for API endpoints</p>
         </div>
 
         {/* Step Progress Indicator */}
@@ -421,7 +420,6 @@ export function RegistrationPage() {
           <div className="flex items-start justify-between mb-6">
             <div>
               <h2 className="text-white text-lg mb-1">Connect GitHub</h2>
-              <p className="text-gray-500 text-sm">Authorize access to your GitHub repositories</p>
             </div>
             {isGithubConnected && (
               <div className="flex items-center gap-2 text-green-400 text-sm bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
@@ -446,7 +444,6 @@ export function RegistrationPage() {
               </div>
               <div className="flex-1">
                 <div className="text-white font-medium">GitHub Repository Access</div>
-                <div className="text-sm text-gray-500">Enter an external repository full name below</div>
               </div>
               <CheckCircle2 size={20} className="text-green-400" />
             </div>
@@ -462,7 +459,6 @@ export function RegistrationPage() {
           <div className="flex items-start justify-between mb-6">
             <div>
               <h2 className="text-white text-lg mb-1">Select Repository</h2>
-              <p className="text-gray-500 text-sm">Choose the repository you want to scan</p>
             </div>
             {selectedRepo && (
               <div className="flex items-center gap-2 text-green-400 text-sm bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
@@ -666,7 +662,6 @@ export function RegistrationPage() {
             <div className="flex items-start justify-between mb-6">
               <div>
                 <h2 className="text-white text-lg mb-1">Scan Results</h2>
-                <p className="text-gray-500 text-sm">API detection completed successfully</p>
               </div>
               <div className="flex items-center gap-2 text-green-400 text-sm bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
                 <CheckCircle2 size={16} />

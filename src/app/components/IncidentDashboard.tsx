@@ -246,7 +246,6 @@ export function IncidentDashboard() {
             </div>
             <div className="text-3xl text-white font-semibold mb-1">{successRate}%</div>
             <div className="text-sm text-gray-500">Success Rate</div>
-            <div className="mt-3 text-xs text-gray-600">vs. previous period</div>
           </div>
 
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 hover:border-[#2f2f38] transition-all">
@@ -257,7 +256,6 @@ export function IncidentDashboard() {
             </div>
             <div className="text-3xl text-white font-semibold mb-1">{totalTests.toLocaleString()}</div>
             <div className="text-sm text-gray-500">Total Tests</div>
-            <div className="mt-3 text-xs text-gray-600">{totalTests} executions</div>
           </div>
 
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 hover:border-[#2f2f38] transition-all">
@@ -268,9 +266,6 @@ export function IncidentDashboard() {
             </div>
             <div className="text-3xl text-white font-semibold mb-1">{totalFailed}</div>
             <div className="text-sm text-gray-500">Failed Tests</div>
-            <div className="mt-3 text-xs text-gray-600">
-              {totalTests > 0 ? ((totalFailed / totalTests) * 100).toFixed(1) : '0'}% failure rate
-            </div>
           </div>
 
           <div className="bg-[#0a0a0f] border border-[#1f1f28] rounded-2xl p-6 hover:border-[#2f2f38] transition-all">
@@ -281,7 +276,6 @@ export function IncidentDashboard() {
             </div>
             <div className="text-3xl text-white font-semibold mb-1">24m</div>
             <div className="text-sm text-gray-500">Avg Duration</div>
-            <div className="mt-3 text-xs text-gray-600">per test execution</div>
           </div>
         </div>
 
@@ -296,7 +290,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingDown size={14} className="text-green-400" />
               <span className="text-green-400 font-medium">12%</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
 
@@ -309,7 +302,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingUp size={14} className="text-red-400" />
               <span className="text-red-400 font-medium">8%</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
 
@@ -322,7 +314,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingUp size={14} className="text-orange-400" />
               <span className="text-orange-400 font-medium">5%</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
 
@@ -335,7 +326,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingDown size={14} className="text-green-400" />
               <span className="text-green-400 font-medium">1.2%</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
 
@@ -348,7 +338,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingDown size={14} className="text-green-400" />
               <span className="text-green-400 font-medium">18%</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
 
@@ -361,7 +350,6 @@ export function IncidentDashboard() {
             <div className="flex items-center gap-1 text-sm">
               <TrendingUp size={14} className="text-red-400" />
               <span className="text-red-400 font-medium">3</span>
-              <span className="text-gray-500">vs last period</span>
             </div>
           </div>
         </div>

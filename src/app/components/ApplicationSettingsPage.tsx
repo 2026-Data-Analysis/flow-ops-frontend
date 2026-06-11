@@ -323,9 +323,6 @@ export function ApplicationSettingsPage() {
 
                 <div className="border-b border-[#1f1f28] p-4 sm:p-6">
                     <h2 className="mb-1 text-lg font-semibold text-white">Registered Repositories</h2>
-                    <p className="text-sm text-gray-500">
-                        Select the main repository used for this application and manage connected repositories.
-                    </p>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -434,7 +431,6 @@ export function ApplicationSettingsPage() {
                                     </button>
                                     <h2 className="flow-page-title truncate">Repository Details</h2>
                                 </div>
-                                <p className="text-sm text-gray-500">Manage repository configuration</p>
                             </div>
                             {selectedIsMain && (
                                 <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-sm text-blue-300">
@@ -455,9 +451,6 @@ export function ApplicationSettingsPage() {
                                         }
                                         className="w-full rounded-lg border border-[#1f1f28] bg-[#13131a] px-4 py-3 text-white outline-none transition-colors placeholder:text-gray-600 focus:border-blue-500/30"
                                     />
-                                    <p className="mt-2 text-xs text-gray-500">
-                                        This title will be shown in the header instead of the repository name.
-                                    </p>
                                 </div>
 
                                 <div>
@@ -480,9 +473,6 @@ export function ApplicationSettingsPage() {
                                     <div className="flex items-center justify-between gap-4">
                                         <div>
                                             <div className="text-white">Main Repository</div>
-                                            <div className="text-sm text-gray-500">
-                                                Set as the primary repository for this application
-                                            </div>
                                         </div>
                                         <button
                                             type="button"
@@ -502,9 +492,6 @@ export function ApplicationSettingsPage() {
                                     <div className="flex items-center justify-between gap-4">
                                         <div>
                                             <div className="text-white">Auto Sync</div>
-                                            <div className="text-sm text-gray-500">
-                                                Automatically refresh API inventory from GitHub merge pushes
-                                            </div>
                                         </div>
                                         <button
                                             type="button"
