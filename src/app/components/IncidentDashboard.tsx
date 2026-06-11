@@ -63,7 +63,7 @@ export function IncidentDashboard() {
   const [incidentPageSize, setIncidentPageSize] = useState(10);
 
   const handleIncidentClick = (incidentId: string) => {
-    navigate(`/monitoring/logs?incident=${incidentId}`);
+    navigate(`/monitoring/logs/${incidentId}`);
   };
 
 

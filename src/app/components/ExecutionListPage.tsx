@@ -176,6 +176,11 @@ export function ExecutionListPage() {
     setIsAnalyzingIncident(true);
     setIncidentAnalysisError(null);
     try {
+      // 기대 상태 코드는 실제 단언 결과(HTTP status)에서 추출한다.
+      const expectedStatus = targetLog.assertions
+        .map((assertion) => (/status/i.test(assertion.name) ? parseInt(assertion.expected, 10) : Number.NaN))
+        .find((value) => !Number.isNaN(value));
+
       const rawLog = [
         targetLog.errorMessage,
         targetLog.step ? `Step: ${targetLog.step}` : null,
@@ -197,7 +202,7 @@ export function ExecutionListPage() {
         }],
         failure_context: {
           endpoint: `${targetLog.method} ${targetLog.path}`,
-          expected_status: 200,
+          expected_status: expectedStatus,
           actual_status: targetLog.responseCode,
           request_body: parseMaybeJson(targetLog.requestBody),
           response_body: parseMaybeJson(targetLog.responseBody),
