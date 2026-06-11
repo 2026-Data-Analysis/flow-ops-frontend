@@ -241,19 +241,23 @@ export function ResponseAssistantPage() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setAudience('internal')}
-                  className={`p-4 rounded-xl border-2 transition-all ${aiTab === 'internal' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
+                  className={`relative flex min-h-[132px] items-center justify-center rounded-xl border-2 px-4 py-5 text-center transition-all ${aiTab === 'internal' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
                 >
-                  <Users size={24} className={`mb-2 ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-500'}`} />
-                  <div className={`font-medium ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>Internal Team</div>
-                  <div className="text-xs text-gray-500 mt-1">Internal report</div>
+                  <Users size={24} className={`absolute left-7 top-7 ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-500'}`} />
+                  <div className="flex flex-col items-center justify-center">
+                    <div className={`font-medium ${aiTab === 'internal' ? 'text-blue-400' : 'text-gray-300'}`}>Internal Team</div>
+                    <div className="text-xs text-gray-500 mt-1">Internal report</div>
+                  </div>
                 </button>
                 <button
                   onClick={() => setAudience('external')}
-                  className={`p-4 rounded-xl border-2 transition-all ${aiTab === 'external' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
+                  className={`relative flex min-h-[132px] items-center justify-center rounded-xl border-2 px-4 py-5 text-center transition-all ${aiTab === 'external' ? 'border-blue-500 bg-blue-500/10' : 'border-[#1f1f28] hover:border-[#2f2f38] bg-[#13131a]'}`}
                 >
-                  <Globe size={24} className={`mb-2 ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-500'}`} />
-                  <div className={`font-medium ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-300'}`}>External Team</div>
-                  <div className="text-xs text-gray-500 mt-1">External notice</div>
+                  <Globe size={24} className={`absolute left-7 top-7 ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-500'}`} />
+                  <div className="flex flex-col items-center justify-center">
+                    <div className={`font-medium ${aiTab === 'external' ? 'text-blue-400' : 'text-gray-300'}`}>External Team</div>
+                    <div className="text-xs text-gray-500 mt-1">External notice</div>
+                  </div>
                 </button>
               </div>
             </div>
