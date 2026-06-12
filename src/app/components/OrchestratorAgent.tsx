@@ -34,9 +34,11 @@ import {
   type OrchestratorScenarioStep,
   type OrchestratorAgentResult,
   type OrchestratorChainedVariable,
+  type ScenarioDetailResponse,
   type TestGenerationDraftResponse,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
+import { normalizeScenarioForSave } from '../utils/scenarioSave';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1482,7 +1484,15 @@ function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
   );
 }
 
-function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
+function ScenarioCard({
+  scenario,
+  saveState,
+  onSave,
+}: {
+  scenario: OrchestratorScenario;
+  saveState?: { saving?: boolean; saved?: boolean; error?: string };
+  onSave?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const meta = scenario.meta ?? {};
   const steps = asArray<OrchestratorScenarioStep>(scenario?.steps);
@@ -1494,19 +1504,37 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
       : 'bg-green-500/20 text-green-400';
   return (
     <div className="bg-[#0d0d12] border border-[#2a2a35] rounded-lg">
-      <button onClick={() => setExpanded(!expanded)}
-        className="w-full p-2.5 flex items-start gap-2 text-left">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs text-gray-200 font-medium leading-snug">{scenario.name}</p>
-          <p className="text-[10px] text-gray-500 mt-0.5">{steps.length} steps</p>
-        </div>
-        <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${riskStyle}`}>
-          {estimatedRisk}
-        </span>
-        {expanded ? <ChevronUp size={12} className="text-gray-500 shrink-0 mt-0.5" /> : <ChevronDown size={12} className="text-gray-500 shrink-0 mt-0.5" />}
-      </button>
+      <div className="p-2.5 flex items-start gap-2">
+        <button onClick={() => setExpanded(!expanded)}
+          className="flex-1 min-w-0 flex items-start gap-2 text-left">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-gray-200 font-medium leading-snug">{scenario.name}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">{steps.length} steps</p>
+          </div>
+          <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${riskStyle}`}>
+            {estimatedRisk}
+          </span>
+          {expanded ? <ChevronUp size={12} className="text-gray-500 shrink-0 mt-0.5" /> : <ChevronDown size={12} className="text-gray-500 shrink-0 mt-0.5" />}
+        </button>
+        {onSave && (
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saveState?.saving || saveState?.saved}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-[10px] font-semibold text-teal-200 transition-colors hover:bg-teal-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saveState?.saving ? <Loader2 size={11} className="animate-spin" /> : saveState?.saved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+            {saveState?.saving ? '저장 중' : saveState?.saved ? '저장됨' : '저장'}
+          </button>
+        )}
+      </div>
       {expanded && (
         <div className="px-2.5 pb-2.5 border-t border-[#2a2a35] pt-2 space-y-2">
+          {saveState?.error && (
+            <p className="rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] text-red-300">
+              {saveState.error}
+            </p>
+          )}
           {meta.test_level && (
             <span className="inline-flex w-fit rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-medium text-blue-300">
               {meta.test_level}
@@ -1540,8 +1568,68 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
 }
 
 function ScenarioResultView({ data }: { data: OrchestratorScenarioData }) {
+  const { activeApplication } = useTestContext();
   const scenarios = asArray<OrchestratorScenario>(data?.scenarios);
   const usedEndpointIds = asArray<string>(data?.used_endpoint_ids);
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  const scenarioKey = (scenario: OrchestratorScenario, index?: number) =>
+    scenario.scenario_id || `${scenario.name}-${index ?? 0}`;
+
+  const saveScenario = async (scenario: OrchestratorScenario, key: string) => {
+    if (savingIds.has(key) || savedIds.has(key)) return null;
+    setSavingIds((prev) => new Set(prev).add(key));
+    setSaveErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setSaveMessage(null);
+
+    try {
+      const storedProjectId = getStoredProjectIdForApp(activeApplication.appId);
+      const projectId = storedProjectId || (await flowOpsApi.ensureProject()).id;
+      const inventory = await flowOpsApi.listInventories(projectId, { size: 500 });
+      const payload = normalizeScenarioForSave(scenario, asArray<ApiInventoryResponse>(inventory.items), {
+        appId: activeApplication.appId || DEFAULT_APP_ID,
+      });
+      const saved = await flowOpsApi.createScenario(payload);
+      setSavedIds((prev) => new Set(prev).add(key));
+      setSaveMessage('시나리오가 저장되었습니다.');
+      window.dispatchEvent(new CustomEvent('flowOps.scenariosChanged', {
+        detail: { appId: activeApplication.appId, scenarioId: (saved as ScenarioDetailResponse)?.id },
+      }));
+      return saved;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '시나리오 저장에 실패했습니다.';
+      setSaveErrors((prev) => ({ ...prev, [key]: message }));
+      setSaveMessage('시나리오 저장에 실패했습니다.');
+      throw error;
+    } finally {
+      setSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const saveAllScenarios = async () => {
+    const targets = scenarios
+      .map((scenario, index) => ({ scenario, key: scenarioKey(scenario, index) }))
+      .filter(({ key }) => !savedIds.has(key) && !savingIds.has(key));
+    if (targets.length === 0) return;
+
+    const results = await Promise.allSettled(targets.map(({ scenario, key }) => saveScenario(scenario, key)));
+    const failed = results.filter((result) => result.status === 'rejected');
+    setSaveMessage(failed.length > 0 ? '시나리오 저장에 실패했습니다.' : '시나리오가 저장되었습니다.');
+  };
+
+  const hasPendingSave = scenarios.some((scenario, index) => savingIds.has(scenarioKey(scenario, index)));
+  const unsavedCount = scenarios.filter((scenario, index) => !savedIds.has(scenarioKey(scenario, index))).length;
   return (
     <div className="mt-2 space-y-2">
       <div className="text-xs text-gray-400">
@@ -1550,11 +1638,41 @@ function ScenarioResultView({ data }: { data: OrchestratorScenarioData }) {
           <span className="text-gray-500"> · API {usedEndpointIds.length}개 사용</span>
         )}
       </div>
+      {scenarios.length > 0 && (
+        <button
+          type="button"
+          onClick={() => void saveAllScenarios()}
+          disabled={hasPendingSave || unsavedCount === 0}
+          className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1.5 text-[10px] font-semibold text-teal-200 transition-colors hover:bg-teal-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {hasPendingSave ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+          전체 저장하기
+        </button>
+      )}
+      {saveMessage && (
+        <p className={`rounded border px-2 py-1 text-[10px] ${
+          saveMessage.includes('실패')
+            ? 'border-red-500/20 bg-red-500/10 text-red-300'
+            : 'border-green-500/20 bg-green-500/10 text-green-300'
+        }`}>
+          {saveMessage}
+        </p>
+      )}
       <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
         {scenarios.length === 0 ? (
           <p className="text-xs text-gray-500">표시할 결과가 없습니다.</p>
         ) : (
-          scenarios.map((s, index) => <ScenarioCard key={s.scenario_id ?? `scenario-${index}`} scenario={s} />)
+          scenarios.map((s, index) => {
+            const key = scenarioKey(s, index);
+            return (
+              <ScenarioCard
+                key={s.scenario_id ?? `scenario-${index}`}
+                scenario={s}
+                saveState={{ saving: savingIds.has(key), saved: savedIds.has(key), error: saveErrors[key] }}
+                onSave={() => void saveScenario(s, key)}
+              />
+            );
+          })
         )}
       </div>
     </div>

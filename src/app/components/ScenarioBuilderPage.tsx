@@ -705,6 +705,18 @@ export function ScenarioBuilderPage() {
   };
 
   useEffect(() => {
+    const handleScenariosChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ appId?: number }>).detail;
+      const currentAppId = mainApplicationId ?? activeApplication.appId;
+      if (detail?.appId && detail.appId !== currentAppId) return;
+      void loadSavedScenarios();
+    };
+
+    window.addEventListener('flowOps.scenariosChanged', handleScenariosChanged);
+    return () => window.removeEventListener('flowOps.scenariosChanged', handleScenariosChanged);
+  }, [activeApplication.appId, inventoryApis, mainApplicationId, selectedEnvironmentId]);
+
+  useEffect(() => {
     let active = true;
     setIsLoading(true);
     setProjectId(null);
