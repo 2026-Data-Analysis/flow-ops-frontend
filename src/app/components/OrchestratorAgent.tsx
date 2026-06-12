@@ -21,6 +21,7 @@ import {
 import {
   flowOpsApi,
   DEFAULT_APP_ID,
+  getApiServerUrl,
   getStoredProjectIdForApp,
   type ApiInventoryResponse,
   type IncidentAgentData,
@@ -2021,12 +2022,19 @@ export function OrchestratorAgent() {
     try {
       const projectId = await resolveCurrentProjectId();
       if (activeAppIdRef.current !== requestAppId) return;
+      const apiInventory = await fetchProjectApiInventory(projectId);
 
       const payload = {
         project_id: projectId,
         user_prompt: text,
+        user_intent: text,
         context: {
+          user_intent: text,
+          api_server_url: getApiServerUrl(),
+          base_url: getApiServerUrl(),
+          env_name: 'local',
           app_id: requestAppId,
+          api_inventory: apiInventory,
         },
       };
 
