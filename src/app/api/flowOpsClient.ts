@@ -742,18 +742,26 @@ export interface AiOrchestratorChatResponse {
 // ─── Orchestrator Dispatch (멀티 에이전트 디스패치) ──────────────────────────────
 
 export interface OrchestratorContext {
-  service_name: string;
-  occurred_at: string;
-  raw_log: string;
+  api_inventory?: OrchestratorTestApiInventory | OrchestratorScenarioApiInventory;
+  existing_test_cases?: unknown[];
+  existing_scenarios?: unknown[];
+  max_scenarios?: number;
+  max_steps_per_scenario?: number;
+  base_url?: string;
+  env_name?: string;
+  service_name?: string;
+  occurred_at?: string;
+  raw_log?: string;
+  [key: string]: unknown;
 }
 
 export interface OrchestratorRequest {
   project_id: string;
   user_prompt: string;
-  context: OrchestratorContext;
+  context?: OrchestratorContext;
 }
 
-export type RootCauseSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
+export type RootCauseSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | string;
 
 export interface RootCause {
   summary: string;
@@ -773,10 +781,13 @@ export interface OrchestratorTestEndpoint {
   path: string;
   method: string;
   summary?: string;
+  description?: string | null;
   operationId?: string;
-  auth?: { type: string };
-  request_body_schema?: object;
-  response_schema?: object;
+  auth?: { type: string; location?: string | null } | null;
+  parameters?: unknown[];
+  request_body_schema?: unknown | null;
+  response_schema?: unknown | null;
+  tags?: string[];
 }
 
 export interface OrchestratorTestApiInventory {
@@ -785,9 +796,13 @@ export interface OrchestratorTestApiInventory {
 }
 
 export interface OrchestratorTestContext {
-  base_url: string;
-  env_name: string;
+  base_url?: string;
+  env_name?: string;
   api_inventory?: OrchestratorTestApiInventory;
+  existing_test_cases?: unknown[];
+  existing_scenarios?: unknown[];
+  max_scenarios?: number;
+  max_steps_per_scenario?: number;
 }
 
 export interface OrchestratorTestRequest {
@@ -868,15 +883,12 @@ export interface OrchestratorScenarioEndpoint {
   path: string;
   method: string;
   summary?: string;
-  auth?: { type: string };
-  request_body_schema?: object;
-  response_schema?: object;
-  parameters?: Array<{
-    name: string;
-    location: string;
-    type: string;
-    required: boolean;
-  }>;
+  description?: string | null;
+  auth?: { type: string; location?: string | null } | null;
+  request_body_schema?: unknown | null;
+  response_schema?: unknown | null;
+  parameters?: unknown[];
+  tags?: string[];
 }
 
 export interface OrchestratorScenarioApiInventory {
@@ -886,6 +898,10 @@ export interface OrchestratorScenarioApiInventory {
 
 export interface OrchestratorScenarioContext {
   api_inventory: OrchestratorScenarioApiInventory;
+  existing_test_cases?: unknown[];
+  existing_scenarios?: unknown[];
+  max_scenarios?: number;
+  max_steps_per_scenario?: number;
 }
 
 export interface OrchestratorScenarioRequest {
@@ -895,34 +911,59 @@ export interface OrchestratorScenarioRequest {
 }
 
 export interface OrchestratorChainedVariable {
-  name: string;
-  source: string;
-  source_step_ref: string;
-  source_json_path: string;
-  literal_value: string | null;
-  target_location: string;
-  target_field: string;
-  target_template: string | null;
+  name?: string;
+  source?: string;
+  source_step_ref?: string;
+  source_step?: string;
+  source_json_path?: string;
+  json_path?: string;
+  literal_value?: string | null;
+  target_location?: string;
+  target_field?: string;
+  target_template?: string | null;
+  [key: string]: unknown;
 }
 
 export interface OrchestratorScenarioStep {
   step_id: string;
   ref: string;
   order: number;
-  endpoint_id: string;
-  name: string;
-  description: string | null;
-  static_payload: Record<string, unknown> | null;
-  static_params: Record<string, unknown>;
-  chained_variables: OrchestratorChainedVariable[];
-  expected_status_code: number;
-  expected_assertions: string[];
+  endpoint_id?: string;
+  name?: string;
+  description?: string | null;
+  static_payload?: unknown;
+  static_params?: Record<string, unknown>;
+  expected_status_code?: number;
+  expected_assertions?: string[];
+  apiId?: string;
+  title?: string;
+  requestSpec?: {
+    method?: string;
+    path?: string;
+    pathParams?: Record<string, unknown>;
+    queryParams?: Record<string, unknown>;
+    body?: unknown;
+    headers?: Record<string, unknown>;
+  };
+  expectedSpec?: {
+    statusCode?: number;
+    body?: unknown;
+    errorMessage?: string | null;
+  };
+  assertionSpec?: {
+    statusCode?: number;
+    bodyContains?: string[];
+    bodyEquals?: Record<string, unknown>;
+    headerContains?: Record<string, unknown>;
+  };
+  chained_variables?: OrchestratorChainedVariable[];
 }
 
 export interface OrchestratorScenarioMeta {
-  rationale: string;
+  rationale?: string | null;
   coverage_gap: string | null;
-  estimated_risk: 'HIGH' | 'MEDIUM' | 'LOW';
+  estimated_risk?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | string | null;
+  test_level?: 'SMOKE' | 'SANITY' | 'REGRESSION' | 'FULL_SUITE' | string | null;
 }
 
 export interface OrchestratorScenario {
@@ -930,7 +971,7 @@ export interface OrchestratorScenario {
   name: string;
   description: string | null;
   steps: OrchestratorScenarioStep[];
-  meta: OrchestratorScenarioMeta;
+  meta?: OrchestratorScenarioMeta;
 }
 
 export interface OrchestratorScenarioData {

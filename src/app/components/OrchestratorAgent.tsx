@@ -23,8 +23,10 @@ import {
   DEFAULT_APP_ID,
   getApiServerUrl,
   getStoredProjectIdForApp,
+  type ApiInventoryResponse,
   type IncidentAgentData,
   type RootCause,
+  type OrchestratorScenarioApiInventory,
   type OrchestratorTestCaseData,
   type OrchestratorTestCaseDraft,
   type OrchestratorScenarioData,
@@ -90,6 +92,21 @@ interface ScenarioFormData {
   endpoints: ScenarioEndpointRow[];
 }
 
+interface NormalizedScenarioStep {
+  stepId: string;
+  ref: string;
+  order: number;
+  endpointId: string;
+  name: string;
+  method?: string;
+  path?: string;
+  payload: unknown | null;
+  params: Record<string, unknown>;
+  expectedStatusCode: number | null;
+  assertions: string[];
+  chainedVariables: Array<Record<string, unknown>>;
+}
+
 interface BothFormData {
   project_id: string;
   log_user_prompt: string;
@@ -119,6 +136,100 @@ function parseJsonSafe(s: string): object | undefined {
   } catch {
     return undefined;
   }
+}
+
+const endpointIdFor = (method: string, path: string) => `${method.toUpperCase()}:${path}`;
+
+const normalizeAuthType = (authRequired?: boolean) => (authRequired ? 'bearer' : 'none');
+
+const inventoryItemToOrchestratorEndpoint = (item: ApiInventoryResponse) => {
+  const method = String(item.method === 'TRACE' ? 'GET' : item.method).toUpperCase();
+  const path = item.endpointPath;
+  return {
+    endpoint_id: endpointIdFor(method, path),
+    path,
+    method,
+    summary: item.summary || item.operationId || null,
+    description: item.domainTag || null,
+    request_body_schema: item.requestSchema ?? null,
+    response_schema: item.responseSchema ?? null,
+    auth: { type: normalizeAuthType(item.authRequired) },
+    tags: item.domainTag ? [item.domainTag] : [],
+  };
+};
+
+const formEndpointsToApiInventory = (
+  projectId: string,
+  endpoints: ScenarioEndpointRow[],
+): OrchestratorScenarioApiInventory => ({
+  project_id: projectId,
+  endpoints: endpoints
+    .filter((endpoint) => endpoint.path.trim())
+    .map((endpoint) => {
+      const method = endpoint.method.toUpperCase();
+      const path = endpoint.path.trim();
+      return {
+        endpoint_id: endpointIdFor(method, path),
+        path,
+        method,
+        ...(endpoint.summary ? { summary: endpoint.summary } : {}),
+        auth: endpoint.auth_type === 'none' ? { type: 'none' } : { type: endpoint.auth_type },
+      };
+    }),
+});
+
+const fetchProjectApiInventory = async (
+  projectId: string,
+  fallbackEndpoints: ScenarioEndpointRow[] = [],
+): Promise<OrchestratorScenarioApiInventory> => {
+  const numericProjectId = Number(projectId);
+  if (Number.isFinite(numericProjectId) && numericProjectId > 0) {
+    try {
+      const inventory = await flowOpsApi.listInventories(numericProjectId, { size: 200 });
+      const endpoints = (inventory.items || [])
+        .filter((item) => item.endpointPath && item.method)
+        .map(inventoryItemToOrchestratorEndpoint);
+      if (endpoints.length > 0) {
+        return { project_id: projectId, endpoints };
+      }
+    } catch (error) {
+      console.warn('[OrchestratorAgent] failed to load project API inventory for scenario request', {
+        projectId,
+        error,
+      });
+    }
+  }
+  return formEndpointsToApiInventory(projectId, fallbackEndpoints);
+};
+
+function normalizeScenarioStep(step: OrchestratorScenarioStep): NormalizedScenarioStep {
+  const requestParams = {
+    ...(step.requestSpec?.pathParams ?? {}),
+    ...(step.requestSpec?.queryParams ?? {}),
+  };
+  const endpointId = step.endpoint_id ?? step.apiId ?? '';
+  const explicitMethod = normalizeHttpMethod(step.requestSpec?.method);
+  const split = splitMethodEndpoint(endpointId);
+  const method = explicitMethod ?? split.method;
+  const path = normalizeEndpointPath(step.requestSpec?.path ?? split.endpoint ?? endpointId);
+  return {
+    stepId: step.step_id,
+    ref: step.ref,
+    order: step.order,
+    endpointId,
+    method,
+    path,
+    name: step.name ?? step.title ?? endpointId,
+    payload: step.static_payload ?? step.requestSpec?.body ?? null,
+    params: step.static_params ?? requestParams,
+    expectedStatusCode:
+      step.expected_status_code ??
+      step.expectedSpec?.statusCode ??
+      step.assertionSpec?.statusCode ??
+      null,
+    assertions: step.expected_assertions ?? step.assertionSpec?.bodyContains ?? [],
+    chainedVariables: step.chained_variables ?? [],
+  };
 }
 
 // ─── FormField ────────────────────────────────────────────────────────────────
@@ -267,7 +378,7 @@ function ScenarioFormCard({
   onCancel: (msgId: string) => void;
 }) {
   const [projectId, setProjectId] = useState('');
-  const [userPrompt, setUserPrompt] = useState('');
+  const [userPrompt, setUserPrompt] = useState('회원가입 후 로그인하고 상품 주문까지 이어지는 흐름을 시나리오로 만들어줘.');
   const [endpoints, setEndpoints] = useState<ScenarioEndpointRow[]>([
     { method: 'POST', path: '', summary: '', auth_type: 'bearer' },
   ]);
@@ -280,7 +391,7 @@ function ScenarioFormCard({
   const updateEndpoint = (i: number, key: keyof ScenarioEndpointRow, val: string) =>
     setEndpoints((p) => p.map((e, idx) => (idx === i ? { ...e, [key]: val } : e)));
 
-  const ok = userPrompt.trim() && endpoints.some((e) => e.path.trim());
+  const ok = userPrompt.trim();
 
   return (
     <div className="mt-2 bg-[#13131a] border border-teal-500/20 rounded-xl p-3.5 space-y-2.5">
@@ -1169,9 +1280,9 @@ const METHOD_COLOR: Record<string, string> = {
 
 function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
   const [showDetail, setShowDetail] = useState(false);
-  const colonIdx = step.endpoint_id.indexOf(':');
-  const method = colonIdx > -1 ? step.endpoint_id.slice(0, colonIdx) : step.endpoint_id;
-  const path = colonIdx > -1 ? step.endpoint_id.slice(colonIdx + 1) : '';
+  const normalized = normalizeScenarioStep(step);
+  const method = normalized.method ?? 'API';
+  const path = normalized.path ?? normalized.endpointId;
   const methodColor = METHOD_COLOR[method] ?? 'bg-gray-500/20 text-gray-400';
   return (
     <div className="bg-[#060609] rounded-lg px-2 py-1.5">
@@ -1222,9 +1333,11 @@ function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
 
 function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
   const [expanded, setExpanded] = useState(false);
-  const riskStyle = scenario.meta.estimated_risk === 'HIGH'
+  const meta = scenario.meta ?? {};
+  const estimatedRisk = meta.estimated_risk ?? 'MEDIUM';
+  const riskStyle = estimatedRisk === 'HIGH' || estimatedRisk === 'CRITICAL'
     ? 'bg-red-500/20 text-red-400'
-    : scenario.meta.estimated_risk === 'MEDIUM'
+    : estimatedRisk === 'MEDIUM'
       ? 'bg-amber-500/20 text-amber-400'
       : 'bg-green-500/20 text-green-400';
   return (
@@ -1236,14 +1349,25 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
           <p className="text-[10px] text-gray-500 mt-0.5">{scenario.steps.length}개 스텝</p>
         </div>
         <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${riskStyle}`}>
-          {scenario.meta.estimated_risk}
+          {estimatedRisk}
         </span>
         {expanded ? <ChevronUp size={12} className="text-gray-500 shrink-0 mt-0.5" /> : <ChevronDown size={12} className="text-gray-500 shrink-0 mt-0.5" />}
       </button>
       {expanded && (
         <div className="px-2.5 pb-2.5 border-t border-[#2a2a35] pt-2 space-y-2">
-          {scenario.meta.rationale && (
-            <p className="text-[10px] text-gray-400 leading-relaxed">{scenario.meta.rationale}</p>
+          {meta.test_level && (
+            <span className="inline-flex w-fit rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-medium text-blue-300">
+              {meta.test_level}
+            </span>
+          )}
+          {scenario.description && (
+            <p className="text-[10px] text-gray-500 leading-relaxed">{scenario.description}</p>
+          )}
+          {meta.rationale && (
+            <p className="text-[10px] text-gray-400 leading-relaxed">{meta.rationale}</p>
+          )}
+          {meta.coverage_gap && (
+            <p className="text-[10px] text-amber-300/80 leading-relaxed">Coverage gap: {meta.coverage_gap}</p>
           )}
           <div className="space-y-1">
             {scenario.steps.map((step) => <ScenarioStepRow key={step.step_id} step={step} />)}
@@ -1404,6 +1528,16 @@ export function OrchestratorAgent() {
   };
 
   const handleLogFormSubmit = async (formData: LogFormData, formMsgId: string) => {
+    if (!formData.raw_log.trim()) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === formMsgId
+            ? { ...message, content: '로그 분석을 위해 원본 로그를 입력해주세요.' }
+            : message,
+        ),
+      );
+      return;
+    }
     const projectId = formData.project_id || await resolveCurrentProjectId();
     const taskMsgId = replaceFormWithTasks(formMsgId,
       `로그 분석 요청: [${formData.service_name}] ${formData.user_prompt}`,
@@ -1467,22 +1601,16 @@ export function OrchestratorAgent() {
       `시나리오 생성 요청: ${formData.user_prompt}`,
       [{ type: 'scenario-generation', status: 'running' }]);
     try {
+      const apiInventory = await fetchProjectApiInventory(projectId, formData.endpoints);
       const res = await flowOpsApi.dispatchOrchestratorScenario({
         project_id: projectId,
         user_prompt: formData.user_prompt,
         context: {
-          api_inventory: {
-            project_id: projectId,
-            endpoints: formData.endpoints
-              .filter((e) => e.path.trim())
-              .map((e) => ({
-                endpoint_id: `${e.method}:${e.path}`,
-                path: e.path,
-                method: e.method,
-                ...(e.summary ? { summary: e.summary } : {}),
-                ...(e.auth_type !== 'none' ? { auth: { type: e.auth_type } } : {}),
-              })),
-          },
+          api_inventory: apiInventory,
+          existing_test_cases: [],
+          existing_scenarios: [],
+          max_scenarios: 3,
+          max_steps_per_scenario: 8,
         },
       });
       const r = res.data?.agent_results?.find((x) => x.agent_type === 'scenario');
