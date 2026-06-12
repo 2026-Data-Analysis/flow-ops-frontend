@@ -677,6 +677,7 @@ export interface AiTestStrategyClassifyResponse {
 export interface AiOrchestratorChatRequest {
   project_id: string;
   user_prompt: string;
+  user_intent?: string;
   context?: Record<string, unknown>;
 }
 

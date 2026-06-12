@@ -31,9 +31,6 @@ import {
   type OrchestratorScenario,
   type OrchestratorScenarioStep,
   type TestGenerationDraftResponse,
-  type ApiInventoryResponse,
-  type RepositoryResponse,
-  type OrchestratorTestApiInventory,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
 
@@ -1352,86 +1349,6 @@ const INIT_MESSAGE: Message = {
     '👋 안녕하세요! 저는 FlowOps Manager입니다.\n\n테스트 생성, 시나리오 구성, 로그 분석을 한곳에서 도와드릴게요.\n\n아래 버튼을 선택해 주세요.',
 };
 
-const REGISTERED_REPOSITORIES_KEY = 'flowOps.registeredRepositories';
-
-type StoredRegisteredRepository = RepositoryResponse & {
-  title?: string;
-  selectedBranches?: string[];
-};
-
-const readStoredRepositories = (): StoredRegisteredRepository[] => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(REGISTERED_REPOSITORIES_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const mergeRepositoryScope = (repository: RepositoryResponse | undefined, stored: StoredRegisteredRepository | undefined) => ({
-  ...stored,
-  ...repository,
-  defaultBranch: repository?.defaultBranch || stored?.defaultBranch,
-  selectedBranches: stored?.selectedBranches,
-});
-
-const normalizeScopeValue = (value?: string | number | null) => String(value ?? '').trim().toLowerCase();
-
-const branchNamesForRepositoryScope = (repository?: StoredRegisteredRepository | null) => {
-  const selectedBranches = repository?.selectedBranches?.map(normalizeScopeValue).filter(Boolean) || [];
-  if (selectedBranches.length > 0) return new Set(selectedBranches);
-
-  const branchSelections = (repository?.branches || [])
-    .filter((branch) => branch.selected || branch.defaultBranch)
-    .map((branch) => normalizeScopeValue(branch.name || branch.branchName))
-    .filter(Boolean);
-  if (branchSelections.length > 0) return new Set(branchSelections);
-
-  const defaultBranch = normalizeScopeValue(repository?.defaultBranch);
-  return defaultBranch ? new Set([defaultBranch]) : null;
-};
-
-const inventoryBelongsToRepositoryScope = (
-  inventory: ApiInventoryResponse,
-  repository?: StoredRegisteredRepository | null,
-) => {
-  if (repository?.id && inventory.repositoryId && Number(inventory.repositoryId) !== Number(repository.id)) {
-    return false;
-  }
-
-  const branchNames = branchNamesForRepositoryScope(repository);
-  const inventoryBranch = normalizeScopeValue(inventory.branchName);
-  if (branchNames && inventoryBranch && !branchNames.has(inventoryBranch)) {
-    return false;
-  }
-
-  return true;
-};
-
-const schemaToObject = (schema: unknown) => {
-  if (!schema) return undefined;
-  if (typeof schema === 'object' && !Array.isArray(schema)) return schema as object;
-  if (typeof schema === 'string') return parseJsonSafe(schema);
-  return undefined;
-};
-
-const toOrchestratorApiInventory = (
-  appId: number,
-  items: ApiInventoryResponse[],
-): OrchestratorTestApiInventory => ({
-  project_id: String(appId),
-  endpoints: items.map((inventory) => ({
-    endpoint_id: String(inventory.id || `${inventory.method}:${inventory.endpointPath}`),
-    path: inventory.endpointPath,
-    method: inventory.method === 'TRACE' ? 'GET' : inventory.method,
-    ...(inventory.summary ? { summary: inventory.summary } : {}),
-    ...(inventory.operationId ? { operationId: inventory.operationId } : {}),
-    ...(inventory.authRequired ? { auth: { type: 'bearer' } } : {}),
-    ...(schemaToObject(inventory.requestSchema) ? { request_body_schema: schemaToObject(inventory.requestSchema) } : {}),
-    ...(schemaToObject(inventory.responseSchema) ? { response_schema: schemaToObject(inventory.responseSchema) } : {}),
-  })),
-});
-
 export function OrchestratorAgent() {
   const { activeApplication } = useTestContext();
   const [isOpen, setIsOpen] = useState(false);
@@ -1461,35 +1378,6 @@ export function OrchestratorAgent() {
     if (storedProjectId) return String(storedProjectId);
     const project = await flowOpsApi.ensureProject();
     return String(project.id);
-  };
-
-  const buildCurrentAppApiInventory = async (keyword: string) => {
-    const currentAppId = activeApplication.appId;
-    const storedProjectId = getStoredProjectIdForApp(currentAppId);
-    const projectId = storedProjectId || (await flowOpsApi.ensureProject()).id;
-    const repositories = await flowOpsApi.listRepositories(projectId).catch(() => [] as RepositoryResponse[]);
-    const storedRepositories = readStoredRepositories();
-    const activeRepository = mergeRepositoryScope(
-      repositories.find((repository) => repository.appId === currentAppId),
-      storedRepositories.find((repository) => repository.appId === currentAppId),
-    );
-    const branchName = activeRepository.defaultBranch || activeRepository.selectedBranches?.[0];
-    const params = {
-      projectId,
-      appId: currentAppId,
-      ...(activeRepository.id ? { repositoryId: activeRepository.id } : {}),
-      ...(branchName ? { branchName } : {}),
-      ...(keyword.trim() ? { keyword: keyword.trim() } : {}),
-    };
-    const inventory = await flowOpsApi.listInventories(projectId, params);
-    const scopedItems = (inventory.items || []).filter((item) => inventoryBelongsToRepositoryScope(item, activeRepository));
-    return {
-      projectId,
-      repositoryId: activeRepository.id,
-      branchName,
-      keyword: keyword.trim(),
-      apiInventory: toOrchestratorApiInventory(currentAppId, scopedItems),
-    };
   };
 
   const updateTask = (msgId: string, type: AgentTask['type'], updates: Partial<AgentTask>) =>
@@ -1675,41 +1563,23 @@ export function OrchestratorAgent() {
     ]);
     setIsProcessing(true);
     try {
-      const inventoryScope = await buildCurrentAppApiInventory(text);
+      const projectId = await resolveCurrentProjectId();
       if (activeAppIdRef.current !== requestAppId) return;
 
       const payload = {
-        project_id: String(requestAppId),
+        project_id: projectId,
         user_prompt: text,
+        user_intent: text,
         context: {
+          user_intent: text,
           api_server_url: getApiServerUrl(),
           base_url: getApiServerUrl(),
           env_name: 'local',
-          api_inventory: inventoryScope.apiInventory,
-          inventory_lookup: {
-            projectId: inventoryScope.projectId,
-            appId: requestAppId,
-            repositoryId: inventoryScope.repositoryId,
-            branchName: inventoryScope.branchName,
-            keyword: inventoryScope.keyword,
-          },
+          app_id: requestAppId,
         },
       };
 
-      console.info('[OrchestratorAgent] chat payload', {
-        ...payload,
-        context: {
-          ...payload.context,
-          api_inventory: {
-            ...payload.context.api_inventory,
-            endpoints: payload.context.api_inventory.endpoints.map((endpoint) => ({
-              path: endpoint.path,
-              summary: endpoint.summary,
-              operationId: endpoint.operationId,
-            })),
-          },
-        },
-      });
+      console.info('[OrchestratorAgent] chat payload', payload);
 
       const res = await flowOpsApi.chatOrchestrator(payload);
       if (activeAppIdRef.current !== requestAppId) return;
