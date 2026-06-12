@@ -1251,8 +1251,6 @@ export const flowOpsApi = {
       ),
     ),
 
-  getApiDetail: (apiId: number) => unwrap(request<ApiResponse<ApiEndpointDetailResponse>>(`/apis/${apiId}`)),
-
   listInventories: (projectId: number, params: Record<string, unknown> = {}) =>
     unwrap(
       request<ApiResponse<ApiInventoryListResponse>>(

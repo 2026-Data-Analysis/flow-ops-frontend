@@ -32,6 +32,8 @@ import {
   type OrchestratorScenarioData,
   type OrchestratorScenario,
   type OrchestratorScenarioStep,
+  type OrchestratorAgentResult,
+  type OrchestratorChainedVariable,
   type TestGenerationDraftResponse,
 } from '../api/flowOpsClient';
 import { useTestContext } from '../contexts/TestContext';
@@ -41,11 +43,13 @@ import { useTestContext } from '../contexts/TestContext';
 type AgentStatus = 'running' | 'done' | 'error';
 
 interface AgentTask {
-  type: 'log-analysis' | 'test-generation' | 'scenario-generation';
+  type: 'log-analysis' | 'test-generation' | 'scenario-generation' | 'unknown';
   status: AgentStatus;
+  agentType?: string;
   incidentData?: IncidentAgentData;
   testData?: OrchestratorTestCaseData;
   scenarioData?: OrchestratorScenarioData;
+  genericData?: unknown;
   summary?: string;
   errorMessage?: string;
 }
@@ -102,9 +106,10 @@ interface NormalizedScenarioStep {
   path?: string;
   payload: unknown | null;
   params: Record<string, unknown>;
+  headers: Record<string, unknown>;
   expectedStatusCode: number | null;
   assertions: string[];
-  chainedVariables: Array<Record<string, unknown>>;
+  chainedVariables: OrchestratorChainedVariable[];
 }
 
 interface BothFormData {
@@ -138,6 +143,10 @@ function parseJsonSafe(s: string): object | undefined {
   }
 }
 
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 const endpointIdFor = (method: string, path: string) => `${method.toUpperCase()}:${path}`;
 
 const normalizeAuthType = (authRequired?: boolean) => (authRequired ? 'bearer' : 'none');
@@ -163,7 +172,7 @@ const formEndpointsToApiInventory = (
   endpoints: ScenarioEndpointRow[],
 ): OrchestratorScenarioApiInventory => ({
   project_id: projectId,
-  endpoints: endpoints
+  endpoints: asArray<ScenarioEndpointRow>(endpoints)
     .filter((endpoint) => endpoint.path.trim())
     .map((endpoint) => {
       const method = endpoint.method.toUpperCase();
@@ -186,7 +195,7 @@ const fetchProjectApiInventory = async (
   if (Number.isFinite(numericProjectId) && numericProjectId > 0) {
     try {
       const inventory = await flowOpsApi.listInventories(numericProjectId, { size: 200 });
-      const endpoints = (inventory.items || [])
+      const endpoints = asArray<ApiInventoryResponse>(inventory.items)
         .filter((item) => item.endpointPath && item.method)
         .map(inventoryItemToOrchestratorEndpoint);
       if (endpoints.length > 0) {
@@ -202,33 +211,63 @@ const fetchProjectApiInventory = async (
   return formEndpointsToApiInventory(projectId, fallbackEndpoints);
 };
 
+function resolveInventoryFromEndpoint(
+  apiIdOrEndpointId: string | number | undefined,
+  inventories: ApiInventoryResponse[],
+) {
+  if (apiIdOrEndpointId === undefined || apiIdOrEndpointId === null || apiIdOrEndpointId === '') return null;
+  const key = String(apiIdOrEndpointId);
+
+  return inventories.find((item) => {
+    const flexible = item as ApiInventoryResponse & {
+      inventoryId?: string | number;
+      endpoint_id?: string;
+      endpointId?: string;
+      path?: string;
+    };
+    const inventoryId = String(flexible.id ?? flexible.inventoryId ?? '');
+    const endpointId = flexible.endpoint_id ?? flexible.endpointId;
+    const path = flexible.endpointPath ?? flexible.path;
+    const methodPath = flexible.method && path ? `${flexible.method}:${path}` : undefined;
+
+    return inventoryId === key || endpointId === key || methodPath === key;
+  }) ?? null;
+}
+
 function normalizeScenarioStep(step: OrchestratorScenarioStep): NormalizedScenarioStep {
+  const requestSpec = step.requestSpec ?? {};
+  const expectedSpec = step.expectedSpec ?? {};
+  const assertionSpec = step.assertionSpec ?? {};
   const requestParams = {
-    ...(step.requestSpec?.pathParams ?? {}),
-    ...(step.requestSpec?.queryParams ?? {}),
+    ...(requestSpec.pathParams ?? {}),
+    ...(requestSpec.queryParams ?? {}),
   };
   const endpointId = step.endpoint_id ?? step.apiId ?? '';
-  const explicitMethod = normalizeHttpMethod(step.requestSpec?.method);
+  const explicitMethod = normalizeHttpMethod(requestSpec.method);
   const split = splitMethodEndpoint(endpointId);
   const method = explicitMethod ?? split.method;
-  const path = normalizeEndpointPath(step.requestSpec?.path ?? split.endpoint ?? endpointId);
+  const path = normalizeEndpointPath(requestSpec.path ?? split.endpoint ?? endpointId);
+  const assertions = asArray<string>(step.expected_assertions).length > 0
+    ? asArray<string>(step.expected_assertions).map(String)
+    : asArray<string>(assertionSpec.bodyContains).map(String);
   return {
-    stepId: step.step_id,
-    ref: step.ref,
-    order: step.order,
+    stepId: step.step_id ?? step.ref ?? endpointId,
+    ref: step.ref ?? '',
+    order: typeof step.order === 'number' ? step.order : 0,
     endpointId,
     method,
     path,
-    name: step.name ?? step.title ?? endpointId,
-    payload: step.static_payload ?? step.requestSpec?.body ?? null,
+    name: step.name ?? step.title ?? '이름 없는 스텝',
+    payload: step.static_payload ?? requestSpec.body ?? null,
     params: step.static_params ?? requestParams,
+    headers: requestSpec.headers ?? {},
     expectedStatusCode:
       step.expected_status_code ??
-      step.expectedSpec?.statusCode ??
-      step.assertionSpec?.statusCode ??
+      expectedSpec.statusCode ??
+      assertionSpec.statusCode ??
       null,
-    assertions: step.expected_assertions ?? step.assertionSpec?.bodyContains ?? [],
-    chainedVariables: step.chained_variables ?? [],
+    assertions,
+    chainedVariables: asArray<OrchestratorChainedVariable>(step.chained_variables),
   };
 }
 
@@ -572,6 +611,7 @@ function BothFormCard({
 
 function RootCauseCard({ cause }: { cause: RootCause }) {
   const [expanded, setExpanded] = useState(false);
+  const evidence = asArray<string>(cause.evidence);
   const sev = cause.severity === 'HIGH'
     ? 'bg-red-500/20 text-red-400 border-red-500/30'
     : cause.severity === 'MEDIUM'
@@ -586,14 +626,17 @@ function RootCauseCard({ cause }: { cause: RootCause }) {
       <button onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors">
         {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-        {expanded ? '접기' : `증거 ${cause.evidence.length}건 · 권장 조치 보기`}
+        {expanded ? '접기' : `증거 ${evidence.length}건 · 권장 조치 보기`}
       </button>
       {expanded && (
         <div className="mt-2 space-y-2">
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">증거</p>
             <ul className="space-y-1">
-              {cause.evidence.map((e, i) => (
+              {evidence.length === 0 && (
+                <li className="text-xs text-gray-500">표시할 증거가 없습니다.</li>
+              )}
+              {evidence.map((e, i) => (
                 <li key={i} className="text-xs text-gray-400 flex gap-1.5">
                   <span className="text-gray-600 shrink-0">•</span>
                   <span className="font-mono break-all">{e}</span>
@@ -613,8 +656,11 @@ function RootCauseCard({ cause }: { cause: RootCause }) {
 
 function IncidentResultView({ data }: { data: IncidentAgentData }) {
   const [tab, setTab] = useState<'causes' | 'internal' | 'external'>('causes');
+  const rootCauses = asArray<RootCause>(data?.root_causes);
+  const internalReport = data?.internal_report ?? '';
+  const externalNotice = data?.external_notice ?? '';
   const tabs = [
-    { key: 'causes' as const, label: `원인 분석 (${data.root_causes.length})`, cls: 'bg-violet-600/80 text-white' },
+    { key: 'causes' as const, label: `원인 분석 (${rootCauses.length})`, cls: 'bg-violet-600/80 text-white' },
     { key: 'internal' as const, label: '내부 보고서', cls: 'bg-blue-600/80 text-white' },
     { key: 'external' as const, label: '외부 공지', cls: 'bg-emerald-600/80 text-white' },
   ];
@@ -630,17 +676,21 @@ function IncidentResultView({ data }: { data: IncidentAgentData }) {
       </div>
       {tab === 'causes' && (
         <div className="space-y-2">
-          {data.root_causes.map((c, i) => <RootCauseCard key={i} cause={c} />)}
+          {rootCauses.length === 0 ? (
+            <p className="text-xs text-gray-500">분석 결과를 찾지 못했습니다.</p>
+          ) : (
+            rootCauses.map((c, i) => <RootCauseCard key={i} cause={c} />)
+          )}
         </div>
       )}
       {tab === 'internal' && (
         <div className="bg-[#0d0d12] border border-[#2a2a35] rounded-lg p-3 text-xs text-gray-300 whitespace-pre-wrap leading-relaxed max-h-52 overflow-y-auto font-mono">
-          {data.internal_report}
+          {internalReport || '표시할 결과가 없습니다.'}
         </div>
       )}
       {tab === 'external' && (
         <div className="bg-[#0d0d12] border border-[#2a2a35] rounded-lg p-3 text-xs text-gray-300 whitespace-pre-wrap leading-relaxed max-h-52 overflow-y-auto">
-          {data.external_notice}
+          {externalNotice || '표시할 결과가 없습니다.'}
         </div>
       )}
     </div>
@@ -939,6 +989,7 @@ const normalizeBackendDraftForOrchestrator = (draft: TestGenerationDraftResponse
 // selectedEndpoint(method/path)를 채워서 "API #2007" 대신 실제 엔드포인트명이 보이도록 한다.
 const enrichDraftEndpoints = async (
   drafts: OrchestratorTestCaseDraft[],
+  projectId?: string,
 ): Promise<OrchestratorTestCaseDraft[]> => {
   const missingApiIds = new Set<number>();
   drafts.forEach((draft) => {
@@ -948,19 +999,57 @@ const enrichDraftEndpoints = async (
   });
   if (missingApiIds.size === 0) return drafts;
 
+  const numericProjectId = Number(projectId);
+  if (!Number.isFinite(numericProjectId) || numericProjectId <= 0) {
+    console.warn('Cannot fetch API inventory detail: projectId is missing');
+    return drafts;
+  }
+
+  const inventories = await flowOpsApi
+    .listInventories(numericProjectId, { size: 500 })
+    .then((inventory) => asArray<ApiInventoryResponse>(inventory.items))
+    .catch((error) => {
+      console.warn('[OrchestratorAgent] failed to load API inventories for draft endpoint resolution', {
+        projectId,
+        error,
+      });
+      return [] as ApiInventoryResponse[];
+    });
+
   const detailByApiId = new Map<number, { method: string; path: string }>();
-  await Promise.all(
-    Array.from(missingApiIds).map(async (apiId) => {
-      try {
-        const detail = await flowOpsApi.getApiDetail(apiId);
-        if (detail?.path) {
-          detailByApiId.set(apiId, { method: String(detail.method || ''), path: detail.path });
-        }
-      } catch (error) {
-        console.warn('[OrchestratorAgent] failed to resolve endpoint for apiId', { apiId, error });
-      }
-    }),
-  );
+  await Promise.all(Array.from(missingApiIds).map(async (apiId) => {
+    const inventory = resolveInventoryFromEndpoint(apiId, inventories);
+    if (!inventory) {
+      console.warn('Failed to resolve inventory detail target', {
+        apiIdOrEndpointId: apiId,
+        availableInventoryIds: inventories.map((item) => item.id),
+        availableEndpointIds: inventories.map((item) => {
+          const flexible = item as ApiInventoryResponse & { endpoint_id?: string; endpointId?: string };
+          return flexible.endpoint_id ?? flexible.endpointId;
+        }),
+        availableMethodPaths: inventories.map((item) =>
+          item.method && item.endpointPath ? `${item.method}:${item.endpointPath}` : null
+        ),
+      });
+      return;
+    }
+    const inventoryId = Number(inventory.id);
+    if (!Number.isFinite(inventoryId) || inventoryId <= 0) return;
+    const detail = await flowOpsApi
+      .getInventoryDetail(numericProjectId, inventoryId)
+      .catch((error) => {
+        console.warn('[OrchestratorAgent] failed to load inventory detail', {
+          projectId,
+          inventoryId,
+          error,
+        });
+        return inventory;
+      });
+    detailByApiId.set(apiId, {
+      method: String(detail.method || inventory.method || ''),
+      path: detail.endpointPath || inventory.endpointPath,
+    });
+  }));
   if (detailByApiId.size === 0) return drafts;
 
   return drafts.map((draft) => {
@@ -980,11 +1069,16 @@ const enrichDraftEndpoints = async (
   });
 };
 
-const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<OrchestratorTestCaseData> => {
+const hydrateTestCaseData = async (
+  data: OrchestratorTestCaseData,
+  projectId?: string,
+): Promise<OrchestratorTestCaseData> => {
   const generationId = Number(data.generationId);
-  if (Array.isArray(data.drafts) && data.drafts.length > 0) {
+  const inputDrafts = asArray<OrchestratorTestCaseDraft>(data?.drafts);
+  if (inputDrafts.length > 0) {
     const drafts = await enrichDraftEndpoints(
-      data.drafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
+      inputDrafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
+      projectId,
     );
     return {
       ...data,
@@ -1006,7 +1100,7 @@ const hydrateTestCaseData = async (data: OrchestratorTestCaseData): Promise<Orch
     });
 
   if (backendDrafts.length === 0) return data;
-  const drafts = await enrichDraftEndpoints(backendDrafts.map(normalizeBackendDraftForOrchestrator));
+  const drafts = await enrichDraftEndpoints(backendDrafts.map(normalizeBackendDraftForOrchestrator), projectId);
   return { ...data, generationId, drafts };
 };
 
@@ -1082,19 +1176,20 @@ function TestCaseDraftRow({
 
 function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
   const navigate = useNavigate();
+  const drafts = asArray<OrchestratorTestCaseDraft>(data?.drafts);
 
   const groups = useMemo(() => {
     const map = new Map<string, { draft: OrchestratorTestCaseDraft; globalIdx: number }[]>();
-    data.drafts.forEach((d, i) => {
+    drafts.forEach((d, i) => {
       const key = draftGroupKey(d);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push({ draft: d, globalIdx: i });
     });
     return Array.from(map.entries());
-  }, [data.drafts]);
+  }, [drafts]);
 
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(data.drafts.map((_, i) => i)),
+    () => new Set(drafts.map((_, i) => i)),
   );
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(groups.map(([key]) => key)),
@@ -1128,7 +1223,7 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
     });
 
   const handleSave = async () => {
-    const toSave = data.drafts.filter((_, i) => selected.has(i));
+    const toSave = drafts.filter((_, i) => selected.has(i));
     if (!toSave.length) {
       setSaveError('Select at least one test case draft before saving.');
       return;
@@ -1190,15 +1285,15 @@ function TestCaseResultView({ data }: { data: OrchestratorTestCaseData }) {
     }
   };
 
-  const unique = data.drafts.filter((d) => !d.duplicate).length;
+  const unique = drafts.filter((d) => !d.duplicate).length;
   const selectedCount = selected.size;
 
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center gap-2 text-xs text-gray-400">
-        <span>{data.drafts.length}개 생성</span>
-        {data.drafts.some((d) => d.duplicate) && (
-          <span className="text-amber-400">({data.drafts.length - unique}개 중복)</span>
+        <span>{drafts.length}개 생성</span>
+        {drafts.some((d) => d.duplicate) && (
+          <span className="text-amber-400">({drafts.length - unique}개 중복)</span>
         )}
         <span className="ml-auto text-indigo-400 font-medium">{selectedCount}개 선택됨</span>
       </div>
@@ -1278,6 +1373,22 @@ const METHOD_COLOR: Record<string, string> = {
   DELETE: 'bg-red-500/20 text-red-400',
 };
 
+function JsonBlock({ title, value }: { title: string; value: unknown }) {
+  const content = value == null
+    ? '{}'
+    : typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2);
+  return (
+    <div>
+      <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">{title}</p>
+      <pre className="bg-[#0d0d12] rounded p-2 text-[10px] text-gray-300 overflow-x-auto font-mono whitespace-pre-wrap">
+        {content}
+      </pre>
+    </div>
+  );
+}
+
 function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
   const [showDetail, setShowDetail] = useState(false);
   const normalized = normalizeScenarioStep(step);
@@ -1287,34 +1398,74 @@ function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
   return (
     <div className="bg-[#060609] rounded-lg px-2 py-1.5">
       <div className="flex items-center gap-1.5">
-        <span className="text-[9px] text-gray-600 font-mono w-4 text-center shrink-0">{step.order}</span>
+        <span className="text-[9px] text-gray-600 font-mono w-4 text-center shrink-0">{normalized.order || '-'}</span>
         <span className={`text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ${methodColor}`}>{method}</span>
         <span className="text-[10px] text-gray-400 font-mono truncate flex-1">{path}</span>
-        <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded shrink-0">{step.expected_status_code}</span>
-        {step.chained_variables.length > 0 && (
-          <span className="text-teal-500 text-[10px] shrink-0" title={`${step.chained_variables.length}개 쬀이닝`}>⇒</span>
+        {normalized.expectedStatusCode !== null && (
+          <span className="text-[9px] text-gray-500 bg-[#1f1f28] px-1.5 py-0.5 rounded shrink-0">{normalized.expectedStatusCode}</span>
+        )}
+        {normalized.chainedVariables.length > 0 && (
+          <span className="text-teal-500 text-[10px] shrink-0" title={`${normalized.chainedVariables.length} chained variables`}>↳</span>
         )}
         <button onClick={() => setShowDetail(!showDetail)} className="text-gray-600 hover:text-gray-400 shrink-0">
           {showDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
         </button>
       </div>
-      <p className="text-[10px] text-gray-400 ml-6 mt-0.5 truncate">{step.name}</p>
+      <p className="text-[10px] text-gray-400 ml-6 mt-0.5 truncate">{normalized.name}</p>
       {showDetail && (
         <div className="ml-6 mt-1.5 space-y-1.5">
-          {step.expected_assertions.length > 0 && (
+          <JsonBlock title="Payload" value={normalized.payload ?? {}} />
+          <JsonBlock title="Params" value={normalized.params} />
+          <JsonBlock title="Headers" value={normalized.headers} />
+          <div>
+            <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">Expected Status</p>
+            <p className="text-[10px] text-gray-400">{normalized.expectedStatusCode ?? '-'}</p>
+          </div>
+          <div>
+            <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">Assertions</p>
+            {normalized.assertions.length === 0 ? (
+              <p className="text-[10px] text-gray-500">No assertions to display.</p>
+            ) : (
+              normalized.assertions.map((assertion, index) => (
+                <p key={index} className="text-[10px] text-gray-400 flex gap-1">
+                  <span className="text-gray-600 shrink-0">•</span>{assertion}
+                </p>
+              ))
+            )}
+          </div>
+          {normalized.chainedVariables.length > 0 && (
+            <div>
+              <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">Chained Variables</p>
+              {normalized.chainedVariables.map((variable, index) => {
+                const source = variable.source_step_ref ?? variable.source_step ?? variable.source;
+                const jsonPath = variable.source_json_path ?? variable.json_path;
+                const target = variable.target_field ?? variable.name ?? variable.target_location;
+                return (
+                  <p key={index} className="text-[10px] text-teal-400/70 flex gap-1 flex-wrap font-mono">
+                    <span>{source ?? '-'}</span>
+                    <span className="text-gray-600">→</span>
+                    <span>{jsonPath ?? '-'}</span>
+                    <span className="text-gray-600">→</span>
+                    <span>{target ?? '-'}</span>
+                  </p>
+                );
+              })}
+            </div>
+          )}
+          {false && asArray<string>(step.expected_assertions).length > 0 && (
             <div>
               <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">검증</p>
-              {step.expected_assertions.map((a, i) => (
+              {asArray<string>(step.expected_assertions).map((a, i) => (
                 <p key={i} className="text-[10px] text-gray-400 flex gap-1">
                   <span className="text-gray-600 shrink-0">•</span>{a}
                 </p>
               ))}
             </div>
           )}
-          {step.chained_variables.length > 0 && (
+          {false && asArray<OrchestratorChainedVariable>(step.chained_variables).length > 0 && (
             <div>
               <p className="text-[9px] text-gray-600 uppercase tracking-wider mb-0.5">쬀이닝</p>
-              {step.chained_variables.map((v, i) => (
+              {asArray<OrchestratorChainedVariable>(step.chained_variables).map((v, i) => (
                 <p key={i} className="text-[10px] text-teal-400/70 flex gap-1 flex-wrap font-mono">
                   <span>{v.source_step_ref}</span>
                   <span className="text-gray-600">→</span>
@@ -1334,6 +1485,7 @@ function ScenarioStepRow({ step }: { step: OrchestratorScenarioStep }) {
 function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
   const [expanded, setExpanded] = useState(false);
   const meta = scenario.meta ?? {};
+  const steps = asArray<OrchestratorScenarioStep>(scenario?.steps);
   const estimatedRisk = meta.estimated_risk ?? 'MEDIUM';
   const riskStyle = estimatedRisk === 'HIGH' || estimatedRisk === 'CRITICAL'
     ? 'bg-red-500/20 text-red-400'
@@ -1346,7 +1498,7 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
         className="w-full p-2.5 flex items-start gap-2 text-left">
         <div className="flex-1 min-w-0">
           <p className="text-xs text-gray-200 font-medium leading-snug">{scenario.name}</p>
-          <p className="text-[10px] text-gray-500 mt-0.5">{scenario.steps.length}개 스텝</p>
+          <p className="text-[10px] text-gray-500 mt-0.5">{steps.length} steps</p>
         </div>
         <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${riskStyle}`}>
           {estimatedRisk}
@@ -1370,7 +1522,16 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
             <p className="text-[10px] text-amber-300/80 leading-relaxed">Coverage gap: {meta.coverage_gap}</p>
           )}
           <div className="space-y-1">
-            {scenario.steps.map((step) => <ScenarioStepRow key={step.step_id} step={step} />)}
+            {steps.length === 0 ? (
+              <p className="text-xs text-gray-500">표시할 스텝이 없습니다.</p>
+            ) : (
+              steps.map((step, index) => (
+                <ScenarioStepRow
+                  key={step.step_id ?? step.ref ?? `${scenario.scenario_id}-${index}`}
+                  step={step}
+                />
+              ))
+            )}
           </div>
         </div>
       )}
@@ -1379,16 +1540,22 @@ function ScenarioCard({ scenario }: { scenario: OrchestratorScenario }) {
 }
 
 function ScenarioResultView({ data }: { data: OrchestratorScenarioData }) {
+  const scenarios = asArray<OrchestratorScenario>(data?.scenarios);
+  const usedEndpointIds = asArray<string>(data?.used_endpoint_ids);
   return (
     <div className="mt-2 space-y-2">
       <div className="text-xs text-gray-400">
-        {data.scenarios.length}개 시나리오
-        {data.used_endpoint_ids.length > 0 && (
-          <span className="text-gray-500"> · API {data.used_endpoint_ids.length}개 사용</span>
+        {scenarios.length}개 시나리오
+        {usedEndpointIds.length > 0 && (
+          <span className="text-gray-500"> · API {usedEndpointIds.length}개 사용</span>
         )}
       </div>
       <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
-        {data.scenarios.map((s) => <ScenarioCard key={s.scenario_id} scenario={s} />)}
+        {scenarios.length === 0 ? (
+          <p className="text-xs text-gray-500">표시할 결과가 없습니다.</p>
+        ) : (
+          scenarios.map((s, index) => <ScenarioCard key={s.scenario_id ?? `scenario-${index}`} scenario={s} />)
+        )}
       </div>
     </div>
   );
@@ -1396,14 +1563,26 @@ function ScenarioResultView({ data }: { data: OrchestratorScenarioData }) {
 
 // ─── TaskCard ─────────────────────────────────────────────────────────────────
 
+function GenericAgentResultView({ data }: { data: unknown }) {
+  if (data === undefined || data === null) {
+    return <p className="mt-2 text-xs text-gray-500">표시할 결과가 없습니다.</p>;
+  }
+  return (
+    <div className="mt-2">
+      <JsonBlock title="Result" value={data} />
+    </div>
+  );
+}
+
 function TaskCard({ task }: { task: AgentTask }) {
   const isLog = task.type === 'log-analysis';
   const isScenario = task.type === 'scenario-generation';
+  const isUnknown = task.type === 'unknown';
   const isRunning = task.status === 'running';
   const isDone = task.status === 'done';
   const isError = task.status === 'error';
 
-  const accent = isLog ? 'violet' : isScenario ? 'teal' : 'indigo';
+  const accent = isLog ? 'violet' : isScenario ? 'teal' : isUnknown ? 'gray' : 'indigo';
   const borderCls = isError
     ? 'border-red-500/30 bg-red-500/5'
     : isDone
@@ -1414,10 +1593,18 @@ function TaskCard({ task }: { task: AgentTask }) {
     ? <FileSearch size={11} className="text-white" />
     : isScenario
       ? <GitBranch size={11} className="text-white" />
-      : <TestTube2 size={11} className="text-white" />;
+      : isUnknown
+        ? <Sparkles size={11} className="text-white" />
+        : <TestTube2 size={11} className="text-white" />;
 
-  const label = isLog ? 'Log Analysis Agent' : isScenario ? 'Scenario Agent' : 'Test Case Agent';
-  const iconBg = isLog ? 'bg-violet-600' : isScenario ? 'bg-teal-600' : 'bg-indigo-600';
+  const label = isLog
+    ? 'Log Analysis Agent'
+    : isScenario
+      ? 'Scenario Agent'
+      : isUnknown
+        ? `${task.agentType || 'Unknown'} Agent`
+        : 'Test Case Agent';
+  const iconBg = isLog ? 'bg-violet-600' : isScenario ? 'bg-teal-600' : isUnknown ? 'bg-gray-600' : 'bg-indigo-600';
 
   return (
     <div className={`flex-1 min-w-0 rounded-xl border p-3 ${borderCls}`}>
@@ -1444,6 +1631,10 @@ function TaskCard({ task }: { task: AgentTask }) {
       {isDone && isLog && task.incidentData && <IncidentResultView data={task.incidentData} />}
       {isDone && task.type === 'test-generation' && task.testData && <TestCaseResultView data={task.testData} />}
       {isDone && isScenario && task.scenarioData && <ScenarioResultView data={task.scenarioData} />}
+      {isDone && isUnknown && <GenericAgentResultView data={task.genericData} />}
+      {isDone && !task.incidentData && !task.testData && !task.scenarioData && !isUnknown && (
+        <p className="text-xs text-gray-500">표시할 결과가 없습니다.</p>
+      )}
       {isError && <p className="text-xs text-red-400">{task.errorMessage ?? '에이전트 오류가 발생했습니다.'}</p>}
     </div>
   );
@@ -1548,7 +1739,7 @@ export function OrchestratorAgent() {
         user_prompt: formData.user_prompt,
         context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
       });
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'incident');
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => x.agent_type === 'incident');
       if (r?.success && r.data) {
         updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
       } else {
@@ -1583,9 +1774,9 @@ export function OrchestratorAgent() {
           },
         },
       });
-      const r = res.data?.agent_results?.find((x) => isTestCaseAgentType(x.agent_type));
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => isTestCaseAgentType(x.agent_type));
       if (r?.success && r.data) {
-        const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData);
+        const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData, projectId);
         updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary });
       } else {
         updateTask(taskMsgId, 'test-generation', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '생성 중 오류가 발생했습니다.' });
@@ -1613,7 +1804,7 @@ export function OrchestratorAgent() {
           max_steps_per_scenario: 8,
         },
       });
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'scenario');
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => x.agent_type === 'scenario');
       if (r?.success && r.data) {
         updateTask(taskMsgId, 'scenario-generation', { status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary: res.data?.summary });
       } else {
@@ -1635,7 +1826,7 @@ export function OrchestratorAgent() {
       user_prompt: formData.log_user_prompt,
       context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
     }).then((res) => {
-      const r = res.data?.agent_results?.find((x) => x.agent_type === 'incident');
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => x.agent_type === 'incident');
       if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
       else updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '오류' });
     }).catch((e: unknown) => updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
@@ -1651,9 +1842,9 @@ export function OrchestratorAgent() {
         },
       },
     }).then((res) => {
-      const r = res.data?.agent_results?.find((x) => isTestCaseAgentType(x.agent_type));
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => isTestCaseAgentType(x.agent_type));
       if (r?.success && r.data) {
-        void hydrateTestCaseData(r.data as OrchestratorTestCaseData).then((testData) =>
+        void hydrateTestCaseData(r.data as OrchestratorTestCaseData, projectId).then((testData) =>
           updateTask(taskMsgId, 'test-generation', { status: 'done', testData, summary: res.data?.summary }),
         );
       }
@@ -1711,21 +1902,29 @@ export function OrchestratorAgent() {
 
       const res = await flowOpsApi.chatOrchestrator(payload);
       if (activeAppIdRef.current !== requestAppId) return;
-      const results = res.data?.agent_results ?? [];
+      const results = asArray<OrchestratorAgentResult>(res.data?.agent_results);
       const summary = res.data?.summary;
       const tasks: AgentTask[] = await Promise.all(results.map(async (r) => {
         const type: AgentTask['type'] =
           r.agent_type === 'incident' ? 'log-analysis'
             : r.agent_type === 'scenario' ? 'scenario-generation'
               : isTestCaseAgentType(r.agent_type) ? 'test-generation'
-              : 'test-generation';
+              : 'unknown';
         if (!r.success || !r.data) {
-          return { type, status: 'error', errorMessage: r.error_message ?? '에이전트 처리 중 오류가 발생했습니다.' };
+          return {
+            type,
+            agentType: r.agent_type,
+            status: 'error',
+            errorMessage: r.error_message ?? '에이전트 처리 중 오류가 발생했습니다.',
+          };
         }
-        if (type === 'log-analysis') return { type, status: 'done', incidentData: r.data as IncidentAgentData, summary };
-        if (type === 'scenario-generation') return { type, status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary };
-        const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData);
-        return { type, status: 'done', testData, summary };
+        if (type === 'log-analysis') return { type, agentType: r.agent_type, status: 'done', incidentData: r.data as IncidentAgentData, summary };
+        if (type === 'scenario-generation') return { type, agentType: r.agent_type, status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary };
+        if (type === 'test-generation') {
+          const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData, projectId);
+          return { type, agentType: r.agent_type, status: 'done', testData, summary };
+        }
+        return { type, agentType: r.agent_type, status: 'done', genericData: r.data, summary };
       }));
 
       if (activeAppIdRef.current !== requestAppId) return;

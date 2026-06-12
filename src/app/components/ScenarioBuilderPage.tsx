@@ -539,6 +539,10 @@ const toNullableString = (value: string | undefined) => {
 const hasNumericId = <T extends { id?: unknown }>(item: T | null | undefined): item is T & { id: number } =>
   typeof item?.id === 'number';
 
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 const isPresent = <T,>(item: T | null | undefined): item is T => item !== null && item !== undefined;
 
 const normalizeScenarioGenerateResponse = (raw: unknown): ScenarioV2GenerateResponse => {
@@ -815,10 +819,10 @@ export function ScenarioBuilderPage() {
   const visibleAiScenarios = aiScenarios.filter(isPresent);
   const visibleEnvironments = environments.filter(isPresent).filter((environment) => environment.id !== undefined);
   const visibleFilteredScenarios = filteredScenarios.filter(isPresent);
-  const selectedScenarioSteps = (selectedScenario?.steps || []).filter(isPresent);
+  const selectedScenarioSteps = asArray<ScenarioStep>(selectedScenario?.steps).filter(isPresent);
   const selectedAiScenarioCount = visibleAiScenarios.filter((scenario) => scenario.isSelected).length;
   const hasSelectedAiMappingFailure = visibleAiScenarios.some(
-    (scenario) => scenario.isSelected && scenario.steps.some((step) => !step.apiId),
+    (scenario) => scenario.isSelected && asArray<ScenarioStep>(scenario.steps).some((step) => !step.apiId),
   );
 
   const generateV2Scenarios = async (
@@ -961,12 +965,12 @@ export function ScenarioBuilderPage() {
   const handleAiGenerateConfirm = async () => {
     if (isRecommendationLoading || isSavingRecommendations) return;
     const selectedAiScenarios = visibleAiScenarios.filter(s => s.isSelected);
-    const mappingFailed = selectedAiScenarios.some((scenario) => scenario.steps.some((step) => !step.apiId));
+    const mappingFailed = selectedAiScenarios.some((scenario) => asArray<ScenarioStep>(scenario.steps).some((step) => !step.apiId));
     if (mappingFailed) {
       setApiError('API mapping failed: one or more recommended steps do not have an apiId.');
       setAiScenarios((items) =>
         items.map((scenario) =>
-          scenario.isSelected && scenario.steps.some((step) => !step.apiId)
+          scenario.isSelected && asArray<ScenarioStep>(scenario.steps).some((step) => !step.apiId)
             ? { ...scenario, apiMappingFailed: true }
             : scenario,
         ),
@@ -990,7 +994,7 @@ export function ScenarioBuilderPage() {
             testLevel: scenario.testLevel,
             estimatedRisk: scenario.estimatedRisk,
             source: 'AI',
-            steps: scenario.steps.filter(isPresent).map(toScenarioV2SaveStep),
+            steps: asArray<ScenarioStep>(scenario.steps).filter(isPresent).map(toScenarioV2SaveStep),
           }),
         })),
       );
@@ -1227,11 +1231,12 @@ export function ScenarioBuilderPage() {
 
   const addStep = () => {
     if (!selectedScenario) return;
+    const steps = asArray<ScenarioStep>(selectedScenario.steps);
     const defaultApi = inventoryApis[0];
     const defaultRequestConfig = buildRequestDefaults(defaultApi?.requestSchema);
     const newStep: ScenarioStep = {
       id: `step-${Date.now()}`,
-      order: selectedScenario.steps.length + 1,
+      order: steps.length + 1,
       label: 'New Step',
       apiEndpoint: defaultApi?.endpointPath || '/api/v1/',
       method: defaultApi ? toScenarioMethod(defaultApi.method) : 'GET',
@@ -1240,13 +1245,14 @@ export function ScenarioBuilderPage() {
       validationRules: ['{"status": 200}'],
       stopOnFail: false,
     };
-    updateScenario({ steps: [...selectedScenario.steps, newStep] });
+    updateScenario({ steps: [...steps, newStep] });
   };
 
   const deleteStep = (stepId: string) => {
     if (!selectedScenario) return;
+    const steps = asArray<ScenarioStep>(selectedScenario.steps);
     updateScenario({
-      steps: selectedScenario.steps
+      steps: steps
         .filter(s => s.id !== stepId)
         .map((s, idx) => ({ ...s, order: idx + 1 }))
     });
@@ -1254,8 +1260,9 @@ export function ScenarioBuilderPage() {
 
   const updateStep = (stepId: string, updates: Partial<ScenarioStep>) => {
     if (!selectedScenario) return;
+    const steps = asArray<ScenarioStep>(selectedScenario.steps);
     updateScenario({
-      steps: selectedScenario.steps.filter(isPresent).map(s => s.id === stepId ? { ...s, ...updates } : s)
+      steps: steps.filter(isPresent).map(s => s.id === stepId ? { ...s, ...updates } : s)
     });
   };
 
@@ -1266,13 +1273,14 @@ export function ScenarioBuilderPage() {
   const handleDragOver = (e: React.DragEvent, targetStepId: string) => {
     e.preventDefault();
     if (!draggedStepId || !selectedScenario || draggedStepId === targetStepId) return;
+    const steps = asArray<ScenarioStep>(selectedScenario.steps);
 
-    const draggedIdx = selectedScenario.steps.findIndex(s => s.id === draggedStepId);
-    const targetIdx = selectedScenario.steps.findIndex(s => s.id === targetStepId);
+    const draggedIdx = steps.findIndex(s => s.id === draggedStepId);
+    const targetIdx = steps.findIndex(s => s.id === targetStepId);
 
     if (draggedIdx === -1 || targetIdx === -1) return;
 
-    const newSteps = [...selectedScenario.steps];
+    const newSteps = [...steps];
     const [draggedStep] = newSteps.splice(draggedIdx, 1);
     newSteps.splice(targetIdx, 0, draggedStep);
 
@@ -1439,7 +1447,8 @@ export function ScenarioBuilderPage() {
               {!isRecommendationLoading && visibleAiScenarios.map((scenario) => {
                 const TypeIcon = typeColors[scenario.type].icon;
                 const ReasonIcon = reasonColors[scenario.reasonType].icon;
-                const apiMappingFailed = scenario.apiMappingFailed || scenario.steps.some((step) => !step.apiId);
+                const scenarioSteps = asArray<ScenarioStep>(scenario.steps);
+                const apiMappingFailed = scenario.apiMappingFailed || scenarioSteps.some((step) => !step.apiId);
                 return (
                   <div
                     key={scenario.id}
@@ -1464,7 +1473,7 @@ export function ScenarioBuilderPage() {
                             <TypeIcon size={12} />
                             {typeColors[scenario.type].label}
                           </span>
-                          <span className="text-xs text-gray-500">{scenario.steps.length} steps</span>
+                          <span className="text-xs text-gray-500">{scenarioSteps.length} steps</span>
                           {apiMappingFailed && (
                             <span className="text-xs px-2 py-1 rounded-full border border-red-500/20 bg-red-500/10 text-red-300">
                               API mapping failed
@@ -1669,6 +1678,7 @@ export function ScenarioBuilderPage() {
             ) : filteredScenarios.map((scenario) => {
               const TypeIcon = typeColors[scenario.type].icon;
               const ReasonIcon = reasonColors[scenario.reasonType].icon;
+              const scenarioSteps = asArray<ScenarioStep>(scenario.steps);
               return (
                 <div
                   key={scenario.id}
@@ -1698,7 +1708,7 @@ export function ScenarioBuilderPage() {
                         </span>
                         <span className="text-xs text-gray-500 flex items-center gap-1">
                           <Zap size={12} />
-                          {scenario.steps.length} steps
+                          {scenarioSteps.length} steps
                         </span>
                       </div>
 
@@ -2118,14 +2128,14 @@ export function ScenarioBuilderPage() {
                   </div>
 
                   {/* Connector Line */}
-                  {index < selectedScenario.steps.length - 1 && (
+                  {index < selectedScenarioSteps.length - 1 && (
                     <div className="flex items-center justify-center py-2">
                       <div className="w-px h-8 bg-gradient-to-b from-blue-500/50 to-blue-500/20"></div>
                     </div>
                   )}
 
                   {/* Add Step Button */}
-                  {index < selectedScenario.steps.length - 1 && (
+                  {index < selectedScenarioSteps.length - 1 && (
                     <div className="flex items-center justify-center -my-1 relative z-10">
                       <button
                         onClick={addStep}

@@ -9,6 +9,10 @@ interface IncidentRootCauseListProps {
   compact?: boolean;
 }
 
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
 export function IncidentRootCauseList({
   causes,
   expandedIndex,
@@ -70,6 +74,7 @@ export function IncidentRootCauseList({
 
 function RootCauseDetails({ cause, compact = false }: { cause: IncidentRootCause; compact?: boolean }) {
   const textClassName = compact ? 'text-xs leading-5' : 'text-sm';
+  const evidence = asArray<string>(cause.evidence);
 
   return (
     <div className="space-y-3">
@@ -79,11 +84,11 @@ function RootCauseDetails({ cause, compact = false }: { cause: IncidentRootCause
           <p className={`${textClassName} text-gray-300`}>{cause.suggested_fix}</p>
         </div>
       )}
-      {cause.evidence?.length > 0 && (
+      {evidence.length > 0 && (
         <div>
           <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">Evidence</div>
           <ul className="space-y-1">
-            {cause.evidence.map((item, index) => (
+            {evidence.map((item, index) => (
               <li key={`${item}-${index}`} className={`${compact ? 'text-xs leading-5' : 'text-xs'} text-gray-400`}>
                 - {item}
               </li>
