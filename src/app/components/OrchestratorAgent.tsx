@@ -21,7 +21,6 @@ import {
 import {
   flowOpsApi,
   DEFAULT_APP_ID,
-  getApiServerUrl,
   getStoredProjectIdForApp,
   type ApiInventoryResponse,
   type IncidentAgentData,
@@ -816,6 +815,25 @@ const isTestCaseAgentType = (agentType?: string) => {
   return normalized === 'testcase' || normalized === 'testcases' || normalized.includes('testcase');
 };
 
+const isIncidentAgentType = (agentType?: string) => {
+  const normalized = String(agentType || '').toLowerCase().replace(/[\s_-]+/g, '');
+  return normalized === 'incident' || normalized.includes('incident') || normalized.includes('loganalysis');
+};
+
+const normalizeIncidentAgentData = (data: IncidentAgentData): IncidentAgentData => {
+  const flexible = data as IncidentAgentData & {
+    rootCauses?: RootCause[];
+    internalReport?: string;
+    externalNotice?: string;
+  };
+  return {
+    ...data,
+    root_causes: asArray<RootCause>(flexible.root_causes ?? flexible.rootCauses),
+    internal_report: flexible.internal_report ?? flexible.internalReport ?? '',
+    external_notice: flexible.external_notice ?? flexible.externalNotice ?? '',
+  };
+};
+
 const draftEndpointParts = (draft: OrchestratorTestCaseDraft) => {
   const requestSpec = draftRequestSpecObject(draft);
   const apiIdEndpoint = splitMethodEndpoint(draft.apiId);
@@ -1075,21 +1093,22 @@ const hydrateTestCaseData = async (
   data: OrchestratorTestCaseData,
   projectId?: string,
 ): Promise<OrchestratorTestCaseData> => {
-  const generationId = Number(data.generationId);
-  const inputDrafts = asArray<OrchestratorTestCaseDraft>(data?.drafts);
+  const safeData = data ?? ({ generationId: '', drafts: [] } as OrchestratorTestCaseData);
+  const generationId = Number(safeData.generationId);
+  const inputDrafts = asArray<OrchestratorTestCaseDraft>(safeData?.drafts);
   if (inputDrafts.length > 0) {
     const drafts = await enrichDraftEndpoints(
       inputDrafts.map((draft) => normalizeBackendDraftForOrchestrator(draft as TestGenerationDraftResponse)),
       projectId,
     );
     return {
-      ...data,
-      generationId: Number.isFinite(generationId) && generationId > 0 ? generationId : data.generationId,
+      ...safeData,
+      generationId: Number.isFinite(generationId) && generationId > 0 ? generationId : safeData.generationId,
       drafts,
     };
   }
 
-  if (!Number.isFinite(generationId) || generationId <= 0) return data;
+  if (!Number.isFinite(generationId) || generationId <= 0) return { ...safeData, drafts: [] };
 
   const backendDrafts = await flowOpsApi
     .listTestGenerationDrafts(generationId)
@@ -1101,9 +1120,9 @@ const hydrateTestCaseData = async (
       return [] as TestGenerationDraftResponse[];
     });
 
-  if (backendDrafts.length === 0) return data;
+  if (backendDrafts.length === 0) return { ...safeData, drafts: [] };
   const drafts = await enrichDraftEndpoints(backendDrafts.map(normalizeBackendDraftForOrchestrator), projectId);
-  return { ...data, generationId, drafts };
+  return { ...safeData, generationId, drafts };
 };
 
 function TestCaseDraftRow({
@@ -1857,9 +1876,9 @@ export function OrchestratorAgent() {
         user_prompt: formData.user_prompt,
         context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
       });
-      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => x.agent_type === 'incident');
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => isIncidentAgentType(x.agent_type));
       if (r?.success && r.data) {
-        updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
+        updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: normalizeIncidentAgentData(r.data as IncidentAgentData), summary: res.data?.summary });
       } else {
         updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? res.error_message ?? '분석 중 오류가 발생했습니다.' });
       }
@@ -1944,8 +1963,8 @@ export function OrchestratorAgent() {
       user_prompt: formData.log_user_prompt,
       context: { service_name: formData.service_name, occurred_at: new Date(formData.occurred_at).toISOString(), raw_log: formData.raw_log },
     }).then((res) => {
-      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => x.agent_type === 'incident');
-      if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: r.data as IncidentAgentData, summary: res.data?.summary });
+      const r = asArray<OrchestratorAgentResult>(res.data?.agent_results).find((x) => isIncidentAgentType(x.agent_type));
+      if (r?.success && r.data) updateTask(taskMsgId, 'log-analysis', { status: 'done', incidentData: normalizeIncidentAgentData(r.data as IncidentAgentData), summary: res.data?.summary });
       else updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: r?.error_message ?? '오류' });
     }).catch((e: unknown) => updateTask(taskMsgId, 'log-analysis', { status: 'error', errorMessage: e instanceof Error ? e.message : '오류' }));
 
@@ -2006,12 +2025,7 @@ export function OrchestratorAgent() {
       const payload = {
         project_id: projectId,
         user_prompt: text,
-        user_intent: text,
         context: {
-          user_intent: text,
-          api_server_url: getApiServerUrl(),
-          base_url: getApiServerUrl(),
-          env_name: 'local',
           app_id: requestAppId,
         },
       };
@@ -2024,7 +2038,7 @@ export function OrchestratorAgent() {
       const summary = res.data?.summary;
       const tasks: AgentTask[] = await Promise.all(results.map(async (r) => {
         const type: AgentTask['type'] =
-          r.agent_type === 'incident' ? 'log-analysis'
+          isIncidentAgentType(r.agent_type) ? 'log-analysis'
             : r.agent_type === 'scenario' ? 'scenario-generation'
               : isTestCaseAgentType(r.agent_type) ? 'test-generation'
               : 'unknown';
@@ -2036,7 +2050,7 @@ export function OrchestratorAgent() {
             errorMessage: r.error_message ?? '에이전트 처리 중 오류가 발생했습니다.',
           };
         }
-        if (type === 'log-analysis') return { type, agentType: r.agent_type, status: 'done', incidentData: r.data as IncidentAgentData, summary };
+        if (type === 'log-analysis') return { type, agentType: r.agent_type, status: 'done', incidentData: normalizeIncidentAgentData(r.data as IncidentAgentData), summary };
         if (type === 'scenario-generation') return { type, agentType: r.agent_type, status: 'done', scenarioData: r.data as OrchestratorScenarioData, summary };
         if (type === 'test-generation') {
           const testData = await hydrateTestCaseData(r.data as OrchestratorTestCaseData, projectId);
