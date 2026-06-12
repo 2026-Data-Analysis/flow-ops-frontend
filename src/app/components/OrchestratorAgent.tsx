@@ -1842,16 +1842,16 @@ export function OrchestratorAgent() {
             {!isActionsCollapsed && (
               <div className="grid grid-cols-2 gap-2">
                 <ActionButton icon={<FileSearch size={13} />} label="로그 분석"
-                  colorClass="text-violet-300 border-violet-500/20 hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-200"
+                  colorClass="text-blue-300 border-blue-500/20 hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-200"
                   onClick={() => handleActionClick('log-analysis')} disabled={isProcessing || hasActiveForm} />
                 <ActionButton icon={<TestTube2 size={13} />} label="테스트 생성"
-                  colorClass="text-indigo-300 border-indigo-500/20 hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-indigo-200"
+                  colorClass="text-blue-300 border-blue-500/20 hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-200"
                   onClick={() => handleActionClick('test-generation')} disabled={isProcessing || hasActiveForm} />
                 <ActionButton icon={<GitBranch size={13} />} label="시나리오 생성"
-                  colorClass="text-teal-300 border-teal-500/20 hover:border-teal-500/50 hover:bg-teal-500/10 hover:text-teal-200"
+                  colorClass="text-blue-300 border-blue-500/20 hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-200"
                   onClick={() => handleActionClick('scenario')} disabled={isProcessing || hasActiveForm} />
                 <ActionButton icon={<Zap size={13} />} label="동시 실행"
-                  colorClass="text-amber-300 border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/10 hover:text-amber-200"
+                  colorClass="text-blue-300 border-blue-500/20 hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-200"
                   onClick={() => handleActionClick('both')} disabled={isProcessing || hasActiveForm} />
               </div>
             )}
@@ -1861,9 +1861,9 @@ export function OrchestratorAgent() {
             <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex items-center gap-2">
               <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
                 placeholder="직접 입력하세요..." disabled={isProcessing}
-                className="flex-1 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-violet-500/40 disabled:opacity-50 transition-colors" />
+                className="flex-1 bg-[#13131a] border border-[#1f1f28] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/40 disabled:opacity-50 transition-colors" />
               <button type="submit" disabled={!input.trim() || isProcessing}
-                className="w-9 h-9 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg flex items-center justify-center transition-colors shrink-0">
+                className="w-9 h-9 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg flex items-center justify-center transition-colors shrink-0">
                 <Send size={15} />
               </button>
             </form>
